@@ -3,4 +3,4 @@
 //
 // using the LogEntry as
 // defined by Google: https://cloud.google.com/logging/docs/reference/v2/rest/v2/LogEntry
-package alog
+package alog //import "go.alis.build/alog"
