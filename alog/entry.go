@@ -7,48 +7,24 @@ import (
 	"google.golang.org/grpc/metadata"
 	"log"
 	"os"
+	"runtime"
 	"strings"
-)
-
-// LogSeverity is used to map the logging levels consistent with Google Cloud Logging.
-type LogSeverity string
-
-const (
-	// DEFAULT where the log entry has no assigned severity level.
-	DEFAULT LogSeverity = "DEFAULT"
-	// DEBUG or trace information.
-	DEBUG LogSeverity = "DEBUG"
-	// INFO Routine information, such as ongoing status or performance.
-	INFO LogSeverity = "INFO"
-	// NOTICE Normal but significant events, such as start up, shut down, or
-	// a configuration change.
-	NOTICE LogSeverity = "NOTICE"
-	// WARNING events might cause problems.
-	WARNING LogSeverity = "WARNING"
-	// ERROR events are likely to cause problems.
-	ERROR LogSeverity = "ERROR"
-	// CRITICAL events cause more severe problems or outages.
-	CRITICAL LogSeverity = "CRITICAL"
-	// ALERT A person must take an action immediately.
-	ALERT LogSeverity = "ALERT"
-	// EMERGENCY One or more systems are unusable.
-	EMERGENCY LogSeverity = "EMERGENCY"
 )
 
 // LoggingEnvironment indicates which environment the logs are generated in.
 type LoggingEnvironment string
 
 const (
-	// LOCAL logging mode outputs rich text format and bypasses any structured logging.
-	LOCAL LoggingEnvironment = "LOCAL"
-	// GOOGLE logging mode outputs logs in LogEntry format inline with Google Cloud logging.
-	GOOGLE LoggingEnvironment = "GOOGLE"
+	// EnvironmentLocal logging mode outputs rich text format and bypasses any structured logging.
+	EnvironmentLocal LoggingEnvironment = "LOCAL"
+	// EnvironmentGoogle logging mode outputs logs in LogEntry format inline with Google Cloud logging.
+	EnvironmentGoogle LoggingEnvironment = "GOOGLE"
 )
 
 // LogEntrySourceLocation provides additional information about the source code location that produced the log entry.
 type logEntrySourceLocation struct {
 	File     string `json:"file,omitempty"`
-	Line     string `json:"line,omitempty"`
+	Line     int    `json:"line,omitempty"`
 	Function string `json:"function,omitempty"`
 }
 
@@ -66,7 +42,8 @@ type logEntryOperation struct {
 // makes the logs available in Google Cloud Logging and Tracing.
 type entry struct {
 	Message        string                 `json:"message"`
-	Severity       LogSeverity            `json:"severity,omitempty"`
+	Severity       string                 `json:"severity,omitempty"`
+	Level          LogLevel               `json:"-"`
 	Trace          string                 `json:"logging.googleapis.com/trace,omitempty"`
 	SourceLocation logEntrySourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
 	Ctx            context.Context        `json:"-"`
@@ -75,9 +52,17 @@ type entry struct {
 // String renders an entry structure to the JSON format expected by Cloud Logging.
 func (e entry) String() string {
 
-	// Defaults to INFO level.
-	if e.Severity == "" {
-		e.Severity = INFO
+	// Add
+	e.Severity = e.Level.String()
+
+	// Get the filename and line number of the calling function
+	pc, filename, line, ok := runtime.Caller(2)
+	if ok {
+		e.SourceLocation = logEntrySourceLocation{
+			File:     filename,
+			Line:     line,
+			Function: runtime.FuncForPC(pc).Name(),
+		}
 	}
 
 	// Attempt to extract the trace from the context.
@@ -86,40 +71,37 @@ func (e entry) String() string {
 	}
 
 	// if the logs run in local environment, then bypass the structured logging.
-	if loggingEnvironment == LOCAL {
-		var prefix string
-		switch e.Severity {
-		case DEBUG:
-			prefix = colorize("DBG:      ", 90)
-		case INFO:
-			prefix = colorize("INFO:     ", 32)
-		case NOTICE:
-			prefix = colorize("NOTICE:   ", 34)
-		case WARNING:
-			prefix = colorize("WARNING:  ", 33)
-		case ERROR:
-			prefix = colorize("ERROR:    ", 31)
-		case ALERT:
-			prefix = colorize("ALERT:    ", 91)
-		case CRITICAL:
-			prefix = colorize("CRITICAL: ", 41)
-		case EMERGENCY:
-			prefix = colorize("EMERGENCY:", 101)
+	if loggingEnvironment == EnvironmentLocal {
+		// Determine the color for local logging
+		// Codes available at https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
+		var color int
+		switch e.Level {
+		case LevelDebug:
+			color = 90
+		case LevelInfo:
+			color = 32
+		case LevelNotice:
+			color = 34
+		case LevelWarning:
+			color = 33
+		case LevelError:
+			color = 31
+		case LevelCritical:
+			color = 91
+		case LevelAlert:
+			color = 41
+		case LevelEmergency:
+			color = 101
 		}
-		return prefix + " " + e.Message
+		return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
 	} else {
+		// Log a structured log inline with the LogEntry definition.
 		out, err := json.Marshal(e)
 		if err != nil {
 			log.Printf("json.Marshal: %v", err)
 		}
 		return string(out)
 	}
-}
-
-// colorize returns the string s wrapped in ANSI code
-// Codes available at https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
-func colorize(s interface{}, c int) string {
-	return fmt.Sprintf("\x1b[%dm%v\x1b[0m", c, s)
 }
 
 // GetTrace retrieves a trace header from the provided context.
