@@ -1,4 +1,4 @@
-module go.alis.build/alogs
+module go.alis.build/alog
 
 go 1.20
 
