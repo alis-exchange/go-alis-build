@@ -1,1 +1,1 @@
-package main
+package main // import "go.alis.build"
