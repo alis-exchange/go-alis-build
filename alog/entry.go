@@ -7,7 +7,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"log"
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -55,15 +54,15 @@ func (e entry) String() string {
 	// Add
 	e.Severity = e.Level.String()
 
-	// Get the filename and line number of the calling function
-	pc, filename, line, ok := runtime.Caller(2)
-	if ok {
-		e.SourceLocation = logEntrySourceLocation{
-			File:     filename,
-			Line:     line,
-			Function: runtime.FuncForPC(pc).Name(),
-		}
-	}
+	//// Get the filename and line number of the calling function
+	//pc, filename, line, ok := runtime.Caller(-7)
+	//if ok {
+	//	e.SourceLocation = logEntrySourceLocation{
+	//		File:     filename,
+	//		Line:     line,
+	//		Function: runtime.FuncForPC(pc).Name(),
+	//	}
+	//}
 
 	// Attempt to extract the trace from the context.
 	if e.Trace == "" && e.Ctx != nil {
@@ -93,7 +92,8 @@ func (e entry) String() string {
 		case LevelEmergency:
 			color = 101
 		}
-		return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
+		//return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
+		return fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message)
 	} else {
 		// Log a structured log inline with the LogEntry definition.
 		out, err := json.Marshal(e)

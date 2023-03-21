@@ -16,13 +16,27 @@ func init() {
 	// Disable log prefixes such as the default timestamp.
 	// Prefix text prevents the message from being parsed as JSON.
 	// A timestamp is added when shipping logs to Google Cloud Logging.
-	log.SetFlags(log.Llongfile)
+	log.SetFlags(0)
 
 	// Set the default Log Level
 	loggingLevel = LevelDefault
 
 	// Set the default logging environment to GOOGLE.
 	loggingEnvironment = EnvironmentGoogle
+}
+
+// Debug logs a Debug level log.
+func Debug(ctx context.Context, msg string) {
+	if loggingLevel <= LevelDebug {
+		log.Println(&entry{Message: msg, Level: LevelDebug, Ctx: ctx})
+	}
+}
+
+// Debugf logs a Debug level log with the given context.
+func Debugf(ctx context.Context, format string, a ...any) {
+	if loggingLevel <= LevelDebug {
+		log.Println(&entry{Message: fmt.Sprintf(format, a...), Level: LevelDebug, Ctx: ctx})
+	}
 }
 
 // Info logs an Info level log.

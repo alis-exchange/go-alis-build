@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	SetLoggingEnvironment(EnvironmentLocal)
+	//SetLoggingEnvironment(EnvironmentLocal)
 }
 
 func TestAlert(t *testing.T) {
