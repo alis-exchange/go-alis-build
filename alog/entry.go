@@ -110,6 +110,7 @@ func getTrace(ctx context.Context) string {
 	// Derive the traceID associated with the current request.
 	var trace string
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		log.Println(md)
 		traceHeaders := md.Get("x-cloud-trace-context")
 		if len(traceHeaders) > 0 {
 			traceParts := strings.Split(traceHeaders[0], "/")

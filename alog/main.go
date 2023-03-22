@@ -1,4 +1,4 @@
-package alog // import "go.alis.build/alog"
+package alog
 
 import (
 	"context"
