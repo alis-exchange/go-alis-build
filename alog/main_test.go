@@ -332,39 +332,6 @@ func TestWarnf(t *testing.T) {
 	}
 }
 
-func Test_entry_String(t *testing.T) {
-	type fields struct {
-		Message        string
-		Severity       string
-		Level          LogLevel
-		Trace          string
-		SourceLocation logEntrySourceLocation
-		Ctx            context.Context
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		want   string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := entry{
-				Message:        tt.fields.Message,
-				Severity:       tt.fields.Severity,
-				Level:          tt.fields.Level,
-				Trace:          tt.fields.Trace,
-				SourceLocation: tt.fields.SourceLocation,
-				Ctx:            tt.fields.Ctx,
-			}
-			if got := e.String(); got != tt.want {
-				t.Errorf("String() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func Test_getTrace(t *testing.T) {
 	type args struct {
 		ctx context.Context

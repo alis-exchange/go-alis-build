@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc/metadata"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -18,6 +19,10 @@ const (
 	EnvironmentLocal LoggingEnvironment = "LOCAL"
 	// EnvironmentGoogle logging mode outputs logs in LogEntry format inline with Google Cloud logging.
 	EnvironmentGoogle LoggingEnvironment = "GOOGLE"
+)
+
+var (
+	w io.Writer = os.Stderr
 )
 
 // LogEntrySourceLocation provides additional information about the source code location that produced the log entry.
@@ -40,16 +45,16 @@ type logEntryOperation struct {
 // https://cloud.google.com/logging/docs/reference/v2/rest/v2/LogEntry which then automatically
 // makes the logs available in Google Cloud Logging and Tracing.
 type entry struct {
-	Message        string                 `json:"message"`
-	Severity       string                 `json:"severity,omitempty"`
-	Level          LogLevel               `json:"-"`
-	Trace          string                 `json:"logging.googleapis.com/trace,omitempty"`
-	SourceLocation logEntrySourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
-	Ctx            context.Context        `json:"-"`
+	Message        string                  `json:"message"`
+	Severity       string                  `json:"severity,omitempty"`
+	Level          LogLevel                `json:"-"`
+	Trace          string                  `json:"logging.googleapis.com/trace,omitempty"`
+	SourceLocation *logEntrySourceLocation `json:"logging.googleapis.com/sourceLocation,omitempty"`
+	Ctx            context.Context         `json:"-"`
 }
 
-// String renders an entry structure to the JSON format expected by Cloud Logging.
-func (e entry) String() string {
+// Bytes renders an entry structure to the JSON format expected by Cloud Logging.
+func (e entry) Bytes() []byte {
 
 	// Add
 	e.Severity = e.Level.String()
@@ -93,15 +98,24 @@ func (e entry) String() string {
 			color = 101
 		}
 		//return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
-		return fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message)
+		return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))
 	} else {
 		// Log a structured log inline with the LogEntry definition.
 		out, err := json.Marshal(e)
 		if err != nil {
 			log.Printf("json.Marshal: %v", err)
 		}
-		return string(out)
+		return out
 	}
+}
+
+// Output writes the Entry object to the standard out.
+func (e entry) Output() error {
+	b := e.Bytes()
+	// Appends a newline to the output.
+	b = append(b, '\n')
+	_, err := w.Write(b)
+	return err
 }
 
 // GetTrace retrieves a trace header from the provided context.

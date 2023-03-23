@@ -15,7 +15,7 @@ func ExampleDebug() {
 
 	alog.Debug(ctx, "Some debug message")
 	// Output:
-	// {"message": "Some debug message", "Severity": "DEBUG"}
+	// {"message":"Some debug message", "severity":"DEBUG"}
 }
 
 func ExampleSetLevel() {
@@ -30,7 +30,7 @@ func ExampleSetLevel() {
 
 	alog.Error(ctx, "Some error message which will print given the minimum logging level")
 	// Output:
-	// {"message": "Some error message which will print given the minimum logging level", "Severity": "ERROR"}
+	// {"message": "Some error message which will print given the minimum logging level", "severity": "ERROR"}
 }
 func ExampleSetLevelNoLog() {
 
@@ -50,7 +50,7 @@ func ExampleInfof() {
 	// Using the 'f' style from the fmt.Sprintf package to print logs
 	alog.Infof(ctx, "some info: %s", "the info message")
 	// Output:
-	// {"message": "some info: the info message", "Severity": "INFO"}
+	// {"message": "some info: the info message", "severity": "INFO"}
 }
 
 func ExampleSetLoggingEnvironment() {
