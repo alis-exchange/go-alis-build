@@ -9,6 +9,10 @@ func ExampleDebug() {
 
 	// no need to instantiate a logger, simply import and use the methods.
 	ctx := context.Background()
+
+	// We first need to change the minimum log level from the default (INFO) to DEBUG
+	alog.SetLevel(alog.LevelDebug)
+
 	alog.Debug(ctx, "Some debug message")
 	// Output:
 	// {"message": "Some debug message", "Severity": "DEBUG"}
@@ -21,9 +25,8 @@ func ExampleSetLevel() {
 	// Set the minimum logging level to DEFAULT
 	alog.SetLevel(alog.LevelWarning)
 
+	// The following will not print given that the minimum logging level of WARNING
 	alog.Info(ctx, "Some info message which will not print given the minimum logging level")
-	// Output:
-	//
 
 	alog.Error(ctx, "Some error message which will print given the minimum logging level")
 	// Output:
@@ -53,7 +56,7 @@ func ExampleInfof() {
 func ExampleSetLoggingEnvironment() {
 	ctx := context.Background()
 
-	// Set the logging environent to local
+	// Set the logging environment to local
 	alog.SetLoggingEnvironment(alog.EnvironmentLocal)
 
 	alog.Info(ctx, "Some info message")
