@@ -1,0 +1,5 @@
+.idea
+**/.DStore
+**/.DS_Store
+**/node_modules
+key**.json
