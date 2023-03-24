@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 )
 
 var (
@@ -107,6 +108,22 @@ func Criticalf(ctx context.Context, format string, a ...any) {
 	if loggingLevel <= LevelCritical {
 		(&entry{Message: fmt.Sprintf(format, a...), Level: LevelCritical, Ctx: ctx}).Output()
 	}
+}
+
+// Fatal logs a Critical log and exists the program.
+func Fatal(ctx context.Context, msg string) {
+	if loggingLevel <= LevelCritical {
+		(&entry{Message: msg, Level: LevelCritical, Ctx: ctx}).Output()
+	}
+	os.Exit(1)
+}
+
+// Fatalf logs a Critical log and exists the program.
+func Fatalf(ctx context.Context, format string, a ...any) {
+	if loggingLevel <= LevelCritical {
+		(&entry{Message: fmt.Sprintf(format, a...), Level: LevelCritical, Ctx: ctx}).Output()
+	}
+	os.Exit(1)
 }
 
 // Alert logs an Alert log with the given context.
