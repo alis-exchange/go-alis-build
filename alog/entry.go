@@ -12,12 +12,16 @@ import (
 )
 
 // LoggingEnvironment indicates which environment the logs are generated in.
+// If the environment cannot be determined automatically, the alog package will set it to the default value of
+// "EnvironmentLocal".
 type LoggingEnvironment string
 
 const (
 	// EnvironmentLocal logging mode outputs rich text format and bypasses any structured logging.
 	EnvironmentLocal LoggingEnvironment = "LOCAL"
 	// EnvironmentGoogle logging mode outputs logs in LogEntry format inline with Google Cloud logging.
+	//
+	// This value is typically be used when running code on Google GKE, Google Cloud Run or Google Cloud Run Jobs.
 	EnvironmentGoogle LoggingEnvironment = "GOOGLE"
 )
 

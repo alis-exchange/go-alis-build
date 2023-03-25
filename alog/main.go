@@ -22,8 +22,19 @@ func init() {
 	// Set the default Log Level
 	loggingLevel = LevelDefault
 
-	// Set the default logging environment to GOOGLE.
-	loggingEnvironment = EnvironmentGoogle
+	// Set the default logging environment
+	// We'll use environment variable to set the defaults
+	// https://cloud.google.com/run/docs/container-contract#env-vars
+	// Cloud Run exposes an env of K_SERVICE
+	// Cloud Run exposes an env of CLOUD_RUN_JOB
+	// GKE Autopilot exposes an env of KUBERNETES_SERVICE_HOST
+	if os.Getenv("K_SERVICE") != "" ||
+		os.Getenv("CLOUD_RUN_JOB") != "" ||
+		os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		loggingEnvironment = EnvironmentGoogle
+	} else {
+		loggingEnvironment = EnvironmentLocal
+	}
 }
 
 // Debug logs a Debug level log.
@@ -159,7 +170,7 @@ func SetLevel(level LogLevel) {
 	loggingLevel = level
 }
 
-// SetLoggingEnvironment sets the logging environment.
+// SetLoggingEnvironment is used to manually configure the logging environment.
 func SetLoggingEnvironment(e LoggingEnvironment) {
 	loggingEnvironment = e
 }
