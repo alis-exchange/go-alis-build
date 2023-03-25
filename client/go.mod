@@ -1,4 +1,4 @@
-module go.alis.build/conn
+module go.alis.build/client
 
 go 1.20
 

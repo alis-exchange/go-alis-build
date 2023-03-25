@@ -3,9 +3,10 @@
 // license that can be found in the LICENSE file.
 
 /*
-Package conn provides a lightweight set of methods for making authenticated calls to Cloud Run endpoints.
+Package client provides a lightweight set of methods which clients could use to make authenticated calls to services
+running on Google Cloud Run
 
 It was inspired by the example: Send gRPC requests with authentication as per the Cloud Run endpoints documentation
 at https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth
 */
-package conn //import "go.alis.build/conn"
+package client //import "go.alis.build/client"
