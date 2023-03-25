@@ -21,12 +21,11 @@ type grpcTokenSource struct {
 
 /*
 NewConn creates a new gRPC connection.
-- host should be of the form domain:port, for example: `your-app-on-cloudrun-abcdef-ew.a.run.app:443`
-- set insecure to `true` when testing your gRPC server locally.
+  - host should be of the form domain:port, for example: `your-app-on-cloudrun-abcdef-ew.a.run.app:443`
+  - set insecure to `true` when testing your gRPC server locally.
 
 This approach was inspired by the example provided on the following URL:
-
-	https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth.
+https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth.
 
 However, instead of manually adding the Authorization header to each gRPC request, this method implements a
 TokenSource pattern. By configuring the gRPC connection once, tokens are automatically injected with each subsequent

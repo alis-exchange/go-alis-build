@@ -13,8 +13,10 @@ func ExampleNewConn() {
 	if err != nil {
 		log.Println(err)
 	}
+
 	// Use the connection auto generated client packages, using the example at:
 	// https://grpc.io/docs/languages/go/basics/#client, we will instantiate a client as follows:
-	// 	routeGuideClient := pb.NewRouteGuideClient(conn)
+	//     routeGuideClient := pb.NewRouteGuideClient(conn)
+
 	_ = conn
 }
