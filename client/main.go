@@ -38,7 +38,7 @@ func NewConn(ctx context.Context, host string, insecure bool) (*grpc.ClientConn,
 
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
-	err := validateArgument("host", host, `^[a-zA-Z0-9.-]+\.[a-zA-Z]+:\d+$`)
+	err := validateArgument("host", host, `^[a-zA-Z0-9.-]+:\d+$`)
 	if err != nil {
 		return nil, err
 	}
