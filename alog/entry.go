@@ -73,11 +73,6 @@ func (e entry) Bytes() []byte {
 	//	}
 	//}
 
-	// Attempt to extract the trace from the context.
-	if e.Trace == "" && e.Ctx != nil {
-		e.Trace = getTrace(e.Ctx)
-	}
-
 	// if the logs run in local environment, then bypass the structured logging.
 	if loggingEnvironment == EnvironmentLocal {
 		// Determine the color for local logging
@@ -104,6 +99,11 @@ func (e entry) Bytes() []byte {
 		//return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
 		return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))
 	} else {
+		// Attempt to extract the trace from the context.
+		if e.Trace == "" && e.Ctx != nil {
+			e.Trace = getTrace(e.Ctx)
+		}
+
 		// Log a structured log inline with the LogEntry definition.
 		out, err := json.Marshal(e)
 		if err != nil {
