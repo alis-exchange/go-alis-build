@@ -3,7 +3,6 @@ package alog
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -13,11 +12,6 @@ var (
 )
 
 func init() {
-
-	// Disable log prefixes such as the default timestamp.
-	// Prefix text prevents the message from being parsed as JSON.
-	// A timestamp is added when shipping logs to Google Cloud Logging.
-	log.SetFlags(0)
 
 	// Set the default Log Level
 	loggingLevel = LevelDefault
@@ -38,6 +32,10 @@ func init() {
 }
 
 // Debug logs a Debug level log.
+//
+// This method only prints a log when the Logging Level set to LevelDebug.  The debug logs will
+// also include a SourceLocation attribute which will provide file, method and line number details of
+// the particular log.
 func Debug(ctx context.Context, msg string) {
 	if loggingLevel <= LevelDebug {
 		(&entry{Message: msg, Level: LevelDebug, Ctx: ctx}).Output()
@@ -45,6 +43,10 @@ func Debug(ctx context.Context, msg string) {
 }
 
 // Debugf logs a Debug level log with the given context.
+//
+// This method only prints a log when the Logging Level set to LevelDebug.  The debug logs will
+// also include a SourceLocation attribute which will provide file, method and line number details of
+// the particular log.
 func Debugf(ctx context.Context, format string, a ...any) {
 	if loggingLevel <= LevelDebug {
 		(&entry{Message: fmt.Sprintf(format, a...), Level: LevelDebug, Ctx: ctx}).Output()
