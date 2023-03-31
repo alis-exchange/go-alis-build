@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -63,15 +64,18 @@ func (e entry) Bytes() []byte {
 	// Add
 	e.Severity = e.Level.String()
 
-	//// Get the filename and line number of the calling function
-	//pc, filename, line, ok := runtime.Caller(-7)
-	//if ok {
-	//	e.SourceLocation = logEntrySourceLocation{
-	//		File:     filename,
-	//		Line:     line,
-	//		Function: runtime.FuncForPC(pc).Name(),
-	//	}
-	//}
+	// If level is at Debug, include the source location
+	if loggingLevel == LevelDebug {
+		// Get the filename and line number of the calling function
+		pc, filename, line, ok := runtime.Caller(3)
+		if ok {
+			e.SourceLocation = &logEntrySourceLocation{
+				File:     filename,
+				Line:     line,
+				Function: runtime.FuncForPC(pc).Name(),
+			}
+		}
+	}
 
 	// if the logs run in local environment, then bypass the structured logging.
 	if loggingEnvironment == EnvironmentLocal {
@@ -96,8 +100,13 @@ func (e entry) Bytes() []byte {
 		case LevelEmergency:
 			color = 101
 		}
-		//return fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message)
-		return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))
+
+		if loggingLevel == LevelDebug {
+			return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message))
+		} else {
+			return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))
+		}
+
 	} else {
 		// Attempt to extract the trace from the context.
 		if e.Trace == "" && e.Ctx != nil {
