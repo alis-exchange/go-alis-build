@@ -26,7 +26,7 @@ type BigProto struct {
 	table *bigtable.Table
 }
 
-func NewBigProto(client *bigtable.Client, tableName string) *BigProto {
+func New(client *bigtable.Client, tableName string) *BigProto {
 	table := client.Open(tableName)
 	return &BigProto{
 		table: table,
