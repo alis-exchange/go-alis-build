@@ -1,0 +1,311 @@
+package bigproto
+
+import (
+	"context"
+	"log"
+	"testing"
+	"time"
+
+	"cloud.google.com/go/bigtable"
+	googleBigtable "cloud.google.com/go/bigtable"
+	"cloud.google.com/go/bigtable/bttest"
+	pb "go.protobuf.alis.alis.exchange/alis/os/resources/builders/v1"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+const tableName = "test"
+
+var families = []string{
+	"a",
+	"b",
+}
+
+var Table *bigtable.Table
+
+func init() {
+	ctx := context.Background()
+	srv, err := bttest.NewServer("localhost:0")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	conn, err := grpc.Dial(srv.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	proj, instance := "proj", "instance"
+	adminClient, err := googleBigtable.NewAdminClient(ctx, proj, instance, option.WithGRPCConn(conn))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	tables := []string{tableName}
+	for _, ta := range tables {
+		if err = adminClient.CreateTable(ctx, ta); err != nil {
+			log.Fatal(err)
+		}
+		for _, f := range families {
+			if err = adminClient.CreateColumnFamily(ctx, ta, f); err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+
+	client, err := googleBigtable.NewClient(ctx, proj, instance, option.WithGRPCConn(conn))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	Table = client.Open(tableName)
+}
+
+func TestBigProto_WriteProto(t *testing.T) {
+	type fields struct {
+		table *bigtable.Table
+	}
+	type args struct {
+		ctx          context.Context
+		rowKey       string
+		columnName   string
+		columnFamily string
+		message      proto.Message
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "OK:standard_write",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				rowKey:       "builders/1",
+				columnName:   "0",
+				columnFamily: "b",
+				message: &pb.Builder{
+					Name:         "builders/1",
+					GivenName:    "Test",
+					FamilyName:   "One",
+					PrimaryEmail: "test@alisx.com",
+					CreateTime: &timestamppb.Timestamp{
+						Seconds: time.Now().Unix(),
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "ERR:column_family_not_found",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				rowKey:       "builders/1",
+				columnName:   "0",
+				columnFamily: "c",
+				message: &pb.Builder{
+					Name:         "builders/1",
+					GivenName:    "Test",
+					FamilyName:   "One",
+					PrimaryEmail: "test@alisx.com",
+					CreateTime: &timestamppb.Timestamp{
+						Seconds: time.Now().Unix(),
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "OK:standard_write",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				rowKey:       "builders/2",
+				columnName:   "0",
+				columnFamily: "b",
+				message: &pb.Builder{
+					Name:         "builders/2",
+					GivenName:    "Test",
+					FamilyName:   "Two",
+					PrimaryEmail: "test@alisx.com",
+					CreateTime: &timestamppb.Timestamp{
+						Seconds: time.Now().Unix(),
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &BigProto{
+				table: tt.fields.table,
+			}
+			if err := b.WriteProto(tt.args.ctx, tt.args.rowKey, tt.args.columnName, tt.args.columnFamily, tt.args.message); (err != nil) != tt.wantErr {
+				t.Errorf("WriteProto() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBigProto_ReadProto(t *testing.T) {
+	type fields struct {
+		table *bigtable.Table
+	}
+	type args struct {
+		ctx          context.Context
+		rowKey       string
+		columnFamily string
+		messageType  proto.Message
+		readMask     *fieldmaskpb.FieldMask
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+		want    pb.Builder
+	}{
+		{
+			name: "OK:standard_read",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				rowKey:       "builders/1",
+				columnFamily: "b",
+				messageType:  &pb.Builder{},
+			},
+			wantErr: false,
+			want: pb.Builder{
+				Name:         "builders/1",
+				GivenName:    "Test",
+				FamilyName:   "One",
+				PrimaryEmail: "test@alisx.com",
+				CreateTime: &timestamppb.Timestamp{
+					Seconds: time.Now().Unix(),
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &BigProto{
+				table: tt.fields.table,
+			}
+			if err := b.ReadProto(tt.args.ctx, tt.args.rowKey, tt.args.columnFamily, tt.args.messageType, tt.args.readMask); (err != nil) != tt.wantErr {
+				t.Errorf("ReadProto() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !proto.Equal(tt.args.messageType, &tt.want) {
+				t.Errorf("ReadProto() got = %v, want %v", tt.args.messageType, tt.want)
+			}
+		})
+	}
+}
+
+func TestBigProto_ListProtos(t *testing.T) {
+	type fields struct {
+		table *bigtable.Table
+	}
+	type args struct {
+		ctx          context.Context
+		columnFamily string
+		messageType  proto.Message
+		readMask     *fieldmaskpb.FieldMask
+		rowSet       bigtable.RowSet
+		opts         []bigtable.ReadOption
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    []proto.Message
+		wantErr bool
+	}{
+		{
+			name: "OK:standard_list",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				columnFamily: "b",
+				messageType:  &pb.Builder{},
+				readMask:     &fieldmaskpb.FieldMask{Paths: []string{"name"}},
+				rowSet:       bigtable.PrefixRange("builders"),
+				opts:         nil,
+			},
+			want: []proto.Message{
+				&pb.Builder{Name: "builders/1"},
+				&pb.Builder{Name: "builders/2"},
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &BigProto{
+				table: tt.fields.table,
+			}
+			got, err := b.ListProtos(tt.args.ctx, tt.args.columnFamily, tt.args.messageType, tt.args.readMask, tt.args.rowSet, tt.args.opts...)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ListProtos() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			for i, v := range got {
+				if !proto.Equal(v, tt.want[i]) {
+					t.Errorf("ListProtos() got = %v, want %v", v, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+//func TestBigProto_ReadRow(t *testing.T) {
+//	type fields struct {
+//		table *bigtable.Table
+//	}
+//	type args struct {
+//		ctx    context.Context
+//		rowKey string
+//	}
+//	tests := []struct {
+//		name    string
+//		fields  fields
+//		args    args
+//		want    bigtable.Row
+//		wantErr bool
+//	}{
+//		// TODO: Add test cases.
+//	}
+//	for _, tt := range tests {
+//		t.Run(tt.name, func(t *testing.T) {
+//			b := &BigProto{
+//				table: tt.fields.table,
+//			}
+//			got, err := b.ReadRow(tt.args.ctx, tt.args.rowKey)
+//			if (err != nil) != tt.wantErr {
+//				t.Errorf("ReadRow() error = %v, wantErr %v", err, tt.wantErr)
+//				return
+//			}
+//			if !reflect.DeepEqual(got, tt.want) {
+//				t.Errorf("ReadRow() got = %v, want %v", got, tt.want)
+//			}
+//		})
+//	}
+//}
+//
