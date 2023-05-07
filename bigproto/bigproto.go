@@ -50,7 +50,9 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnName str
 	return nil
 }
 
-func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, messageType proto.Message, readMask *fieldmaskpb.FieldMask) error {
+// ReadProto obtains a Bigtable row entry, unmarshalls it, applies the read mask and stores the result in the provided
+// message pointer.
+func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(columnFamily))
 	row, err := b.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
@@ -74,7 +76,7 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 
 	// Only the first column is used by the resource.
 	column := columns[0]
-	err = proto.Unmarshal(column.Value, messageType)
+	err = proto.Unmarshal(column.Value, message)
 	if err != nil {
 		return err
 	}
@@ -82,11 +84,11 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 	// Apply Read Mask if provided
 	if readMask != nil {
 		readMask.Normalize()
-		if !readMask.IsValid(messageType) {
+		if !readMask.IsValid(message) {
 			return ErrInvalidReadMask
 		}
 		// Redact the request according to the provided field mask.
-		fmutils.Filter(messageType, readMask.GetPaths())
+		fmutils.Filter(message, readMask.GetPaths())
 	}
 
 	return nil
@@ -109,6 +111,20 @@ func (b *BigProto) ReadRow(ctx context.Context, rowKey string) (bigtable.Row, er
 	return row, nil
 }
 
+// DeleteRow deletes an entire row from bigtable at the given rowKey.
+func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
+
+	// Create a single mutation to delete the row
+	mut := bigtable.NewMutation()
+	mut.DeleteRow()
+	err := b.table.Apply(ctx, rowKey, mut)
+	if err != nil {
+		return fmt.Errorf("delete bigtable row: %w", err)
+	}
+	return nil
+}
+
+// ListProtos returns the list of rows for a specified set of rows
 func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message, readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, error) {
 	var res []proto.Message
 
