@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"cloud.google.com/go/bigtable"
+	"github.com/imdario/mergo"
 	"github.com/mennanov/fmutils"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
@@ -20,7 +22,18 @@ func (e ErrNotFound) Error() string {
 	return fmt.Sprintf("%s not found", e.RowKey)
 }
 
-var ErrInvalidReadMask = errors.New("invalid read mask")
+var ErrInvalidFieldMask = errors.New("invalid field mask")
+
+type ErrMismatchedTypes struct {
+	Expected reflect.Type
+	Actual   reflect.Type
+}
+
+func (e ErrMismatchedTypes) Error() string {
+	return fmt.Sprintf("expected %s, got %s", e.Expected, e.Actual)
+}
+
+const DefaultColumnName = "0"
 
 type BigProto struct {
 	table *bigtable.Table
@@ -33,7 +46,9 @@ func New(client *bigtable.Client, tableName string) *BigProto {
 	}
 }
 
-func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnName string, columnFamily string, message proto.Message) error {
+// WriteProto writes the provided proto message to Bigtable by marshaling it to bytes and storing the data at the given
+// row key, and column family.
+func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message) error {
 	timestamp := bigtable.Now()
 
 	dataBytes, err := proto.Marshal(message)
@@ -42,7 +57,7 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnName str
 	}
 
 	mut := bigtable.NewMutation()
-	mut.Set(columnFamily, columnName, timestamp, dataBytes)
+	mut.Set(columnFamily, DefaultColumnName, timestamp, dataBytes)
 	err = b.table.Apply(ctx, rowKey, mut)
 	if err != nil {
 		return err
@@ -50,8 +65,8 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnName str
 	return nil
 }
 
-// ReadProto obtains a Bigtable row entry, unmarshalls it, applies the read mask and stores the result in the provided
-// message pointer.
+// ReadProto obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read mask and
+// stores the result in the provided message pointer.
 func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(columnFamily))
@@ -85,10 +100,95 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 	if readMask != nil {
 		readMask.Normalize()
 		if !readMask.IsValid(message) {
-			return ErrInvalidReadMask
+			return ErrInvalidFieldMask
 		}
 		// Redact the request according to the provided field mask.
 		fmutils.Filter(message, readMask.GetPaths())
+	}
+
+	return nil
+}
+
+// UpdateProto obtains a Bigtable row entry and unmarshalls the value at the given columnFamily to the type provided. It
+// then merges the updates as specified in the provided message, into the current type, in line with the update mask
+// and writes the updated proto back to Bigtable. The updated proto is also stored in the provided message pointer.
+func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
+	// retrieve the resource from bigtable
+	currentMessage := newEmptyMessage(message)
+	err := b.ReadProto(ctx, rowKey, columnFamily, currentMessage, nil)
+	if err != nil {
+		return err
+	}
+
+	// merge the updates into currentMessage
+	err = mergeUpdates(currentMessage, message, updateMask)
+	if err != nil {
+		return err
+	}
+
+	// write the updated message back to bigtable
+	err = b.WriteProto(ctx, rowKey, columnFamily, currentMessage)
+	if err != nil {
+		return err
+	}
+	// update the message pointer
+	reflect.ValueOf(message).Elem().Set(reflect.ValueOf(currentMessage).Elem())
+
+	return nil
+}
+
+// newEmptyMessage returns a new instance of the same type as the provided proto.Message
+func newEmptyMessage(msg proto.Message) proto.Message {
+	// Get the reflect.Type of the message
+	msgType := reflect.TypeOf(msg)
+	if msgType.Kind() == reflect.Ptr {
+		msgType = msgType.Elem()
+	}
+
+	// Create a new instance of the message type using reflection
+	newMsg := reflect.New(msgType).Interface().(proto.Message)
+	return newMsg
+}
+
+// mergeUpdates merges the updates into the current message in line with the update mask
+func mergeUpdates(current proto.Message, updates proto.Message, updateMask *fieldmaskpb.FieldMask) error {
+	// If current and updates are different types, return an error
+	if reflect.TypeOf(current) != reflect.TypeOf(updates) {
+		return ErrMismatchedTypes{
+			Expected: reflect.TypeOf(current),
+			Actual:   reflect.TypeOf(updates),
+		}
+	}
+
+	// If updates is nil, return nil
+	if updates == nil {
+		return nil
+	}
+	// If current is nil, return updates
+	if current == nil {
+		current = updates
+		return nil
+	}
+
+	// If updates is empty, return nil
+	if proto.Size(updates) == 0 {
+		return nil
+	}
+
+	// Apply Update Mask if provided
+	if updateMask != nil {
+		updateMask.Normalize()
+		if !updateMask.IsValid(current) {
+			return ErrInvalidFieldMask
+		}
+		// Redact the request according to the provided field mask.
+		fmutils.Prune(current, updateMask.GetPaths())
+	}
+
+	// Merge the updates into the current message
+	err := mergo.Merge(current, updates)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -109,6 +209,18 @@ func (b *BigProto) ReadRow(ctx context.Context, rowKey string) (bigtable.Row, er
 	}
 
 	return row, nil
+}
+
+// WriteMutation writes a mutation to bigtable at the given rowKey. This allows for more custom write functionality to
+// be implemented on the row that is written. This is useful for writing multiple columns to a row, or writing a row
+// with a filter. It also allows for things like "Source Prioritisation" whereby data may be duplicated across column
+// families for different sources and the sources are used in order of prior
+func (b *BigProto) WriteMutation(ctx context.Context, rowKey string, mut *bigtable.Mutation) error {
+	err := b.table.Apply(ctx, rowKey, mut)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // DeleteRow deletes an entire row from bigtable at the given rowKey.
@@ -132,7 +244,7 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	if readMask != nil {
 		readMask.Normalize()
 		if !readMask.IsValid(messageType) {
-			return nil, ErrInvalidReadMask
+			return nil, ErrInvalidFieldMask
 		}
 	}
 

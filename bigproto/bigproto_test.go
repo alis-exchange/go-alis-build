@@ -9,6 +9,8 @@ import (
 	"cloud.google.com/go/bigtable"
 	googleBigtable "cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"
+	"github.com/mennanov/fmutils"
+	"github.com/stretchr/testify/assert"
 	pb "go.protobuf.alis.alis.exchange/alis/os/resources/builders/v1"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
@@ -154,7 +156,7 @@ func TestBigProto_WriteProto(t *testing.T) {
 			b := &BigProto{
 				table: tt.fields.table,
 			}
-			if err := b.WriteProto(tt.args.ctx, tt.args.rowKey, tt.args.columnName, tt.args.columnFamily, tt.args.message); (err != nil) != tt.wantErr {
+			if err := b.WriteProto(tt.args.ctx, tt.args.rowKey, tt.args.columnFamily, tt.args.message); (err != nil) != tt.wantErr {
 				t.Errorf("WriteProto() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -217,6 +219,70 @@ func TestBigProto_ReadProto(t *testing.T) {
 	}
 }
 
+func TestBigProto_UpdateProto(t *testing.T) {
+	type fields struct {
+		table *bigtable.Table
+	}
+	type args struct {
+		ctx          context.Context
+		rowKey       string
+		columnFamily string
+		message      proto.Message
+		updateMask   *fieldmaskpb.FieldMask
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+		want    pb.Builder
+	}{
+		{
+			name: "OK:standard_update",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:          context.Background(),
+				rowKey:       "builders/1",
+				columnFamily: "b",
+				message: &pb.Builder{
+					Name:         "builders/1",
+					GivenName:    "Test",
+					FamilyName:   "One",
+					PrimaryEmail: "updated@alisx.com",
+				},
+				updateMask: &fieldmaskpb.FieldMask{
+					Paths: []string{"primary_email"},
+				},
+			},
+			wantErr: false,
+			want: pb.Builder{
+				Name:         "builders/1",
+				GivenName:    "Test",
+				FamilyName:   "One",
+				PrimaryEmail: "updated@alisx.com",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &BigProto{
+				table: tt.fields.table,
+			}
+			if err := b.UpdateProto(tt.args.ctx, tt.args.rowKey, tt.args.columnFamily, tt.args.message, tt.args.updateMask); (err != nil) != tt.wantErr {
+				t.Errorf("UpdateProto() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			// check each field of tt.want with tt.args.message, ignoring the create_time
+			// strip the create_time from the message
+			fmutils.Prune(tt.args.message, []string{"create_time"})
+			if !proto.Equal(tt.args.message, &tt.want) {
+				t.Errorf("UpdateProto() got = %v, want %v", tt.args.message, tt.want)
+			}
+		})
+	}
+}
+
 func TestBigProto_ListProtos(t *testing.T) {
 	type fields struct {
 		table *bigtable.Table
@@ -273,6 +339,76 @@ func TestBigProto_ListProtos(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewEmptyMessage(t *testing.T) {
+	assert := assert.New(t)
+
+	// Test with a known message type
+	msg := &pb.Builder{}
+	emptyMsg := newEmptyMessage(msg)
+	assert.NotNil(emptyMsg)
+	assert.IsType(msg, emptyMsg)
+
+	// Test with a nil message
+	var nilMsg *pb.Builder
+	emptyNilMsg := newEmptyMessage(nilMsg)
+	assert.NotNil(emptyNilMsg)
+	assert.IsType(&pb.Builder{}, emptyNilMsg)
+
+	// Test with a message that is not a pointer
+	nonPtrMsg := pb.Builder{}
+	emptyNonPtrMsg := newEmptyMessage(&nonPtrMsg)
+	assert.NotNil(emptyNonPtrMsg)
+	assert.IsType(&pb.Builder{}, emptyNonPtrMsg)
+}
+
+func TestMergeUpdates(t *testing.T) {
+	assert := assert.New(t)
+
+	// Test with a known message type
+	msg := &pb.Builder{
+		Name:         "my-builder",
+		GivenName:    "Alice",
+		FamilyName:   "Smith",
+		PrimaryEmail: "alice.smith@example.com",
+	}
+	updates := &pb.Builder{
+		GivenName: "Lekker",
+	}
+	updateMask := &fieldmaskpb.FieldMask{
+		Paths: []string{"given_name"},
+	}
+	err := mergeUpdates(msg, updates, updateMask)
+	assert.Nil(err)
+	assert.Equal("my-builder", msg.Name)
+	assert.Equal("Lekker", msg.GivenName)
+	assert.Equal("Smith", msg.FamilyName)
+	assert.Equal("alice.smith@example.com", msg.PrimaryEmail)
+
+	// Test with a nil message
+	var nilMsg *pb.Builder
+	updates = &pb.Builder{
+		GivenName: "Bob",
+	}
+	err = mergeUpdates(nilMsg, updates, &fieldmaskpb.FieldMask{Paths: []string{"given_name"}})
+	assert.NotNil(err)
+
+	// Test with a nil updates message
+	currentMsg := &pb.Builder{
+		GivenName: "Charlie",
+	}
+	var nilUpdates *pb.Builder
+	err = mergeUpdates(currentMsg, nilUpdates, &fieldmaskpb.FieldMask{Paths: []string{"given_name"}})
+	assert.Nil(err)
+	assert.Equal("Charlie", currentMsg.GivenName)
+
+	// Test with an invalid update mask
+	invalidMask := &fieldmaskpb.FieldMask{
+		Paths: []string{"nonexistent_field"},
+	}
+	err = mergeUpdates(msg, updates, invalidMask)
+	assert.NotNil(err)
 }
 
 //func TestBigProto_ReadRow(t *testing.T) {
