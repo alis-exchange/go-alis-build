@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"strings"
+
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
@@ -12,7 +14,6 @@ import (
 	insecureGrpc "google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/oauth"
 	"google.golang.org/grpc/status"
-	"strings"
 )
 
 type grpcTokenSource struct {
@@ -34,7 +35,7 @@ gRPC request.
 Tokens generally have a one-hour expiration time, and the TokenSource logic caches and automatically
 refreshes the token upon expiration. This greatly simplifies token recycling within your service.
 */
-func NewConn(ctx context.Context, host string, insecure bool) (*grpc.ClientConn, error) {
+func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
@@ -43,7 +44,6 @@ func NewConn(ctx context.Context, host string, insecure bool) (*grpc.ClientConn,
 		return nil, err
 	}
 
-	var opts []grpc.DialOption
 	if host != "" {
 		opts = append(opts, grpc.WithAuthority(host))
 	}
