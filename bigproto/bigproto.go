@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"reflect"
 
 	"cloud.google.com/go/bigtable"
@@ -291,4 +292,9 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	}
 
 	return res, nil
+}
+
+// Now returns the time using Bigtable's time method.
+func Now() *timestamppb.Timestamp {
+	return timestamppb.New(bigtable.Now().Time())
 }
