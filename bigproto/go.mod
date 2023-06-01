@@ -7,6 +7,7 @@ require (
 	github.com/imdario/mergo v0.3.15
 	github.com/mennanov/fmutils v0.2.0
 	github.com/stretchr/testify v1.8.1
+	go.alis.build/alog v0.0.18
 	go.protobuf.alis.alis.exchange v0.0.0-20230505130050-abb301c88338
 	google.golang.org/api v0.121.0
 	google.golang.org/grpc v1.55.0

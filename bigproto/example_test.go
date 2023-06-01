@@ -22,6 +22,29 @@ func ExampleNew() {
 	_ = row
 }
 
+func ExampleNewClient() {
+	// Create a connection to a Table using bigproto
+	table := NewClient(context.Background(), "your-project", "bigtable-instance", "your-table")
+
+	// Read a single row
+	row, _ := table.ReadRow(context.Background(), "row-key-1")
+
+	// use the row object.
+	_ = row
+}
+
+func ExampleSetupAndUseBigtableEmulator() {
+	// Create a connection to a Table using bigproto
+	table := NewClient(context.Background(), "your-project", "bigtable-instance", "your-table")
+
+	// If not running on cloudrun use bigtable emulator
+	SetupAndUseBigtableEmulator("your-project", "bigtable-instance", "your-table", []string{"0", "1"}, true, true)
+
+	// use table
+	_ = table
+
+}
+
 func ExampleBigProto_DeleteRow() {
 	// Instantiate a Google Bigtable Client
 	ctx := context.Background()

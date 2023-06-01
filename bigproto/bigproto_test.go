@@ -445,3 +445,46 @@ func TestMergeUpdates(t *testing.T) {
 //	}
 //}
 //
+
+func Test_setupAndUseBigtableEmulator(t *testing.T) {
+	type args struct {
+		googleProject    string
+		bigTableInstance string
+		tableName        string
+		columnFamilies   []string
+		createIfNotExist bool
+		resetIfExist     bool
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{
+			name: "create and reset",
+			args: args{
+				googleProject:    "qwer",
+				bigTableInstance: "asdf",
+				tableName:        "zxcv",
+				columnFamilies:   []string{"0", "1", "2"},
+				createIfNotExist: true,
+				resetIfExist:     true,
+			},
+		},
+		{
+			name: "create without resetting",
+			args: args{
+				googleProject:    "qwer",
+				bigTableInstance: "asdf",
+				tableName:        "xzcv",
+				columnFamilies:   []string{"a", "b", "c"},
+				createIfNotExist: true,
+				resetIfExist:     false,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetupAndUseBigtableEmulator(tt.args.googleProject, tt.args.bigTableInstance, tt.args.tableName, tt.args.columnFamilies, tt.args.createIfNotExist, tt.args.resetIfExist)
+		})
+	}
+}

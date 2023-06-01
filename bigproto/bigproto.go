@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.alis.build/alog"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"log"
+	"os"
 	"reflect"
+	"strings"
 
 	"cloud.google.com/go/bigtable"
 	"github.com/imdario/mergo"
@@ -40,10 +44,64 @@ type BigProto struct {
 	table *bigtable.Table
 }
 
+// New does the same as NewClient, except that it allows you to pass in the bigtable client directly, instead of passing in the project, instance and table name.
 func New(client *bigtable.Client, tableName string) *BigProto {
 	table := client.Open(tableName)
 	return &BigProto{
 		table: table,
+	}
+}
+
+// NewClient returns a bigproto object, containing an initialized bigtable connection using the project,instance and table name as connection parameters
+// It is recommended that you call this function once in your package's init function and then store the returned object as a global variable, instead of making new connections with every read/write.
+func NewClient(ctx context.Context, googleProject string, bigTableInstance string, tableName string) *BigProto {
+	client, err := bigtable.NewClient(ctx, googleProject, bigTableInstance)
+	if err != nil {
+		alog.Fatalf(ctx, "Error creating bigtable client: %s", err)
+	}
+	return New(client, tableName)
+}
+
+// SetupAndUseBigtableEmulator ensures that any other calls from the bigtable client are made to the gcloud bigtable emulator running on your local machine. This makes it possible to test your code without needing to setup an actual bigtable instance in the cloud.
+func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string, columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
+	//set environment variable that will make the bigtable client connect to local bigtable
+	_ = os.Setenv("BIGTABLE_EMULATOR_HOST", "localhost:8086")
+
+	// initialize admin client to create and/or delete table
+	adminClient, err := bigtable.NewAdminClient(context.Background(), googleProject, bigTableInstance)
+	if err != nil {
+		log.Fatalf("Could not create admin client: %v", err)
+	}
+
+	// delete table if required to reset it
+	if resetIfExist {
+		err = adminClient.DeleteTable(context.Background(), tableName)
+		if strings.Contains(err.Error(), "connection refused") {
+			panic("Bigtable emulator not running. Run 'gcloud beta emulators bigtable start'")
+		}
+	}
+
+	// create table if create/reset is required
+	if createIfNotExist || resetIfExist {
+		err = adminClient.CreateTable(context.Background(), tableName)
+		if err != nil && !strings.Contains(err.Error(), "already exists") {
+			// if the emulator has not been started up, instruct the developer how to do this
+			if strings.Contains(err.Error(), "connection refused") {
+				panic("Bigtable emulator not running. Run 'gcloud beta emulators bigtable start'")
+			}
+			panic(err)
+		}
+	}
+
+	// create column families that do not already exist
+	for _, cf := range columnFamilies {
+		err = adminClient.CreateColumnFamily(context.Background(), tableName, cf)
+		if err != nil && !strings.Contains(err.Error(), "already exists") {
+			if strings.Contains(err.Error(), "connection refused") {
+				panic("Bigtable emulator not running. Run 'gcloud beta emulators bigtable start'")
+			}
+			panic(err)
+		}
 	}
 }
 
