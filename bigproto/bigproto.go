@@ -62,7 +62,9 @@ func NewClient(ctx context.Context, googleProject string, bigTableInstance strin
 	return New(client, tableName)
 }
 
-// SetupAndUseBigtableEmulator ensures that any other calls from the bigtable client are made to the gcloud bigtable emulator running on your local machine. This makes it possible to test your code without needing to setup an actual bigtable instance in the cloud.
+// SetupAndUseBigtableEmulator ensures that any other calls from the bigtable client are made to the gcloud bigtable emulator running on your local machine. This makes it possible to test your code without needing to set up an actual bigtable instance in the cloud.
+// Prerequisites: You need to have the gcloud cli installed, including the bigtable emulator extension which might not be installed by default with gcloud. You also need to run "gcloud beta emulators bigtable start" once in any terminal on your pc and keep that terminal open while using the emulator.
+// For debugging content in the local table, you can use the google cbt cli exactly as you would for a cloud bigtable instance, except that you need to run "export BIGTABLE_EMULATOR_HOST=localhost:8086" in your terminal session before running any cbt commands.
 func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string, columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
 	//set environment variable that will make the bigtable client connect to local bigtable
 	_ = os.Setenv("BIGTABLE_EMULATOR_HOST", "localhost:8086")
