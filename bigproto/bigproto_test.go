@@ -3,6 +3,7 @@ package bigproto
 import (
 	"context"
 	"log"
+	"strconv"
 	"testing"
 	"time"
 
@@ -287,6 +288,18 @@ func TestBigProto_ListProtos(t *testing.T) {
 	type fields struct {
 		table *bigtable.Table
 	}
+	b := &BigProto{
+		table: Table,
+	}
+
+	// arrange: write two protos to be read by tests
+	for i, name := range []string{"builders/1", "builders/2"} {
+		err := b.WriteProto(context.Background(), "b#"+strconv.FormatInt(int64(i+1), 10), "b", &pb.Builder{Name: name})
+		if err != nil {
+			panic("Could not write proto because " + err.Error())
+		}
+	}
+	// arrange: tests
 	type args struct {
 		ctx          context.Context
 		columnFamily string
@@ -296,46 +309,48 @@ func TestBigProto_ListProtos(t *testing.T) {
 		opts         []bigtable.ReadOption
 	}
 	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    []proto.Message
-		wantErr bool
+		name           string
+		fields         fields
+		args           args
+		wantProtos     []proto.Message
+		wantLastRowKey string
+		wantErr        bool
 	}{
 		{
-			name: "OK:standard_list",
-			fields: fields{
-				table: Table,
-			},
+			name:   "OK:standard_list",
+			fields: fields{},
 			args: args{
 				ctx:          context.Background(),
 				columnFamily: "b",
 				messageType:  &pb.Builder{},
 				readMask:     &fieldmaskpb.FieldMask{Paths: []string{"name"}},
-				rowSet:       bigtable.PrefixRange("builders"),
+				rowSet:       bigtable.PrefixRange("b#"),
 				opts:         nil,
 			},
-			want: []proto.Message{
+			wantProtos: []proto.Message{
 				&pb.Builder{Name: "builders/1"},
 				&pb.Builder{Name: "builders/2"},
 			},
-			wantErr: false,
+			wantLastRowKey: "b#2",
+			wantErr:        false,
 		},
 	}
+
+	// act and assert
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &BigProto{
-				table: tt.fields.table,
-			}
-			got, err := b.ListProtos(tt.args.ctx, tt.args.columnFamily, tt.args.messageType, tt.args.readMask, tt.args.rowSet, tt.args.opts...)
+			listedProtos, lastRowKey, err := b.ListProtos(tt.args.ctx, tt.args.columnFamily, tt.args.messageType, tt.args.readMask, tt.args.rowSet, tt.args.opts...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ListProtos() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			for i, v := range got {
-				if !proto.Equal(v, tt.want[i]) {
-					t.Errorf("ListProtos() got = %v, want %v", v, tt.want[i])
+			for i, v := range listedProtos {
+				if !proto.Equal(v, tt.wantProtos[i]) {
+					t.Errorf("ListProtos() got = %v, want %v", v, tt.wantProtos[i])
 				}
+			}
+			if lastRowKey != tt.wantLastRowKey {
+				t.Errorf("Last row key was %v, want %v", lastRowKey, tt.wantLastRowKey)
 			}
 		})
 	}
@@ -485,6 +500,107 @@ func Test_setupAndUseBigtableEmulator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			SetupAndUseBigtableEmulator(tt.args.googleProject, tt.args.bigTableInstance, tt.args.tableName, tt.args.columnFamilies, tt.args.createIfNotExist, tt.args.resetIfExist)
+		})
+	}
+}
+
+func TestBigProto_PageProtos(t *testing.T) {
+	type fields struct {
+		table *bigtable.Table
+	}
+	b := &BigProto{
+		table: Table,
+	}
+
+	// arrange: write protos to be read by tests
+	for i := 1; i <= 3; i++ {
+		rowKey := "b#" + strconv.FormatInt(int64(i), 10)
+		builderMessage := &pb.Builder{Name: "builders/" + strconv.FormatInt(int64(i), 10)}
+		err := b.WriteProto(context.Background(), rowKey, "b", builderMessage)
+		if err != nil {
+			panic("Could not write proto because " + err.Error())
+		}
+		err = b.UpdateProto(context.Background(), rowKey, "b", builderMessage, nil)
+		if err != nil {
+			panic("Could not update proto because " + err.Error())
+		}
+	}
+	// arrange: tests
+	type args struct {
+		ctx          context.Context
+		columnFamily string
+		messageType  proto.Message
+		opts         PageOptions
+	}
+	tests := []struct {
+		name          string
+		fields        fields
+		args          args
+		wantProtos    []proto.Message
+		wantNextToken string
+		wantErr       bool
+	}{
+		{
+			name:   "Expect next token",
+			fields: fields{},
+			args: args{
+				ctx:          context.Background(),
+				columnFamily: "b",
+				messageType:  &pb.Builder{},
+				opts: PageOptions{
+					rowKeyPrefix: "b#",
+					pageSize:     2,
+					nextToken:    "",
+					maxPageSize:  10,
+					readMask:     nil,
+				},
+			},
+			wantProtos: []proto.Message{
+				&pb.Builder{Name: "builders/1"},
+				&pb.Builder{Name: "builders/2"},
+			},
+			wantNextToken: "YiMy",
+			wantErr:       false,
+		},
+		{
+			name:   "Expect no next token",
+			fields: fields{},
+			args: args{
+				ctx:          context.Background(),
+				columnFamily: "b",
+				messageType:  &pb.Builder{},
+				opts: PageOptions{
+					rowKeyPrefix: "b#",
+					pageSize:     2,
+					nextToken:    "YiMy",
+					maxPageSize:  10,
+					readMask:     nil,
+				},
+			},
+			wantProtos: []proto.Message{
+				&pb.Builder{Name: "builders/3"},
+			},
+			wantNextToken: "",
+			wantErr:       false,
+		},
+	}
+	// act and assert
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listedProtos, gotNextToken, err := b.PageProtos(tt.args.ctx, tt.args.columnFamily, tt.args.messageType, tt.args.opts)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("PageProtos() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			for i, v := range listedProtos {
+				if !proto.Equal(v, tt.wantProtos[i]) {
+					t.Errorf("PageProtos() got = %v, want %v", v, tt.wantProtos[i])
+				}
+			}
+			if gotNextToken != tt.wantNextToken {
+				t.Errorf("Next token was %v, want %v", gotNextToken, tt.wantNextToken)
+			}
+			assert.Equalf(t, tt.wantNextToken, gotNextToken, "PageProtos(%v, %v, %v, %v)", tt.args.ctx, tt.args.columnFamily, tt.args.messageType, tt.args.opts)
 		})
 	}
 }

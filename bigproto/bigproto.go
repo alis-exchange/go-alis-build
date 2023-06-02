@@ -2,6 +2,7 @@ package bigproto
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"go.alis.build/alog"
@@ -38,6 +39,21 @@ func (e ErrMismatchedTypes) Error() string {
 	return fmt.Sprintf("expected %s, got %s", e.Expected, e.Actual)
 }
 
+type ErrInvalidNextToken struct {
+	nextToken string
+}
+
+func (e ErrInvalidNextToken) Error() string {
+	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
+}
+
+type ErrNegativePageSize struct {
+}
+
+func (e ErrNegativePageSize) Error() string {
+	return "page size cannot be less than 0"
+}
+
 const DefaultColumnName = "0"
 
 type BigProto struct {
@@ -62,9 +78,15 @@ func NewClient(ctx context.Context, googleProject string, bigTableInstance strin
 	return New(client, tableName)
 }
 
-// SetupAndUseBigtableEmulator ensures that any other calls from the bigtable client are made to the gcloud bigtable emulator running on your local machine. This makes it possible to test your code without needing to set up an actual bigtable instance in the cloud.
-// Prerequisites: You need to have the gcloud cli installed, including the bigtable emulator extension which might not be installed by default with gcloud. You also need to run "gcloud beta emulators bigtable start" once in any terminal on your pc and keep that terminal open while using the emulator.
-// For debugging content in the local table, you can use the google cbt cli exactly as you would for a cloud bigtable instance, except that you need to run "export BIGTABLE_EMULATOR_HOST=localhost:8086" in your terminal session before running any cbt commands.
+// SetupAndUseBigtableEmulator ensures that any other calls from the bigtable client are made to the gcloud bigtable
+// emulator running on your local machine. This makes it possible to test your code without needing to set up an actual
+// bigtable instance in the cloud.
+// Prerequisites: You need to have the gcloud cli installed, including the bigtable emulator extension which might not
+// be installed by default with gcloud. You also need to run "gcloud beta emulators bigtable start" once in any terminal
+// on your pc and keep that terminal open while using the emulator.
+// For debugging content in the local table, you can use the google cbt cli exactly as you would for a cloud bigtable
+// instance, except that you need to run "export BIGTABLE_EMULATOR_HOST=localhost:8086" in your terminal session before
+// running any cbt commands.
 func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string, columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
 	//set environment variable that will make the bigtable client connect to local bigtable
 	_ = os.Setenv("BIGTABLE_EMULATOR_HOST", "localhost:8086")
@@ -298,17 +320,18 @@ func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
 }
 
 // ListProtos returns the list of rows for a specified set of rows
-func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message, readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, error) {
+func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message, readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, string, error) {
 	var res []proto.Message
 
 	// Validate readMask if provided
 	if readMask != nil {
 		readMask.Normalize()
 		if !readMask.IsValid(messageType) {
-			return nil, ErrInvalidFieldMask
+			return nil, "", ErrInvalidFieldMask
 		}
 	}
 
+	lastRowKey := ""
 	err := b.table.ReadRows(ctx, rowSet,
 		func(row bigtable.Row) bool {
 
@@ -343,15 +366,90 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 				}
 				res = append(res, message)
 			}
+			lastRowKey = row.Key()
 			return true
 		},
 		opts...,
 	)
 	if err != nil {
-		return nil, err
+		return nil, lastRowKey, err
 	}
 
-	return res, nil
+	return res, lastRowKey, nil
+}
+
+type PageOptions struct {
+	rowKeyPrefix string
+	pageSize     int
+	nextToken    string
+	maxPageSize  int
+	readMask     *fieldmaskpb.FieldMask
+}
+
+// PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
+func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message, opts PageOptions) ([]proto.Message, string, error) {
+
+	// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
+	startKey := opts.rowKeyPrefix
+	if opts.nextToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.nextToken)
+		if err != nil {
+			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
+		}
+		startKey = string(startKeyBytes)
+		if !strings.HasPrefix(startKey, opts.rowKeyPrefix) {
+			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
+		}
+	}
+	endKey := opts.rowKeyPrefix + "~~~~~~~~~~~~"
+	rowSet := bigtable.NewRange(startKey, endKey)
+
+	// set page size to max if max is not 0 (thus has been set), and pageSize is 0 or over set maximum
+	if opts.maxPageSize < 0 {
+		return nil, "", ErrNegativePageSize{}
+	}
+
+	// set max page size to 100 if unset
+	if opts.maxPageSize < 1 {
+		opts.maxPageSize = 100
+	}
+
+	// ensure pageSize is not 0 or greater than maxSize
+	if opts.pageSize == 0 || opts.pageSize > opts.maxPageSize {
+		opts.pageSize = opts.maxPageSize
+	}
+
+	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
+	// the previous response, and thus the first element returned in this response will be ignored
+	if opts.nextToken != "" {
+		opts.pageSize++
+	}
+
+	// set the bigtable reading options
+	var readingOpts []bigtable.ReadOption
+	readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.pageSize)))
+	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
+		bigtable.LatestNFilter(1),
+		bigtable.FamilyFilter(columnFamily),
+	)))
+
+	// list the protos and set the newNextToken as the base64 encoded lastRowKey
+	protos, lastRowKey, err := b.ListProtos(ctx, columnFamily, messageType, &fieldmaskpb.FieldMask{}, rowSet, readingOpts...)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// determine new next token, which is empty if there is no more data
+	newNextToken := base64.StdEncoding.EncodeToString([]byte(lastRowKey))
+	if len(protos) != opts.pageSize {
+		newNextToken = ""
+	}
+
+	if opts.nextToken != "" {
+		protos = protos[1:]
+	}
+	return protos, newNextToken, nil
+
 }
 
 // Now returns the time using Bigtable's time method.
