@@ -18,12 +18,4 @@ The client can then poll the server to check the status of the operation until i
 
 More details on LROs are available at: https://google.aip.dev/151
 
-## This package
-
 This package makes managing LROs on your server super simple. 😎
-
-Practically, this package provides a client for managing long-running operations (LROs) using Google Cloud Bigtable.  
-The `go.alis.build/lro` package provides a number of features for managing LROs, including:
-- Creating LROs: The CreateOperation method creates a new LRO and stores it in Bigtable.
-- Getting LROs: The GetOperation method gets an LRO from Bigtable.
-- Updating LROs: The SetSuccessful and SetFailed methods update the status of an LRO in Bigtable.
