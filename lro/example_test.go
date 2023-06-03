@@ -9,24 +9,27 @@ import (
 )
 
 func ExampleNewClient() {
+	// Create a global context object.
+	ctx := context.Background()
+
 	// create client (preferably only once at a global level in the init function of your package/service)
-	lroClient := NewClient(context.Background(), "google-project", "bigtable-instance", "tableName")
+	lroClient := NewClient(ctx, "google-project", "bigtable-instance", "tableName")
 
 	// create a long-running op
-	op, _ := lroClient.CreateOperation(context.Background(), CreateOpts{})
+	op, _ := lroClient.CreateOperation(ctx, CreateOpts{})
 
 	// kick off long-running op
 	go func(operationName string) {
 		// do some long-running things
 		time.Sleep(10 * time.Second)
 		err := fmt.Errorf("some error")
-		var response *anypb.Any //this can be any valid proto message
+		var response *anypb.Any // this can be any valid proto message
 
 		// handle long-running results
 		if err != nil {
-			_ = lroClient.SetSuccessful(context.Background(), operationName, response, MetaOptions{})
+			_ = lroClient.SetSuccessful(ctx, operationName, response, MetaOptions{})
 		} else {
-			_ = lroClient.SetFailed(context.Background(), operationName, &status.Status{Message: err.Error(), Code: 500}, MetaOptions{})
+			_ = lroClient.SetFailed(ctx, operationName, &status.Status{Message: err.Error(), Code: 500}, MetaOptions{})
 		}
 	}(op.Name)
 }

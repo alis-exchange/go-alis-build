@@ -42,12 +42,12 @@ func init() {
 	}
 
 	tables := []string{tableName}
-	for _, ta := range tables {
-		if err = adminClient.CreateTable(ctx, ta); err != nil {
+	for _, table := range tables {
+		if err = adminClient.CreateTable(ctx, table); err != nil {
 			log.Fatal(err)
 		}
 		for _, f := range families {
-			if err = adminClient.CreateColumnFamily(ctx, ta, f); err != nil {
+			if err = adminClient.CreateColumnFamily(ctx, table, f); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -63,7 +63,7 @@ func init() {
 
 func TestLroClient_CreateOperation(t *testing.T) {
 	type fields struct {
-		t *bigtable.Table
+		table *bigtable.Table
 	}
 	type args struct {
 		ctx  context.Context
@@ -80,7 +80,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 		{
 			name: "auto-generated id with no parent or metatdata",
 			fields: fields{
-				t: Table,
+				table: Table,
 			},
 			args: args{
 				ctx: context.Background(),
@@ -99,7 +99,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 		{
 			name: "set id with parent and no metadata",
 			fields: fields{
-				t: Table,
+				table: Table,
 			},
 			args: args{
 				ctx: context.Background(),
@@ -118,8 +118,8 @@ func TestLroClient_CreateOperation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := &LroClient{
-				t: tt.fields.t,
+			l := &Client{
+				table: tt.fields.table,
 			}
 			got, err := l.CreateOperation(tt.args.ctx, tt.args.opts)
 			if (err != nil) != tt.wantErr {
@@ -137,11 +137,11 @@ func TestLroClient_CreateOperation(t *testing.T) {
 }
 
 func TestLroClient_GetOperation(t *testing.T) {
-	l := &LroClient{
-		t: Table,
+	lro := &Client{
+		table: Table,
 	}
 	// arrange by creating 5 test operations
-	create5TestOperations(l)
+	create5TestOperations(lro)
 
 	// act and assert
 	type args struct {
@@ -167,7 +167,7 @@ func TestLroClient_GetOperation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			got, err := l.GetOperation(tt.args.ctx, tt.args.operationName)
+			got, err := lro.GetOperation(tt.args.ctx, tt.args.operationName)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetOperation() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -187,11 +187,11 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 		response      *anypb.Any
 		metaOptions   MetaOptions
 	}
-	l := &LroClient{
-		t: Table,
+	lro := &Client{
+		table: Table,
 	}
 	// arrange
-	create5TestOperations(l)
+	create5TestOperations(lro)
 	tests := []struct {
 		name    string
 		args    args
@@ -222,11 +222,11 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := l.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metaOptions); (err != nil) != tt.wantErr {
+			if err := lro.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metaOptions); (err != nil) != tt.wantErr {
 				t.Errorf("SetSuccessful() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
-				op, _ := l.GetOperation(tt.args.ctx, tt.args.operationName)
+				op, _ := lro.GetOperation(tt.args.ctx, tt.args.operationName)
 				if op.Done != true {
 					t.Errorf("SetSuccessful() did not update the done field to true")
 				}
@@ -244,11 +244,11 @@ func TestLroClient_SetFailed(t *testing.T) {
 		operationName string
 		response      *anypb.Any
 	}
-	l := &LroClient{
-		t: Table,
+	lro := &Client{
+		table: Table,
 	}
 	// arrange
-	create5TestOperations(l)
+	create5TestOperations(lro)
 	tests := []struct {
 		name    string
 		args    args
@@ -278,11 +278,11 @@ func TestLroClient_SetFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := l.SetFailed(tt.args.ctx, tt.args.operationName, &status.Status{}, MetaOptions{}); (err != nil) != tt.wantErr {
+			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, &status.Status{}, MetaOptions{}); (err != nil) != tt.wantErr {
 				t.Errorf("SetFailed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
-				op, _ := l.GetOperation(tt.args.ctx, tt.args.operationName)
+				op, _ := lro.GetOperation(tt.args.ctx, tt.args.operationName)
 				if op.Done != true {
 					t.Errorf("SetFailed() did not update the done field to true")
 				}
@@ -294,8 +294,8 @@ func TestLroClient_SetFailed(t *testing.T) {
 	}
 }
 
-func create5TestOperations(l *LroClient) {
+func create5TestOperations(lro *Client) {
 	for i := 0; i < 5; i++ {
-		_, _ = l.CreateOperation(context.Background(), CreateOpts{id: "test-id-" + strconv.FormatInt(int64(i), 10), parent: "test-parent", metadata: nil})
+		_, _ = lro.CreateOperation(context.Background(), CreateOpts{id: "test-id-" + strconv.FormatInt(int64(i), 10), parent: "test-parent", metadata: nil})
 	}
 }

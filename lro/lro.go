@@ -33,17 +33,21 @@ func (e InvalidOperationName) Error() string {
 	return fmt.Sprintf("%s is not a valid operation name (must start with 'operations/')", e.Name)
 }
 
-type LroClient struct {
-	t *bigtable.Table
+// Client manages the instance of the Bigtable table.
+type Client struct {
+	table *bigtable.Table
 }
 
-// NewClient creates a new LroClient
-func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string) *LroClient {
+// NewClient creates a new lro Client object. The function takes three arguments:
+//   - googleProject: The ID of the Google Cloud project that the LroClient object will use.
+//   - bigTableInstance: The name of the Bigtable instance that the LroClient object will use.
+//   - table: The name of the Bigtable table that the LroClient object will use.
+func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string) *Client {
 	client, err := bigtable.NewClient(ctx, googleProject, bigTableInstance)
 	if err != nil {
-		alog.Fatalf(ctx, "Error creating bigtable client: %s", err)
+		alog.Fatalf(ctx, "create bigtable client: %s", err)
 	}
-	return &LroClient{t: client.Open(table)}
+	return &Client{table: client.Open(table)}
 }
 
 type CreateOpts struct {
@@ -53,7 +57,7 @@ type CreateOpts struct {
 }
 
 // CreateOperation stores a new long-running operation in bigtable, with done=false
-func (l *LroClient) CreateOperation(ctx context.Context, opts CreateOpts) (*longrunningpb.Operation, error) {
+func (c *Client) CreateOperation(ctx context.Context, opts CreateOpts) (*longrunningpb.Operation, error) {
 	// create new unpopulated long-running operation
 	op := &longrunningpb.Operation{}
 
@@ -70,7 +74,7 @@ func (l *LroClient) CreateOperation(ctx context.Context, opts CreateOpts) (*long
 	}
 
 	//write to bigtable
-	err := l.writeToBigtable(ctx, colName, op)
+	err := c.writeToBigtable(ctx, colName, op)
 	if err != nil {
 		return nil, err
 	}
@@ -79,9 +83,9 @@ func (l *LroClient) CreateOperation(ctx context.Context, opts CreateOpts) (*long
 }
 
 // GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
-func (l *LroClient) GetOperation(ctx context.Context, operationName string) (*longrunningpb.Operation, error) {
+func (c *Client) GetOperation(ctx context.Context, operationName string) (*longrunningpb.Operation, error) {
 	// get operation (ignore column name)
-	op, _, err := l.getOpAndColumn(ctx, operationName)
+	op, _, err := c.getOpAndColumn(ctx, operationName)
 	if err != nil {
 		return nil, err
 	}
@@ -93,10 +97,11 @@ type MetaOptions struct {
 	newMetaData proto.Message
 }
 
-// SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the metadata if metaOptions.update is true
-func (l *LroClient) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
+// SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
+// metadata if metaOptions.update is true
+func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
 	// get operation and column name
-	op, colName, err := l.getOpAndColumn(ctx, operationName)
+	op, colName, err := c.getOpAndColumn(ctx, operationName)
 	if err != nil {
 		return err
 	}
@@ -119,17 +124,18 @@ func (l *LroClient) SetSuccessful(ctx context.Context, operationName string, res
 	}
 
 	// write to bigtable
-	err = l.writeToBigtable(ctx, colName, op)
+	err = c.writeToBigtable(ctx, colName, op)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata if metaOptions.update is true
-func (l *LroClient) SetFailed(ctx context.Context, operationName string, error *status.Status, metaOptions MetaOptions) error {
+// SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
+// if metaOptions.update is true
+func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metaOptions MetaOptions) error {
 	// get operation and column name
-	op, colName, err := l.getOpAndColumn(ctx, operationName)
+	op, colName, err := c.getOpAndColumn(ctx, operationName)
 	if err != nil {
 		return err
 	}
@@ -147,14 +153,14 @@ func (l *LroClient) SetFailed(ctx context.Context, operationName string, error *
 	}
 
 	// write to bigtable
-	err = l.writeToBigtable(ctx, colName, op)
+	err = c.writeToBigtable(ctx, colName, op)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (l *LroClient) writeToBigtable(ctx context.Context, columnName string, op *longrunningpb.Operation) error {
+func (c *Client) writeToBigtable(ctx context.Context, columnName string, op *longrunningpb.Operation) error {
 	// marshal proto into bytes
 	dataBytes, err := proto.Marshal(op)
 	if err != nil {
@@ -167,14 +173,14 @@ func (l *LroClient) writeToBigtable(ctx context.Context, columnName string, op *
 
 	// apply mutation
 	operationId, _ := strings.CutPrefix(op.Name, "operations/")
-	err = l.t.Apply(ctx, operationId, mut)
+	err = c.table.Apply(ctx, operationId, mut)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (l *LroClient) getOpAndColumn(ctx context.Context, operation string) (*longrunningpb.Operation, string, error) {
+func (c *Client) getOpAndColumn(ctx context.Context, operation string) (*longrunningpb.Operation, string, error) {
 
 	// validate operation name and get row key
 	rowKey, prefixFound := strings.CutPrefix(operation, "operations/")
@@ -184,7 +190,7 @@ func (l *LroClient) getOpAndColumn(ctx context.Context, operation string) (*long
 
 	// read row from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(ColumnFamily))
-	row, err := l.t.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
+	row, err := c.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
 	if err != nil {
 		return nil, "", err
 	}
