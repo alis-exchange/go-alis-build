@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigtable"
-	googleBigtable "cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"
 	"github.com/mennanov/fmutils"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +42,7 @@ func init() {
 	}
 
 	proj, instance := "proj", "instance"
-	adminClient, err := googleBigtable.NewAdminClient(ctx, proj, instance, option.WithGRPCConn(conn))
+	adminClient, err := bigtable.NewAdminClient(ctx, proj, instance, option.WithGRPCConn(conn))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,7 +59,7 @@ func init() {
 		}
 	}
 
-	client, err := googleBigtable.NewClient(ctx, proj, instance, option.WithGRPCConn(conn))
+	client, err := bigtable.NewClient(ctx, proj, instance, option.WithGRPCConn(conn))
 	if err != nil {
 		log.Fatal(err)
 	}
