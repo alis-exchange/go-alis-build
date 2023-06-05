@@ -35,19 +35,22 @@ func (e InvalidOperationName) Error() string {
 
 // Client manages the instance of the Bigtable table.
 type Client struct {
-	table *bigtable.Table
+	table        *bigtable.Table
+	rowKeyPrefix string
 }
 
 // NewClient creates a new lro Client object. The function takes three arguments:
 //   - googleProject: The ID of the Google Cloud project that the LroClient object will use.
 //   - bigTableInstance: The name of the Bigtable instance that the LroClient object will use.
 //   - table: The name of the Bigtable table that the LroClient object will use.
-func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string) *Client {
+//   - rowKeyPrefix: This should be an empty string if you have a dedicated table for long-running ops, but if you are
+//     sharing a table, the rowKeyPrefix can be used to separate your long-op data from other data in the table
+func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string, rowKeyPrefix string) *Client {
 	client, err := bigtable.NewClient(ctx, googleProject, bigTableInstance)
 	if err != nil {
 		alog.Fatalf(ctx, "create bigtable client: %s", err)
 	}
-	return &Client{table: client.Open(table)}
+	return &Client{table: client.Open(table), rowKeyPrefix: rowKeyPrefix}
 }
 
 type CreateOpts struct {
@@ -74,7 +77,7 @@ func (c *Client) CreateOperation(ctx context.Context, opts CreateOpts) (*longrun
 	}
 
 	//write to bigtable
-	err := c.writeToBigtable(ctx, colName, op)
+	err := c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +88,7 @@ func (c *Client) CreateOperation(ctx context.Context, opts CreateOpts) (*longrun
 // GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
 func (c *Client) GetOperation(ctx context.Context, operationName string) (*longrunningpb.Operation, error) {
 	// get operation (ignore column name)
-	op, _, err := c.getOpAndColumn(ctx, operationName)
+	op, _, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +104,7 @@ type MetaOptions struct {
 // metadata if metaOptions.Update is true
 func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
 	// get operation and column name
-	op, colName, err := c.getOpAndColumn(ctx, operationName)
+	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
 		return err
 	}
@@ -124,7 +127,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	}
 
 	// write to bigtable
-	err = c.writeToBigtable(ctx, colName, op)
+	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return err
 	}
@@ -135,7 +138,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 // if metaOptions.Update is true
 func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metaOptions MetaOptions) error {
 	// get operation and column name
-	op, colName, err := c.getOpAndColumn(ctx, operationName)
+	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
 		return err
 	}
@@ -153,14 +156,14 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 	}
 
 	// write to bigtable
-	err = c.writeToBigtable(ctx, colName, op)
+	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Client) writeToBigtable(ctx context.Context, columnName string, op *longrunningpb.Operation) error {
+func (c *Client) writeToBigtable(ctx context.Context, rowKeyPrefix string, columnName string, op *longrunningpb.Operation) error {
 	// marshal proto into bytes
 	dataBytes, err := proto.Marshal(op)
 	if err != nil {
@@ -173,20 +176,22 @@ func (c *Client) writeToBigtable(ctx context.Context, columnName string, op *lon
 
 	// apply mutation
 	operationId, _ := strings.CutPrefix(op.Name, "operations/")
-	err = c.table.Apply(ctx, operationId, mut)
+	rowKey := rowKeyPrefix + operationId
+	err = c.table.Apply(ctx, rowKey, mut)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Client) getOpAndColumn(ctx context.Context, operation string) (*longrunningpb.Operation, string, error) {
+func (c *Client) getOpAndColumn(ctx context.Context, rowKeyPrefix, operation string) (*longrunningpb.Operation, string, error) {
 
 	// validate operation name and get row key
-	rowKey, prefixFound := strings.CutPrefix(operation, "operations/")
+	operationId, prefixFound := strings.CutPrefix(operation, "operations/")
 	if !prefixFound {
 		return nil, "", InvalidOperationName{Name: operation}
 	}
+	rowKey := rowKeyPrefix + operationId
 
 	// read row from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(ColumnFamily))

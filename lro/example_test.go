@@ -13,7 +13,7 @@ func ExampleNewClient() {
 	ctx := context.Background()
 
 	// create client (preferably only once at a global level in the init function of your package/service)
-	lroClient := NewClient(ctx, "google-project", "bigtable-instance", "tableName")
+	lroClient := NewClient(ctx, "google-project", "bigtable-instance", "tableName", "")
 
 	// create a long-running op
 	op, _ := lroClient.CreateOperation(ctx, CreateOpts{})
