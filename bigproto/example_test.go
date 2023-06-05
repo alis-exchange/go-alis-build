@@ -70,20 +70,20 @@ func ExampleBigProto_PageProtos() {
 
 	// page through protos (messageType should be a valid proto message, set to nil just for example)
 	protos, newNextToken, _ := table.PageProtos(ctx, "column-family", nil, PageOptions{
-		rowKeyPrefix: "prefix",
-		pageSize:     10,
-		maxPageSize:  100,
-		readMask:     readMask,
+		RowKeyPrefix: "prefix",
+		PageSize:     10,
+		MaxPageSize:  100,
+		ReadMask:     readMask,
 	})
 	//handle protos
 	_ = protos
 	//go to next page
 	_, newNextToken, _ = table.PageProtos(ctx, "column-family", nil, PageOptions{
-		rowKeyPrefix: "prefix",
-		pageSize:     10,
-		nextToken:    newNextToken,
-		maxPageSize:  100,
-		readMask:     nil,
+		RowKeyPrefix: "prefix",
+		PageSize:     10,
+		NextToken:    newNextToken,
+		MaxPageSize:  100,
+		ReadMask:     nil,
 	})
 	if newNextToken == "" {
 		println("No more pages")

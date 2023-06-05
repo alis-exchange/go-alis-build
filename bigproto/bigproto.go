@@ -379,55 +379,55 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 }
 
 type PageOptions struct {
-	rowKeyPrefix string
-	pageSize     int
-	nextToken    string
-	maxPageSize  int
-	readMask     *fieldmaskpb.FieldMask
+	RowKeyPrefix string
+	PageSize     int
+	NextToken    string
+	MaxPageSize  int
+	ReadMask     *fieldmaskpb.FieldMask
 }
 
 // PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
 func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message, opts PageOptions) ([]proto.Message, string, error) {
 
 	// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
-	startKey := opts.rowKeyPrefix
-	if opts.nextToken != "" {
-		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.nextToken)
+	startKey := opts.RowKeyPrefix
+	if opts.NextToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.NextToken)
 		if err != nil {
-			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
+			return nil, "", ErrInvalidNextToken{nextToken: opts.NextToken}
 		}
 		startKey = string(startKeyBytes)
-		if !strings.HasPrefix(startKey, opts.rowKeyPrefix) {
-			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
+		if !strings.HasPrefix(startKey, opts.RowKeyPrefix) {
+			return nil, "", ErrInvalidNextToken{nextToken: opts.NextToken}
 		}
 	}
-	endKey := opts.rowKeyPrefix + "~~~~~~~~~~~~"
+	endKey := opts.RowKeyPrefix + "~~~~~~~~~~~~"
 	rowSet := bigtable.NewRange(startKey, endKey)
 
 	// set page size to max if max is not 0 (thus has been set), and pageSize is 0 or over set maximum
-	if opts.maxPageSize < 0 {
+	if opts.MaxPageSize < 0 {
 		return nil, "", ErrNegativePageSize{}
 	}
 
 	// set max page size to 100 if unset
-	if opts.maxPageSize < 1 {
-		opts.maxPageSize = 100
+	if opts.MaxPageSize < 1 {
+		opts.MaxPageSize = 100
 	}
 
 	// ensure pageSize is not 0 or greater than maxSize
-	if opts.pageSize == 0 || opts.pageSize > opts.maxPageSize {
-		opts.pageSize = opts.maxPageSize
+	if opts.PageSize == 0 || opts.PageSize > opts.MaxPageSize {
+		opts.PageSize = opts.MaxPageSize
 	}
 
 	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
 	// the previous response, and thus the first element returned in this response will be ignored
-	if opts.nextToken != "" {
-		opts.pageSize++
+	if opts.NextToken != "" {
+		opts.PageSize++
 	}
 
 	// set the bigtable reading options
 	var readingOpts []bigtable.ReadOption
-	readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.pageSize)))
+	readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.PageSize)))
 	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
 		bigtable.LatestNFilter(1),
 		bigtable.FamilyFilter(columnFamily),
@@ -441,11 +441,11 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 
 	// determine new next token, which is empty if there is no more data
 	newNextToken := base64.StdEncoding.EncodeToString([]byte(lastRowKey))
-	if len(protos) != opts.pageSize {
+	if len(protos) != opts.PageSize {
 		newNextToken = ""
 	}
 
-	if opts.nextToken != "" {
+	if opts.NextToken != "" {
 		protos = protos[1:]
 	}
 	return protos, newNextToken, nil

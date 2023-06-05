@@ -547,11 +547,11 @@ func TestBigProto_PageProtos(t *testing.T) {
 				columnFamily: "b",
 				messageType:  &pb.Builder{},
 				opts: PageOptions{
-					rowKeyPrefix: "b#",
-					pageSize:     2,
-					nextToken:    "",
-					maxPageSize:  10,
-					readMask:     nil,
+					RowKeyPrefix: "b#",
+					PageSize:     2,
+					NextToken:    "",
+					MaxPageSize:  10,
+					ReadMask:     nil,
 				},
 			},
 			wantProtos: []proto.Message{
@@ -569,11 +569,11 @@ func TestBigProto_PageProtos(t *testing.T) {
 				columnFamily: "b",
 				messageType:  &pb.Builder{},
 				opts: PageOptions{
-					rowKeyPrefix: "b#",
-					pageSize:     2,
-					nextToken:    "YiMy",
-					maxPageSize:  10,
-					readMask:     nil,
+					RowKeyPrefix: "b#",
+					PageSize:     2,
+					NextToken:    "YiMy",
+					MaxPageSize:  10,
+					ReadMask:     nil,
 				},
 			},
 			wantProtos: []proto.Message{
