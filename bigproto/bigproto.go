@@ -434,7 +434,7 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 	)))
 
 	// list the protos and set the newNextToken as the base64 encoded lastRowKey
-	protos, lastRowKey, err := b.ListProtos(ctx, columnFamily, messageType, &fieldmaskpb.FieldMask{}, rowSet, readingOpts...)
+	protos, lastRowKey, err := b.ListProtos(ctx, columnFamily, messageType, opts.ReadMask, rowSet, readingOpts...)
 	if err != nil {
 		return nil, "", err
 	}
