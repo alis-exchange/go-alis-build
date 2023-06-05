@@ -47,8 +47,7 @@ func (e ErrInvalidNextToken) Error() string {
 	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
 }
 
-type ErrNegativePageSize struct {
-}
+type ErrNegativePageSize struct{}
 
 func (e ErrNegativePageSize) Error() string {
 	return "page size cannot be less than 0"
@@ -58,6 +57,14 @@ const DefaultColumnName = "0"
 
 type BigProto struct {
 	table *bigtable.Table
+}
+
+type PageOptions struct {
+	RowKeyPrefix string
+	PageSize     int32
+	NextToken    string
+	MaxPageSize  int32
+	ReadMask     *fieldmaskpb.FieldMask
 }
 
 // New does the same as NewClient, except that it allows you to pass in the bigtable client directly, instead of passing in the project, instance and table name.
@@ -220,63 +227,6 @@ func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily 
 	return nil
 }
 
-// newEmptyMessage returns a new instance of the same type as the provided proto.Message
-func newEmptyMessage(msg proto.Message) proto.Message {
-	// Get the reflect.Type of the message
-	msgType := reflect.TypeOf(msg)
-	if msgType.Kind() == reflect.Ptr {
-		msgType = msgType.Elem()
-	}
-
-	// Create a new instance of the message type using reflection
-	newMsg := reflect.New(msgType).Interface().(proto.Message)
-	return newMsg
-}
-
-// mergeUpdates merges the updates into the current message in line with the update mask
-func mergeUpdates(current proto.Message, updates proto.Message, updateMask *fieldmaskpb.FieldMask) error {
-	// If current and updates are different types, return an error
-	if reflect.TypeOf(current) != reflect.TypeOf(updates) {
-		return ErrMismatchedTypes{
-			Expected: reflect.TypeOf(current),
-			Actual:   reflect.TypeOf(updates),
-		}
-	}
-
-	// If updates is nil, return nil
-	if updates == nil {
-		return nil
-	}
-	// If current is nil, return updates
-	if current == nil {
-		current = updates
-		return nil
-	}
-
-	// If updates is empty, return nil
-	if proto.Size(updates) == 0 {
-		return nil
-	}
-
-	// Apply Update Mask if provided
-	if updateMask != nil {
-		updateMask.Normalize()
-		if !updateMask.IsValid(current) {
-			return ErrInvalidFieldMask
-		}
-		// Redact the request according to the provided field mask.
-		fmutils.Prune(current, updateMask.GetPaths())
-	}
-
-	// Merge the updates into the current message
-	err := mergo.Merge(current, updates)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // ReadRow returns the row from bigtable at the given rowKey. This allows for more custom read functionality to be
 // implemented on the row that is returned. This is useful for reading multiple columns from a row, or reading a row
 // with a filter. It also allows for things like "Source Prioritisation" whereby data may be duplicated across column
@@ -378,14 +328,6 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	return res, lastRowKey, nil
 }
 
-type PageOptions struct {
-	RowKeyPrefix string
-	PageSize     int
-	NextToken    string
-	MaxPageSize  int
-	ReadMask     *fieldmaskpb.FieldMask
-}
-
 // PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
 func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message, opts PageOptions) ([]proto.Message, string, error) {
 
@@ -441,7 +383,7 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 
 	// determine new next token, which is empty if there is no more data
 	newNextToken := base64.StdEncoding.EncodeToString([]byte(lastRowKey))
-	if len(protos) != opts.PageSize {
+	if len(protos) != int(opts.PageSize) {
 		newNextToken = ""
 	}
 
@@ -455,4 +397,61 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 // Now returns the time using Bigtable's time method.
 func Now() *timestamppb.Timestamp {
 	return timestamppb.New(bigtable.Now().Time())
+}
+
+// newEmptyMessage returns a new instance of the same type as the provided proto.Message
+func newEmptyMessage(msg proto.Message) proto.Message {
+	// Get the reflect.Type of the message
+	msgType := reflect.TypeOf(msg)
+	if msgType.Kind() == reflect.Ptr {
+		msgType = msgType.Elem()
+	}
+
+	// Create a new instance of the message type using reflection
+	newMsg := reflect.New(msgType).Interface().(proto.Message)
+	return newMsg
+}
+
+// mergeUpdates merges the updates into the current message in line with the update mask
+func mergeUpdates(current proto.Message, updates proto.Message, updateMask *fieldmaskpb.FieldMask) error {
+	// If current and updates are different types, return an error
+	if reflect.TypeOf(current) != reflect.TypeOf(updates) {
+		return ErrMismatchedTypes{
+			Expected: reflect.TypeOf(current),
+			Actual:   reflect.TypeOf(updates),
+		}
+	}
+
+	// If updates is nil, return nil
+	if updates == nil {
+		return nil
+	}
+	// If current is nil, return updates
+	if current == nil {
+		current = updates
+		return nil
+	}
+
+	// If updates is empty, return nil
+	if proto.Size(updates) == 0 {
+		return nil
+	}
+
+	// Apply Update Mask if provided
+	if updateMask != nil {
+		updateMask.Normalize()
+		if !updateMask.IsValid(current) {
+			return ErrInvalidFieldMask
+		}
+		// Redact the request according to the provided field mask.
+		fmutils.Prune(current, updateMask.GetPaths())
+	}
+
+	// Merge the updates into the current message
+	err := mergo.Merge(current, updates)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
