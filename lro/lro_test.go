@@ -85,9 +85,9 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				opts: CreateOpts{
-					id:       "",
-					parent:   "",
-					metadata: nil,
+					Id:       "",
+					Parent:   "",
+					Metadata: nil,
 				},
 			},
 			want: &longrunningpb.Operation{
@@ -104,9 +104,9 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				opts: CreateOpts{
-					id:       "test-id",
-					parent:   "test-parent",
-					metadata: nil,
+					Id:       "test-id",
+					Parent:   "test-parent",
+					Metadata: nil,
 				},
 			},
 			want: &longrunningpb.Operation{
@@ -203,7 +203,7 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/test-id-1",
 				response:      nil,
-				metaOptions:   MetaOptions{update: true, newMetaData: &longrunningpb.Operation{}},
+				metaOptions:   MetaOptions{Update: true, NewMetaData: &longrunningpb.Operation{}},
 			},
 			wantErr: false,
 		},
@@ -296,6 +296,6 @@ func TestLroClient_SetFailed(t *testing.T) {
 
 func create5TestOperations(lro *Client) {
 	for i := 0; i < 5; i++ {
-		_, _ = lro.CreateOperation(context.Background(), CreateOpts{id: "test-id-" + strconv.FormatInt(int64(i), 10), parent: "test-parent", metadata: nil})
+		_, _ = lro.CreateOperation(context.Background(), CreateOpts{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
 	}
 }

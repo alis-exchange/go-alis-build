@@ -51,9 +51,9 @@ func NewClient(ctx context.Context, googleProject string, bigTableInstance strin
 }
 
 type CreateOpts struct {
-	id       string
-	parent   string
-	metadata *anypb.Any
+	Id       string
+	Parent   string
+	Metadata *anypb.Any
 }
 
 // CreateOperation stores a new long-running operation in bigtable, with done=false
@@ -62,15 +62,15 @@ func (c *Client) CreateOperation(ctx context.Context, opts CreateOpts) (*longrun
 	op := &longrunningpb.Operation{}
 
 	// set resource name
-	if opts.id == "" {
-		opts.id = uuid.New().String()
+	if opts.Id == "" {
+		opts.Id = uuid.New().String()
 	}
-	op.Name = "operations/" + opts.id
+	op.Name = "operations/" + opts.Id
 
 	// set column name
 	colName := ParentlessOpColumn
-	if opts.parent != "" {
-		colName = opts.parent
+	if opts.Parent != "" {
+		colName = opts.Parent
 	}
 
 	//write to bigtable
@@ -93,12 +93,12 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 }
 
 type MetaOptions struct {
-	update      bool
-	newMetaData proto.Message
+	Update      bool
+	NewMetaData proto.Message
 }
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
-// metadata if metaOptions.update is true
+// metadata if metaOptions.Update is true
 func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, operationName)
@@ -115,8 +115,8 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 
 	// update metadata if required
-	if metaOptions.update {
-		metaAny, err := anypb.New(metaOptions.newMetaData)
+	if metaOptions.Update {
+		metaAny, err := anypb.New(metaOptions.NewMetaData)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 }
 
 // SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
-// if metaOptions.update is true
+// if metaOptions.Update is true
 func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metaOptions MetaOptions) error {
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, operationName)
@@ -143,9 +143,9 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 	// update operation fields
 	op.Done = true
 	op.Result = &longrunningpb.Operation_Error{Error: error}
-	if metaOptions.update {
+	if metaOptions.Update {
 		// convert metadata to Any type as per longrunning.Operation requirement.
-		metaAny, err := anypb.New(metaOptions.newMetaData)
+		metaAny, err := anypb.New(metaOptions.NewMetaData)
 		if err != nil {
 			return err
 		}
