@@ -107,7 +107,7 @@ func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, 
 	// delete table if required to reset it
 	if resetIfExist {
 		err = adminClient.DeleteTable(context.Background(), tableName)
-		if strings.Contains(err.Error(), "connection refused") {
+		if err != nil && strings.Contains(err.Error(), "connection refused") {
 			panic("Bigtable emulator not running. Run 'gcloud beta emulators bigtable start'")
 		}
 	}
