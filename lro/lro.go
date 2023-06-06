@@ -102,7 +102,7 @@ type MetaOptions struct {
 }
 
 // WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete
-func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) *longrunningpb.Operation {
+func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	startTime := time.Now()
 	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
@@ -111,15 +111,14 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 	for {
 		op, err := c.GetOperation(ctx, req.GetName())
 		if err != nil {
-			alog.Errorf(ctx, "get operation: %s", err)
-			return nil
+			return nil, err
 		}
 		if op.Done {
-			return op
+			return op, nil
 		}
 		timePassed := time.Now().Sub(startTime)
 		if timeout != nil && timePassed > duration {
-			return op
+			return op, nil
 		}
 		time.Sleep(1 * time.Second)
 	}

@@ -37,7 +37,7 @@ func ExampleNewClient() {
 
 	// wait for a long-running op to finish
 	req := &longrunningpb.WaitOperationRequest{Name: op.Name, Timeout: durationpb.New(10 * time.Second)}
-	operation := lroClient.WaitOperation(ctx, req)
+	operation, _ := lroClient.WaitOperation(ctx, req)
 	if operation.Done != true {
 		println("operation is not done yet")
 	}

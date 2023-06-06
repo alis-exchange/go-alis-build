@@ -356,7 +356,10 @@ func TestClient_WaitOperation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &longrunningpb.WaitOperationRequest{Name: tt.args.operationName, Timeout: &durationpb.Duration{Seconds: tt.args.timeout}}
-			got := lro.WaitOperation(tt.args.ctx, req)
+			got, err := lro.WaitOperation(tt.args.ctx, req)
+			if err != nil {
+				t.Errorf("WaitOperation() error = %v", err)
+			}
 			if !proto.Equal(got, tt.want) {
 				t.Errorf("WaitOperation() got = %v, want %v", got, tt.want)
 			}
