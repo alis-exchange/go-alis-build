@@ -1,10 +1,12 @@
 package lro
 
 import (
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
 	"fmt"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"time"
 )
 
@@ -32,4 +34,11 @@ func ExampleNewClient() {
 			_ = lroClient.SetFailed(ctx, operationName, &status.Status{Message: err.Error(), Code: 500}, MetaOptions{})
 		}
 	}(op.Name)
+
+	// wait for a long-running op to finish
+	req := &longrunningpb.WaitOperationRequest{Name: op.Name, Timeout: durationpb.New(10 * time.Second)}
+	operation := lroClient.WaitOperation(ctx, req)
+	if operation.Done != true {
+		println("operation is not done yet")
+	}
 }

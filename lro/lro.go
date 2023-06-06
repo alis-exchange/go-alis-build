@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"strings"
+	"time"
 )
 
 const ColumnFamily = "0"
@@ -100,6 +101,30 @@ type MetaOptions struct {
 	NewMetaData proto.Message
 }
 
+// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete
+func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) *longrunningpb.Operation {
+	timeout := req.GetTimeout()
+	startTime := time.Now()
+	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
+
+	// start loop to check if operation is done or timeout has passed
+	for {
+		op, err := c.GetOperation(ctx, req.GetName())
+		if err != nil {
+			alog.Errorf(ctx, "get operation: %s", err)
+			return nil
+		}
+		if op.Done {
+			return op
+		}
+		timePassed := time.Now().Sub(startTime)
+		if timeout != nil && timePassed > duration {
+			return op
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
+
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
 // metadata if metaOptions.Update is true
 func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
@@ -111,11 +136,13 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 
 	// update done and result
 	op.Done = true
-	resultAny, err := anypb.New(response)
-	if err != nil {
-		return err
+	if response != nil {
+		resultAny, err := anypb.New(response)
+		if err != nil {
+			return err
+		}
+		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
-	op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 
 	// update metadata if required
 	if metaOptions.Update {
@@ -145,6 +172,9 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 
 	// update operation fields
 	op.Done = true
+	if error == nil {
+		error = &status.Status{}
+	}
 	op.Result = &longrunningpb.Operation_Error{Error: error}
 	if metaOptions.Update {
 		// convert metadata to Any type as per longrunning.Operation requirement.

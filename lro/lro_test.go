@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"log"
 	"strconv"
 	"testing"
@@ -297,5 +298,68 @@ func TestLroClient_SetFailed(t *testing.T) {
 func create5TestOperations(lro *Client) {
 	for i := 0; i < 5; i++ {
 		_, _ = lro.CreateOperation(context.Background(), CreateOpts{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
+	}
+}
+
+func TestClient_WaitOperation(t *testing.T) {
+	type args struct {
+		ctx           context.Context
+		operationName string
+		timeout       int64
+		response      *anypb.Any
+	}
+	lro := &Client{
+		table: Table,
+	}
+	// arrange
+	create5TestOperations(lro)
+	// complete operation "operations/test-id-2"
+	err := lro.SetSuccessful(context.Background(), "operations/test-id-2", nil, MetaOptions{})
+	if err != nil {
+		panic(err)
+	}
+
+	tests := []struct {
+		name string
+		args args
+		want *longrunningpb.Operation
+	}{
+		{
+			name: "timeout",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1",
+				timeout:       3,
+			},
+			want: &longrunningpb.Operation{
+				Name:     "operations/test-id-1",
+				Done:     false,
+				Metadata: nil,
+				Result:   nil,
+			},
+		},
+		{
+			name: "done operation",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-2",
+				timeout:       10,
+			},
+			want: &longrunningpb.Operation{
+				Name:     "operations/test-id-2",
+				Done:     true,
+				Metadata: nil,
+				Result:   nil,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &longrunningpb.WaitOperationRequest{Name: tt.args.operationName, Timeout: &durationpb.Duration{Seconds: tt.args.timeout}}
+			got := lro.WaitOperation(tt.args.ctx, req)
+			if !proto.Equal(got, tt.want) {
+				t.Errorf("WaitOperation() got = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

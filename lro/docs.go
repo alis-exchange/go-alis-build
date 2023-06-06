@@ -11,6 +11,8 @@ The lro package provides a number of features for managing LROs, including:
   - Creating LROs: The CreateOperation method creates a new LRO and stores it in Bigtable.
   - Getting LROs: The GetOperation method gets an LRO from Bigtable.
   - Updating LROs: The SetSuccessful and SetFailed methods update the status of an LRO in Bigtable.
+  - Waiting for LROs to finish: The WaitOperation method returns the LRO when it is done or when a specified timeout is
+    reached.
 
 // More details on LROs are available at: https://google.aip.dev/151
 */
