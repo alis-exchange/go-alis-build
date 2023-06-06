@@ -152,7 +152,8 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 		op.Metadata = metaAny
 	}
 
-	// write to bigtable
+	// update in bigtable by first deleting
+	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return err
@@ -184,7 +185,8 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 		op.Metadata = metaAny
 	}
 
-	// write to bigtable
+	// write to bigtable by first deleting
+	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return err
@@ -251,4 +253,23 @@ func (c *Client) getOpAndColumn(ctx context.Context, rowKeyPrefix, operation str
 
 	// return operation and column name
 	return op, column.Column, nil
+}
+
+// DeleteRow deletes an entire row from bigtable at the given rowKey.
+func (c *Client) deleteRow(ctx context.Context, rowKeyPrefix string, operation string) error {
+	// validate operation name and get row key
+	operationId, prefixFound := strings.CutPrefix(operation, "operations/")
+	if !prefixFound {
+		return InvalidOperationName{Name: operation}
+	}
+	rowKey := rowKeyPrefix + operationId
+
+	// Create a single mutation to delete the row
+	mut := bigtable.NewMutation()
+	mut.DeleteRow()
+	err := c.table.Apply(ctx, rowKey, mut)
+	if err != nil {
+		return fmt.Errorf("delete bigtable row: %w", err)
+	}
+	return nil
 }

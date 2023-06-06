@@ -298,6 +298,10 @@ func TestLroClient_SetFailed(t *testing.T) {
 func create5TestOperations(lro *Client) {
 	for i := 0; i < 5; i++ {
 		_, _ = lro.CreateOperation(context.Background(), CreateOpts{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
+		// set even numbers as successful
+		if i%2 == 0 {
+			_ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, MetaOptions{})
+		}
 	}
 }
 
@@ -313,11 +317,6 @@ func TestClient_WaitOperation(t *testing.T) {
 	}
 	// arrange
 	create5TestOperations(lro)
-	// complete operation "operations/test-id-2"
-	err := lro.SetSuccessful(context.Background(), "operations/test-id-2", nil, MetaOptions{})
-	if err != nil {
-		panic(err)
-	}
 
 	tests := []struct {
 		name string
