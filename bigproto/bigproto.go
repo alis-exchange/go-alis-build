@@ -3,9 +3,9 @@ package bigproto
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"go.alis.build/alog"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
 	"os"
@@ -13,45 +13,10 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigtable"
-	"github.com/imdario/mergo"
 	"github.com/mennanov/fmutils"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
-
-// ErrNotFound is returned when the desired resource is not found in Bigtable.
-type ErrNotFound struct {
-	RowKey string // unavailable locations
-}
-
-func (e ErrNotFound) Error() string {
-	return fmt.Sprintf("%s not found", e.RowKey)
-}
-
-var ErrInvalidFieldMask = errors.New("invalid field mask")
-
-type ErrMismatchedTypes struct {
-	Expected reflect.Type
-	Actual   reflect.Type
-}
-
-func (e ErrMismatchedTypes) Error() string {
-	return fmt.Sprintf("expected %s, got %s", e.Expected, e.Actual)
-}
-
-type ErrInvalidNextToken struct {
-	nextToken string
-}
-
-func (e ErrInvalidNextToken) Error() string {
-	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
-}
-
-type ErrNegativePageSize struct{}
-
-func (e ErrNegativePageSize) Error() string {
-	return "page size cannot be less than 0"
-}
 
 const DefaultColumnName = "0"
 
@@ -65,6 +30,12 @@ type PageOptions struct {
 	NextToken    string
 	MaxPageSize  int32
 	ReadMask     *fieldmaskpb.FieldMask
+}
+
+// Stream is a generic interface for types that can send specific type objects.
+type Stream[T any] interface {
+	Send(T) error
+	grpc.ServerStream
 }
 
 // New does the same as NewClient, except that it allows you to pass in the bigtable client directly, instead of passing in the project, instance and table name.
@@ -94,7 +65,8 @@ func NewClient(ctx context.Context, googleProject string, bigTableInstance strin
 // For debugging content in the local table, you can use the google cbt cli exactly as you would for a cloud bigtable
 // instance, except that you need to run "export BIGTABLE_EMULATOR_HOST=localhost:8086" in your terminal session before
 // running any cbt commands.
-func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string, columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
+func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string,
+	columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
 	//set environment variable that will make the bigtable client connect to local bigtable
 	_ = os.Setenv("BIGTABLE_EMULATOR_HOST", "localhost:8086")
 
@@ -157,7 +129,8 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 
 // ReadProto obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read mask and
 // stores the result in the provided message pointer.
-func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
+func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
+	readMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(columnFamily))
 	row, err := b.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
@@ -202,7 +175,8 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 // UpdateProto obtains a Bigtable row entry and unmarshalls the value at the given columnFamily to the type provided. It
 // then merges the updates as specified in the provided message, into the current type, in line with the update mask
 // and writes the updated proto back to Bigtable. The updated proto is also stored in the provided message pointer.
-func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
+func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
+	updateMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	currentMessage := newEmptyMessage(message)
 	err := b.ReadProto(ctx, rowKey, columnFamily, currentMessage, nil)
@@ -270,7 +244,8 @@ func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
 }
 
 // ListProtos returns the list of rows for a specified set of rows
-func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message, readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, string, error) {
+func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message,
+	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, string, error) {
 	var res []proto.Message
 
 	// Validate readMask if provided
@@ -328,8 +303,64 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	return res, lastRowKey, nil
 }
 
+// StreamProtos returns the list of rows for a specified set of rows
+func (b *BigProto) StreamProtos(ctx context.Context, stream chan<- proto.Message, columnFamily string, messageType proto.Message,
+	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) error {
+
+	// Validate readMask if provided
+	if readMask != nil {
+		readMask.Normalize()
+		if !readMask.IsValid(messageType) {
+			return ErrInvalidFieldMask
+		}
+	}
+
+	err := b.table.ReadRows(ctx, rowSet,
+		func(row bigtable.Row) bool {
+
+			// if the row is empty, append an empty value and continue
+			if row == nil {
+				return true
+			}
+
+			// Each collection is stored in a corresponding Bigtable family
+			columns := row[columnFamily]
+
+			// if there are no results in the row, append an empty value and continue
+			if len(columns) == 0 {
+				return true
+			}
+
+			// only the first column is used by the resource.
+			column := columns[0]
+			var message proto.Message
+			err := proto.Unmarshal(column.Value, messageType)
+			if err != nil {
+				return false
+			}
+			message = proto.Clone(messageType)
+			if message != nil {
+				// Apply Read Mask if provided
+				if readMask != nil {
+					// Redact the request according to the provided field mask.
+					fmutils.Filter(message, readMask.GetPaths())
+				}
+				stream <- message
+			}
+			return true
+		},
+		opts...,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
-func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message, opts PageOptions) ([]proto.Message, string, error) {
+func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message,
+	opts PageOptions) ([]proto.Message, string, error) {
 
 	// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
 	startKey := opts.RowKeyPrefix
@@ -397,61 +428,4 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 // Now returns the time using Bigtable's time method.
 func Now() *timestamppb.Timestamp {
 	return timestamppb.New(bigtable.Now().Time())
-}
-
-// newEmptyMessage returns a new instance of the same type as the provided proto.Message
-func newEmptyMessage(msg proto.Message) proto.Message {
-	// Get the reflect.Type of the message
-	msgType := reflect.TypeOf(msg)
-	if msgType.Kind() == reflect.Ptr {
-		msgType = msgType.Elem()
-	}
-
-	// Create a new instance of the message type using reflection
-	newMsg := reflect.New(msgType).Interface().(proto.Message)
-	return newMsg
-}
-
-// mergeUpdates merges the updates into the current message in line with the update mask
-func mergeUpdates(current proto.Message, updates proto.Message, updateMask *fieldmaskpb.FieldMask) error {
-	// If current and updates are different types, return an error
-	if reflect.TypeOf(current) != reflect.TypeOf(updates) {
-		return ErrMismatchedTypes{
-			Expected: reflect.TypeOf(current),
-			Actual:   reflect.TypeOf(updates),
-		}
-	}
-
-	// If updates is nil, return nil
-	if updates == nil {
-		return nil
-	}
-	// If current is nil, return updates
-	if current == nil {
-		current = updates
-		return nil
-	}
-
-	// If updates is empty, return nil
-	if proto.Size(updates) == 0 {
-		return nil
-	}
-
-	// Apply Update Mask if provided
-	if updateMask != nil {
-		updateMask.Normalize()
-		if !updateMask.IsValid(current) {
-			return ErrInvalidFieldMask
-		}
-		// Redact the request according to the provided field mask.
-		fmutils.Prune(current, updateMask.GetPaths())
-	}
-
-	// Merge the updates into the current message
-	err := mergo.Merge(current, updates)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
