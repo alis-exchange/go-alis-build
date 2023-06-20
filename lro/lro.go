@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	"go.alis.build/alog"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -46,22 +45,23 @@ type Client struct {
 //   - table: The name of the Bigtable table that the LroClient object will use.
 //   - rowKeyPrefix: This should be an empty string if you have a dedicated table for long-running ops, but if you are
 //     sharing a table, the rowKeyPrefix can be used to separate your long-op data from other data in the table
-func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string, rowKeyPrefix string) *Client {
+func NewClient(ctx context.Context, googleProject string, bigTableInstance string, table string, rowKeyPrefix string) (*Client, error) {
 	client, err := bigtable.NewClient(ctx, googleProject, bigTableInstance)
 	if err != nil {
-		alog.Fatalf(ctx, "create bigtable client: %s", err)
+		return nil, fmt.Errorf("create bigtable client: %w", err)
 	}
-	return &Client{table: client.Open(table), rowKeyPrefix: rowKeyPrefix}
+	return &Client{table: client.Open(table), rowKeyPrefix: rowKeyPrefix}, nil
 }
 
-type CreateOpts struct {
-	Id       string
-	Parent   string
-	Metadata *anypb.Any
+// CreateOptions provide additional, optional, parameters to the CreateOperation method.
+type CreateOptions struct {
+	Id       string     // Id is used to provide user defined operation Ids
+	Parent   string     // Parent is the parent long-running operation responsible for creating the new LRO.  Format should be operations/*
+	Metadata *anypb.Any // Metadata object as defined for the relevant LRO metadata response.
 }
 
 // CreateOperation stores a new long-running operation in bigtable, with done=false
-func (c *Client) CreateOperation(ctx context.Context, opts CreateOpts) (*longrunningpb.Operation, error) {
+func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*longrunningpb.Operation, error) {
 	// create new unpopulated long-running operation
 	op := &longrunningpb.Operation{}
 
@@ -96,11 +96,6 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	return op, nil
 }
 
-type MetaOptions struct {
-	Update      bool
-	NewMetaData proto.Message
-}
-
 // WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete
 func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
@@ -125,8 +120,8 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 }
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
-// metadata if metaOptions.Update is true
-func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metaOptions MetaOptions) error {
+// metadata if provided.
+func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metadata proto.Message) error {
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
@@ -144,8 +139,8 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	}
 
 	// update metadata if required
-	if metaOptions.Update {
-		metaAny, err := anypb.New(metaOptions.NewMetaData)
+	if metadata != nil {
+		metaAny, err := anypb.New(metadata)
 		if err != nil {
 			return err
 		}
@@ -163,7 +158,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 
 // SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
 // if metaOptions.Update is true
-func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metaOptions MetaOptions) error {
+func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metadata proto.Message) error {
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
@@ -176,9 +171,9 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 		error = &status.Status{}
 	}
 	op.Result = &longrunningpb.Operation_Error{Error: error}
-	if metaOptions.Update {
+	if metadata != nil {
 		// convert metadata to Any type as per longrunning.Operation requirement.
-		metaAny, err := anypb.New(metaOptions.NewMetaData)
+		metaAny, err := anypb.New(metadata)
 		if err != nil {
 			return err
 		}
@@ -186,6 +181,31 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 	}
 
 	// write to bigtable by first deleting
+	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
+	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
+// contains progress information and common metadata such as create time.
+func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metadata proto.Message) error {
+	// get operation and column name.
+	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+	if err != nil {
+		return err
+	}
+
+	// update metadata if required
+	metaAny, err := anypb.New(metadata)
+	if err != nil {
+		return err
+	}
+	op.Metadata = metaAny
+
+	// update in bigtable by first deleting
 	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {

@@ -68,7 +68,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 	}
 	type args struct {
 		ctx  context.Context
-		opts CreateOpts
+		opts *CreateOptions
 	}
 	tests := []struct {
 		name            string
@@ -85,7 +85,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			},
 			args: args{
 				ctx: context.Background(),
-				opts: CreateOpts{
+				opts: &CreateOptions{
 					Id:       "",
 					Parent:   "",
 					Metadata: nil,
@@ -104,7 +104,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			},
 			args: args{
 				ctx: context.Background(),
-				opts: CreateOpts{
+				opts: &CreateOptions{
 					Id:       "test-id",
 					Parent:   "test-parent",
 					Metadata: nil,
@@ -186,7 +186,7 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 		ctx           context.Context
 		operationName string
 		response      *anypb.Any
-		metaOptions   MetaOptions
+		metadata      *anypb.Any
 	}
 	lro := &Client{
 		table: Table,
@@ -204,7 +204,7 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/test-id-1",
 				response:      nil,
-				metaOptions:   MetaOptions{Update: true, NewMetaData: &longrunningpb.Operation{}},
+				metadata:      nil,
 			},
 			wantErr: false,
 		},
@@ -223,7 +223,7 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := lro.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metaOptions); (err != nil) != tt.wantErr {
+			if err := lro.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metadata); (err != nil) != tt.wantErr {
 				t.Errorf("SetSuccessful() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
@@ -279,7 +279,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, &status.Status{}, MetaOptions{}); (err != nil) != tt.wantErr {
+			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, &status.Status{}, nil); (err != nil) != tt.wantErr {
 				t.Errorf("SetFailed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
@@ -297,10 +297,10 @@ func TestLroClient_SetFailed(t *testing.T) {
 
 func create5TestOperations(lro *Client) {
 	for i := 0; i < 5; i++ {
-		_, _ = lro.CreateOperation(context.Background(), CreateOpts{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
+		_, _ = lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
 		// set even numbers as successful
 		if i%2 == 0 {
-			_ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, MetaOptions{})
+			_ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, nil)
 		}
 	}
 }
