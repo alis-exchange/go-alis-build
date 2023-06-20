@@ -15,10 +15,10 @@ func ExampleNewClient() {
 	ctx := context.Background()
 
 	// create client (preferably only once at a global level in the init function of your package/service)
-	lroClient := NewClient(ctx, "google-project", "bigtable-instance", "tableName", "")
+	lroClient, _ := NewClient(ctx, "google-project", "bigtable-instance", "tableName", "")
 
 	// create a long-running op
-	op, _ := lroClient.CreateOperation(ctx, CreateOpts{})
+	op, _ := lroClient.CreateOperation(ctx, nil)
 
 	// kick off long-running op
 	go func(operationName string) {
@@ -29,9 +29,9 @@ func ExampleNewClient() {
 
 		// handle long-running results
 		if err != nil {
-			_ = lroClient.SetSuccessful(ctx, operationName, response, MetaOptions{})
+			_ = lroClient.SetSuccessful(ctx, operationName, response, nil)
 		} else {
-			_ = lroClient.SetFailed(ctx, operationName, &status.Status{Message: err.Error(), Code: 500}, MetaOptions{})
+			_ = lroClient.SetFailed(ctx, operationName, &status.Status{Message: err.Error(), Code: 500}, nil)
 		}
 	}(op.Name)
 
