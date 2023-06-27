@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
+	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"strings"
@@ -158,7 +160,8 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 
 // SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
 // if metaOptions.Update is true
-func (c *Client) SetFailed(ctx context.Context, operationName string, error *status.Status, metadata proto.Message) error {
+func (c *Client) SetFailed(ctx context.Context, operationName string, error error, metadata proto.Message) error {
+
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
@@ -168,9 +171,13 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error *sta
 	// update operation fields
 	op.Done = true
 	if error == nil {
-		error = &status.Status{}
+		error = grpcStatus.Errorf(codes.Internal, "unknown error")
 	}
-	op.Result = &longrunningpb.Operation_Error{Error: error}
+	op.Result = &longrunningpb.Operation_Error{Error: &status.Status{
+		Code:    int32(grpcStatus.Code(err)),
+		Message: error.Error(),
+		Details: nil,
+	}}
 	if metadata != nil {
 		// convert metadata to Any type as per longrunning.Operation requirement.
 		metaAny, err := anypb.New(metadata)
