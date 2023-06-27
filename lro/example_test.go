@@ -4,7 +4,6 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
 	"fmt"
-	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"time"
@@ -31,7 +30,7 @@ func ExampleNewClient() {
 		if err != nil {
 			_ = lroClient.SetSuccessful(ctx, operationName, response, nil)
 		} else {
-			_ = lroClient.SetFailed(ctx, operationName, &status.Status{Message: err.Error(), Code: 500}, nil)
+			_ = lroClient.SetFailed(ctx, operationName, err, nil)
 		}
 	}(op.Name)
 

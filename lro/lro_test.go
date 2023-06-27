@@ -5,8 +5,8 @@ import (
 	"cloud.google.com/go/bigtable/bttest"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
+	"fmt"
 	"google.golang.org/api/option"
-	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -244,6 +244,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 		ctx           context.Context
 		operationName string
 		response      *anypb.Any
+		error         error
 	}
 	lro := &Client{
 		table: Table,
@@ -261,6 +262,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/test-id-1",
 				response:      nil,
+				error:         fmt.Errorf("some error without a code"),
 			},
 			wantErr: false,
 		},
@@ -270,6 +272,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/asdf",
 				response:      nil,
+				error:         fmt.Errorf("some error without a code"),
 			},
 			wantErr: true,
 		},
@@ -279,7 +282,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, &status.Status{}, nil); (err != nil) != tt.wantErr {
+			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, tt.args.error, nil); (err != nil) != tt.wantErr {
 				t.Errorf("SetFailed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
