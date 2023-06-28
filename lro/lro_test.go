@@ -116,6 +116,21 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			wantErr:         false,
 			useResponseName: false,
 		},
+		{
+			name: "nil create options",
+			fields: fields{
+				table: Table,
+			},
+			args: args{
+				ctx:  context.Background(),
+				opts: nil,
+			},
+			want: &longrunningpb.Operation{
+				//name is auto-generated
+			},
+			wantErr:         false,
+			useResponseName: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

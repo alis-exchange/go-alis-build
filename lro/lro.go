@@ -67,6 +67,11 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	// create new unpopulated long-running operation
 	op := &longrunningpb.Operation{}
 
+	// set opts to empty struct if nil
+	if opts == nil {
+		opts = &CreateOptions{}
+	}
+
 	// set resource name
 	if opts.Id == "" {
 		opts.Id = uuid.New().String()
