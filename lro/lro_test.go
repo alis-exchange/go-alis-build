@@ -1,20 +1,21 @@
 package lro
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"strconv"
+	"testing"
+
 	"cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	"context"
-	"fmt"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"log"
-	"strconv"
-	"testing"
 )
 
 const tableName = "test"
@@ -375,7 +376,6 @@ func TestClient_WaitOperation(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/test-id-3",
 				timeout:       -1, //negative nummber to indicate to test that no timeout is set
-
 			},
 			want: &longrunningpb.Operation{
 				Name:     "operations/test-id-3",
@@ -394,7 +394,7 @@ func TestClient_WaitOperation(t *testing.T) {
 				req = &longrunningpb.WaitOperationRequest{Name: tt.args.operationName}
 			}
 
-			got, err := lro.WaitOperation(tt.args.ctx, req)
+			got, err := lro.WaitOperation(tt.args.ctx, req, nil)
 			if err != nil {
 				t.Errorf("WaitOperation() error = %v", err)
 			}
