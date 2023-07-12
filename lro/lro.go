@@ -29,6 +29,15 @@ func (e ErrNotFound) Error() string {
 	return fmt.Sprintf("%s not found", e.Operation)
 }
 
+// ErrWaitDeadlineExceeded is returned when the WaitOperation exceeds the specified, or default, timeout
+type ErrWaitDeadlineExceeded struct {
+	timeout *durationpb.Duration
+}
+
+func (e ErrWaitDeadlineExceeded) Error() string {
+	return fmt.Sprintf("exceeded timeout deadline of %d seconds", e.timeout.GetSeconds())
+}
+
 type InvalidOperationName struct {
 	Name string // unavailable locations
 }
@@ -130,7 +139,7 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 
 		timePassed := time.Now().Sub(startTime)
 		if timeout != nil && timePassed > duration {
-			return op, nil
+			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
 		}
 		time.Sleep(1 * time.Second)
 	}
