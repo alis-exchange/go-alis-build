@@ -11,6 +11,7 @@ import (
 	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"strings"
 	"time"
 )
@@ -103,9 +104,12 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	return op, nil
 }
 
-// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete
+// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete. Note that if you do not specify a timeout, the timeout is set to 15 seconds.
 func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
+	if timeout == nil {
+		timeout = &durationpb.Duration{Seconds: 15}
+	}
 	startTime := time.Now()
 	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
 

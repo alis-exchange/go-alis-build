@@ -369,10 +369,31 @@ func TestClient_WaitOperation(t *testing.T) {
 				Result:   nil,
 			},
 		},
+		{
+			name: "no timeout set",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-3",
+				timeout:       -1, //negative nummber to indicate to test that no timeout is set
+
+			},
+			want: &longrunningpb.Operation{
+				Name:     "operations/test-id-3",
+				Done:     false,
+				Metadata: nil,
+				Result:   nil,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := &longrunningpb.WaitOperationRequest{Name: tt.args.operationName, Timeout: &durationpb.Duration{Seconds: tt.args.timeout}}
+			var req *longrunningpb.WaitOperationRequest
+			if tt.args.timeout > 0 {
+				req = &longrunningpb.WaitOperationRequest{Name: tt.args.operationName, Timeout: &durationpb.Duration{Seconds: tt.args.timeout}}
+			} else {
+				req = &longrunningpb.WaitOperationRequest{Name: tt.args.operationName}
+			}
+
 			got, err := lro.WaitOperation(tt.args.ctx, req)
 			if err != nil {
 				t.Errorf("WaitOperation() error = %v", err)
