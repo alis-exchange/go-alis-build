@@ -17,8 +17,11 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-const ColumnFamily = "0"
-const ParentlessOpColumn = "0"
+// Bigtable constants
+const (
+	ColumnFamily       = "0"
+	ParentlessOpColumn = "0"
+)
 
 // ErrNotFound is returned when the requested operation does not exist in bigtable
 type ErrNotFound struct {
