@@ -1,10 +1,13 @@
 package lro
 
 import (
-	"cloud.google.com/go/bigtable"
-	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
+	"cloud.google.com/go/bigtable"
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
@@ -12,12 +15,13 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"strings"
-	"time"
 )
 
-const ColumnFamily = "0"
-const ParentlessOpColumn = "0"
+// Bigtable constants
+const (
+	ColumnFamily       = "0"
+	ParentlessOpColumn = "0"
+)
 
 // ErrNotFound is returned when the requested operation does not exist in bigtable
 type ErrNotFound struct {
@@ -26,6 +30,15 @@ type ErrNotFound struct {
 
 func (e ErrNotFound) Error() string {
 	return fmt.Sprintf("%s not found", e.Operation)
+}
+
+// ErrWaitDeadlineExceeded is returned when the WaitOperation exceeds the specified, or default, timeout
+type ErrWaitDeadlineExceeded struct {
+	timeout *durationpb.Duration
+}
+
+func (e ErrWaitDeadlineExceeded) Error() string {
+	return fmt.Sprintf("exceeded timeout deadline of %d seconds", e.timeout.GetSeconds())
 }
 
 type InvalidOperationName struct {
@@ -104,8 +117,8 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	return op, nil
 }
 
-// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete. Note that if you do not specify a timeout, the timeout is set to 15 seconds.
-func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) (*longrunningpb.Operation, error) {
+// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete. The metadataCallback parameter can be used to handle metadata provided by the operation. Note that if you do not specify a timeout, the timeout is set to 15 seconds.
+func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest, metadataCallback func(*anypb.Any)) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	if timeout == nil {
 		timeout = &durationpb.Duration{Seconds: 15}
@@ -122,9 +135,14 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 		if op.Done {
 			return op, nil
 		}
+		if metadataCallback != nil && op.Metadata != nil {
+			// If a metadata callback was provided, and metadata is available, pass the metadata to the callback.
+			metadataCallback(op.GetMetadata())
+		}
+
 		timePassed := time.Now().Sub(startTime)
 		if timeout != nil && timePassed > duration {
-			return op, nil
+			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
 		}
 		time.Sleep(1 * time.Second)
 	}

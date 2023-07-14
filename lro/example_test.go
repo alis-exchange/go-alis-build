@@ -1,12 +1,13 @@
 package lro
 
 import (
-	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
 	"fmt"
+	"time"
+
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"time"
 )
 
 func ExampleNewClient() {
@@ -34,9 +35,23 @@ func ExampleNewClient() {
 		}
 	}(op.Name)
 
-	// wait for a long-running op to finish
+	// wait for a long-running op to finish with a callback that prints incoming metadata
 	req := &longrunningpb.WaitOperationRequest{Name: op.Name, Timeout: durationpb.New(10 * time.Second)}
-	operation, _ := lroClient.WaitOperation(ctx, req)
+	metadataHandler := func(metadata *anypb.Any) {
+		// Assuming the metadata is a protobuf message, you can unmarshal it into a specific type
+		// Replace `YourMetadataMessageType` with the actual type of your metadata message.
+		//var metadataMsg {YourMetadataMessageType}
+		//if err := anypb.UnmarshalTo(metadata, metadataMsg, nil); err != nil {
+		//	// Handle unmarshaling error
+		//	log.Println("Failed to unmarshal metadata:", err)
+		//	return
+		//}
+		//
+		//// Process the metadata as needed
+		//log.Println("Received metadata:", metadataMsg)
+		return
+	}
+	operation, _ := lroClient.WaitOperation(ctx, req, metadataHandler)
 	if operation.Done != true {
 		println("operation is not done yet")
 	}
