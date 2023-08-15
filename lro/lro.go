@@ -10,6 +10,7 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -124,7 +125,7 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 // method to retrieve the operation from that service.
 // Note that if you do not specify a timeout, the timeout is set to 15 seconds.
 func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest,
-	metadataCallback func(*anypb.Any), getOperation func(context.Context, *longrunningpb.GetOperationRequest) (*longrunningpb.Operation, error),
+	metadataCallback func(*anypb.Any), getOperation func(context.Context, *longrunningpb.GetOperationRequest, ...grpc.CallOption) (*longrunningpb.Operation, error),
 ) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	if timeout == nil {
