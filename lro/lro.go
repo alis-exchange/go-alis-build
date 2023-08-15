@@ -117,8 +117,15 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	return op, nil
 }
 
-// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete. The metadataCallback parameter can be used to handle metadata provided by the operation. Note that if you do not specify a timeout, the timeout is set to 15 seconds.
-func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest, metadataCallback func(*anypb.Any)) (*longrunningpb.Operation, error) {
+// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete.
+// The metadataCallback parameter can be used to handle metadata provided by the operation. The getOperation parameter
+// can be used to provide a custom GetOperation method, if you are not using the default GetOperation method. This is
+// particularly useful when the operation originates from a different service, and you need to use a different GetOperation
+// method to retrieve the operation from that service.
+// Note that if you do not specify a timeout, the timeout is set to 15 seconds.
+func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest,
+	metadataCallback func(*anypb.Any), getOperation func(context.Context, *longrunningpb.GetOperationRequest) (*longrunningpb.Operation, error),
+) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	if timeout == nil {
 		timeout = &durationpb.Duration{Seconds: 15}
@@ -127,8 +134,16 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
 
 	// start loop to check if operation is done or timeout has passed
+	var op *longrunningpb.Operation
+	var err error
 	for {
-		op, err := c.GetOperation(ctx, req.GetName())
+		if getOperation != nil {
+			op, err = getOperation(ctx, &longrunningpb.GetOperationRequest{
+				Name: req.GetName(),
+			})
+		} else {
+			op, err = c.GetOperation(ctx, req.GetName())
+		}
 		if err != nil {
 			return nil, err
 		}
