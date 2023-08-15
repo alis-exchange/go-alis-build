@@ -122,7 +122,8 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 // The metadataCallback parameter can be used to handle metadata provided by the operation. The getOperation parameter
 // can be used to provide a custom GetOperation method, if you are not using the default GetOperation method. This is
 // particularly useful when the operation originates from a different service, and you need to use a different GetOperation
-// method to retrieve the operation from that service.
+// method to retrieve the operation from that service. ANy service that returns a longrunning.Operation should implement
+// a GetOperation method that can be used here.
 // Note that if you do not specify a timeout, the timeout is set to 15 seconds.
 func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest,
 	metadataCallback func(*anypb.Any), getOperation func(context.Context, *longrunningpb.GetOperationRequest, ...grpc.CallOption) (*longrunningpb.Operation, error),
