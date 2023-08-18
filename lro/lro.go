@@ -113,7 +113,65 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	// get operation (ignore column name)
 	op, _, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
-		return nil, err
+		// if error is of type ErrNotFound, retry with delay of 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 2s
+		if _, ok := err.(ErrNotFound); ok {
+			println("operation not found, waiting 1 second and trying again")
+			time.Sleep(5 * time.Millisecond)
+			op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+			if err != nil {
+				if _, ok := err.(ErrNotFound); ok {
+					time.Sleep(10 * time.Millisecond)
+					op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+					if err != nil {
+						if _, ok := err.(ErrNotFound); ok {
+							time.Sleep(50 * time.Millisecond)
+							op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+							if err != nil {
+								if _, ok := err.(ErrNotFound); ok {
+									time.Sleep(100 * time.Millisecond)
+									op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+									if err != nil {
+										if _, ok := err.(ErrNotFound); ok {
+											time.Sleep(500 * time.Millisecond)
+											op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+											if err != nil {
+												if _, ok := err.(ErrNotFound); ok {
+													time.Sleep(1 * time.Second)
+													op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+													if err != nil {
+														if _, ok := err.(ErrNotFound); ok {
+															time.Sleep(2 * time.Second)
+															op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+															if err != nil {
+																return nil, err
+															}
+														} else {
+															return nil, err
+														}
+													}
+												} else {
+													return nil, err
+												}
+											}
+										} else {
+											return nil, err
+										}
+									}
+								} else {
+									return nil, err
+								}
+							}
+						} else {
+							return nil, err
+						}
+					}
+				} else {
+					return nil, err
+				}
+			}
+		} else {
+			return nil, err
+		}
 	}
 	return op, nil
 }
