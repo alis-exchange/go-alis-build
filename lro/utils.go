@@ -23,10 +23,13 @@ type origin interface {
 // WaitOperation waits for the operation to complete. The metadataCallback parameter can be used to handle metadata
 // provided by the operation. The origin is the service from which the operation originates and should implement the
 // origin interface.
-func WaitOperation(ctx context.Context, op *longrunningpb.Operation, origin origin, metadataCallback func(*anypb.Any) error) (*longrunningpb.Operation, error) {
+func WaitOperation(ctx context.Context, op *longrunningpb.Operation, origin origin,
+	metadataCallback func(*anypb.Any) error,
+	pollingFrequency time.Duration,
+) (*longrunningpb.Operation, error) {
 	var err error
 	for !op.GetDone() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(pollingFrequency)
 		op, err = origin.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.GetName()})
 		if err != nil {
 			rpcErr, ok := status.FromError(err)
