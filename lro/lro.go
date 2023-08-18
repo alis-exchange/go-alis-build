@@ -9,9 +9,9 @@ import (
 	"cloud.google.com/go/bigtable"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
-	"google.golang.org/genproto/googleapis/rpc/status"
-	"google.golang.org/grpc"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -119,15 +119,9 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 }
 
 // WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete.
-// The metadataCallback parameter can be used to handle metadata provided by the operation. The getOperation parameter
-// can be used to provide a custom GetOperation method, if you are not using the default GetOperation method. This is
-// particularly useful when the operation originates from a different service, and you need to use a different GetOperation
-// method to retrieve the operation from that service. ANy service that returns a longrunning.Operation should implement
-// a GetOperation method that can be used here.
+// The metadataCallback parameter can be used to handle metadata provided by the operation.
 // Note that if you do not specify a timeout, the timeout is set to 15 seconds.
-func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest,
-	metadataCallback func(*anypb.Any), getOperation func(context.Context, *longrunningpb.GetOperationRequest, ...grpc.CallOption) (*longrunningpb.Operation, error),
-) (*longrunningpb.Operation, error) {
+func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest, metadataCallback func(*anypb.Any)) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	if timeout == nil {
 		timeout = &durationpb.Duration{Seconds: 15}
@@ -139,13 +133,7 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 	var op *longrunningpb.Operation
 	var err error
 	for {
-		if getOperation != nil {
-			op, err = getOperation(ctx, &longrunningpb.GetOperationRequest{
-				Name: req.GetName(),
-			})
-		} else {
-			op, err = c.GetOperation(ctx, req.GetName())
-		}
+		op, err = c.GetOperation(ctx, req.GetName())
 		if err != nil {
 			return nil, err
 		}
@@ -217,11 +205,21 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error erro
 	if error == nil {
 		error = grpcStatus.Errorf(codes.Internal, "unknown error")
 	}
-	op.Result = &longrunningpb.Operation_Error{Error: &status.Status{
-		Code:    int32(grpcStatus.Code(err)),
-		Message: error.Error(),
-		Details: nil,
-	}}
+
+	s, ok := status.FromError(err)
+	if !ok {
+		op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
+			Code:    int32(codes.Unknown),
+			Message: err.Error(),
+			Details: nil,
+		}}
+	} else {
+		op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
+			Code:    int32(s.Code()),
+			Message: s.Message(),
+			Details: nil,
+		}}
+	}
 	if metadata != nil {
 		// convert metadata to Any type as per longrunning.Operation requirement.
 		metaAny, err := anypb.New(metadata)
