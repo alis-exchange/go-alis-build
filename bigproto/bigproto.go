@@ -303,6 +303,79 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	return res, lastRowKey, nil
 }
 
+// BatchReadProtos returns the list of rows for a specified set of rowKeys.  The order of the response is consistent
+// with the order of the rowKeys.  Also, if a particular rowKey is not found, the corresponding response will be a nil
+// entry in the list of messages returned.
+func (b *BigProto) BatchReadProtos(ctx context.Context, rowKeys []string, columnFamily string, messageType proto.Message,
+	readMask *fieldmaskpb.FieldMask, opts ...bigtable.ReadOption) ([]proto.Message, error) {
+	var res []proto.Message
+
+	// Create a map of messages which is used to set the order of the returned response.  The key of the map is the
+	// rowKey.
+	protoMap := map[string]proto.Message{}
+
+	// Validate readMask if provided
+	if readMask != nil {
+		readMask.Normalize()
+		if !readMask.IsValid(messageType) {
+			return nil, ErrInvalidFieldMask
+		}
+	}
+
+	var rowList bigtable.RowList
+	for _, rowKey := range rowKeys {
+		rowList = append(rowList, rowKey)
+	}
+
+	err := b.table.ReadRows(ctx, rowList,
+		func(row bigtable.Row) bool {
+
+			// if the row is empty, append an empty value and continue
+			if row == nil {
+				return true
+			}
+
+			// Each collection is stored in a corresponding Bigtable family
+			columns := row[columnFamily]
+
+			// if there are no results in the row, append an empty value and continue
+			if len(columns) == 0 {
+				return true
+			}
+
+			// only the first column is used by the resource.
+			column := columns[0]
+			var message proto.Message
+			err := proto.Unmarshal(column.Value, messageType)
+			if err != nil {
+				return false
+			}
+			message = proto.Clone(messageType)
+			if message != nil {
+				// Apply Read Mask if provided
+				if readMask != nil {
+					// Redact the request according to the provided field mask.
+					fmutils.Filter(message, readMask.GetPaths())
+				}
+
+				protoMap[row.Key()] = message
+			}
+			return true
+		},
+		opts...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure the order of the returned array matches that of the requested order of rowKeys
+	for _, rowKey := range rowKeys {
+		res = append(res, protoMap[rowKey])
+	}
+
+	return res, nil
+}
+
 // StreamProtos returns the list of rows for a specified set of rows
 func (b *BigProto) StreamProtos(ctx context.Context, stream chan<- proto.Message, columnFamily string, messageType proto.Message,
 	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) error {
