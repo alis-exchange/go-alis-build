@@ -264,11 +264,11 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error erro
 		error = grpcStatus.Errorf(codes.Internal, "unknown error")
 	}
 
-	s, ok := status.FromError(err)
+	s, ok := status.FromError(error)
 	if !ok {
 		op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
 			Code:    int32(codes.Unknown),
-			Message: err.Error(),
+			Message: error.Error(),
 			Details: nil,
 		}}
 	} else {
