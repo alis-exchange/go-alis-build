@@ -19,13 +19,14 @@ type DdbProto struct {
 	tableName string
 }
 
-// Create struct to hold info about new item
+// Item struct to hold info about new item
 type Item struct {
 	PK    string
 	SK    string
 	Proto string
 }
 
+// PageOptions are used with the ListProtos method
 type PageOptions struct {
 	RowKeyPrefix string
 	PageSize     int32
@@ -34,8 +35,10 @@ type PageOptions struct {
 	ReadMask     *fieldmaskpb.FieldMask
 }
 
-// region must a valid aws region like "us-east-1" or "af-south-1"
-// Either you need to have configured your aws credentials in ~/.aws/credentials or you need to set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
+// NewClient creates a new instance of DbdProto.
+// Region must a valid aws region like "us-east-1" or "af-south-1".
+// Either you need to have configured your aws credentials in ~/.aws/credentials, or you need to set the
+// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
 func NewClient(tableName string, region string) *DdbProto {
 	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String(region)}))
 
@@ -45,6 +48,7 @@ func NewClient(tableName string, region string) *DdbProto {
 	}
 }
 
+// WriteProto writes the proto message to the database.
 func (b *DdbProto) WriteProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message) error {
 	dataBytes, err := proto.Marshal(message)
 	if err != nil {
@@ -73,6 +77,7 @@ func (b *DdbProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 	return nil
 }
 
+// ReadProto reads the proto message from the database.
 func (b *DdbProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
 	result, err := b.client.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(b.tableName),
@@ -121,6 +126,7 @@ func (b *DdbProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 	return nil
 }
 
+// UpdateProto updates the proto message in the database.
 func (b *DdbProto) UpdateProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	currentMessage := newEmptyMessage(message)
@@ -145,6 +151,7 @@ func (b *DdbProto) UpdateProto(ctx context.Context, rowKey string, columnFamily 
 	return nil
 }
 
+// DeleteProto permanently deletes the proto message from the database.
 func (b *DdbProto) DeleteProto(ctx context.Context, columnFamily string, rowKey string) error {
 	_, err := b.client.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: aws.String(b.tableName),
@@ -163,6 +170,7 @@ func (b *DdbProto) DeleteProto(ctx context.Context, columnFamily string, rowKey 
 	return nil
 }
 
+// ListProtos returns an array of proto messages.
 func (b *DdbProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message, opts PageOptions) ([]proto.Message, string, error) {
 	var messages []proto.Message
 	var nextToken string
