@@ -1,3 +1,3 @@
-module go.alis.build/events
+module go.alis.build/utils
 
 go 1.20
