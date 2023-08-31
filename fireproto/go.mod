@@ -5,16 +5,19 @@ go 1.20
 require (
 	cloud.google.com/go/firestore v1.12.0
 	dario.cat/mergo v1.0.0
+	github.com/iancoleman/strcase v0.3.0
 	github.com/mennanov/fmutils v0.2.0
 	go.alis.build/alog v0.0.18
+	go.einride.tech/aip v0.62.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20230725213213-b022f6e96895
 	google.golang.org/protobuf v1.31.0
 )
 
 require (
-	cloud.google.com/go v0.110.2 // indirect
-	cloud.google.com/go/compute v1.19.3 // indirect
+	cloud.google.com/go v0.110.4 // indirect
+	cloud.google.com/go/compute v1.20.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	cloud.google.com/go/longrunning v0.5.0 // indirect
+	cloud.google.com/go/longrunning v0.5.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
@@ -32,8 +35,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.126.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20230530153820-e85fd2cbaebc // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20230530153820-e85fd2cbaebc // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20230530153820-e85fd2cbaebc // indirect
-	google.golang.org/grpc v1.55.0 // indirect
+	google.golang.org/genproto v0.0.0-20230725213213-b022f6e96895 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20230725213213-b022f6e96895 // indirect
+	google.golang.org/grpc v1.56.2 // indirect
 )

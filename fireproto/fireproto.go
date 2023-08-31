@@ -19,7 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-type FirestoreProto struct {
+// FireProto offers a simple interface for reading and writing protobuf messages to Firestore.
+type FireProto struct {
 	client *firestore.Client
 }
 
@@ -48,27 +49,32 @@ func (e ErrNegativePageSize) Error() string {
 
 var ErrInvalidFieldMask = errors.New("invalid field mask")
 
-// New does the same as NewClient, except that it allows you to pass in the firestore client directly, instead of passing in the project.
-func New(client *firestore.Client) *FirestoreProto {
-	return &FirestoreProto{
+// NewFireProto returns a new FireProto object, containing the provided Firestore client
+// for use in inter
+func NewFireProto(client *firestore.Client) *FireProto {
+	return &FireProto{
 		client: client,
 	}
 }
 
+func NewTestFireProto() *FireProto {
+	return NewFireProto(nil)
+}
+
 // NewClient returns a firestoreproto object, containing an initialized client connection using the project as connection parameters
 // It is recommended that you call this function once in your package's init function and then store the returned object as a global variable, instead of making new connections with every read/write.
-func NewClient(ctx context.Context, googleProject string) *FirestoreProto {
+func NewClient(ctx context.Context, googleProject string) *firestore.Client {
 	client, err := firestore.NewClient(ctx, googleProject)
 	if err != nil {
 		alog.Fatalf(ctx, "Error creating firestore client: %s", err)
 	}
-	return New(client)
+	return client
 }
 
 // WriteProto writes the provided proto message to Firestore using the provided document name.
 // The document name must conform to the convention {collection}/{resourceID}
 // For example, books/book123 or books/book123/chapters/chapterABC
-func (f *FirestoreProto) WriteProto(ctx context.Context, resourceName string, message proto.Message) error {
+func (f *FireProto) WriteProto(ctx context.Context, resourceName string, message proto.Message) error {
 
 	// Create a document reference.
 	collection, docID := extractFirestoreCollectionAndDocID(resourceName)
@@ -93,7 +99,7 @@ func (f *FirestoreProto) WriteProto(ctx context.Context, resourceName string, me
 
 // ReadProto obtains a Firestore document for the provided resourceName, unmarshalls the value, applies the read mask and
 // stores the result in the provided message pointer.
-func (f *FirestoreProto) ReadProto(ctx context.Context, resourceName string, message proto.Message,
+func (f *FireProto) ReadProto(ctx context.Context, resourceName string, message proto.Message,
 	readMask *fieldmaskpb.FieldMask) error {
 
 	// Create a document reference.
@@ -133,7 +139,7 @@ func (f *FirestoreProto) ReadProto(ctx context.Context, resourceName string, mes
 // UpdateProto obtains a Firestore document for the provided resource name and unmarshalls the value to the type provided. It
 // then merges the updates as specified in the provided message, into the current type, in line with the update mask
 // and writes the updated proto back to Firestore. The updated proto is also stored in the provided message pointer.
-func (f *FirestoreProto) UpdateProto(ctx context.Context, resourceName string, columnFamily string, message proto.Message,
+func (f *FireProto) UpdateProto(ctx context.Context, resourceName string, columnFamily string, message proto.Message,
 	updateMask *fieldmaskpb.FieldMask) error {
 	// retrieve the resource from bigtable
 	currentMessage := newEmptyMessage(message)
@@ -161,7 +167,7 @@ func (f *FirestoreProto) UpdateProto(ctx context.Context, resourceName string, c
 }
 
 // DeleteRow deletes an entire document from firestore for the provided resourceName.
-func (f *FirestoreProto) DeleteRow(ctx context.Context, resourceName string) error {
+func (f *FireProto) DeleteRow(ctx context.Context, resourceName string) error {
 	// Create a document reference.
 	collection, docID := extractFirestoreCollectionAndDocID(resourceName)
 	docRef := f.client.Collection(collection).Doc(docID)
@@ -175,7 +181,7 @@ func (f *FirestoreProto) DeleteRow(ctx context.Context, resourceName string) err
 }
 
 // PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
-func (f *FirestoreProto) PageProtos(ctx context.Context, messageType proto.Message,
+func (f *FireProto) PageProtos(ctx context.Context, messageType proto.Message,
 	opts PageOptions) ([]proto.Message, string, error) {
 
 	//// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
@@ -275,7 +281,7 @@ func (f *FirestoreProto) PageProtos(ctx context.Context, messageType proto.Messa
 // BatchReadProtos returns the list of protos for a specified set of resourceNames.  The order of the response is consistent
 // with the order of the resourceNames.  Also, if a particular resourceNames is not found, the corresponding response will be a nil
 // entry in the list of messages returned.
-func (f *FirestoreProto) BatchReadProtos(ctx context.Context, resourceNames []string, messageType proto.Message,
+func (f *FireProto) BatchReadProtos(ctx context.Context, resourceNames []string, messageType proto.Message,
 	readMask *fieldmaskpb.FieldMask) ([]proto.Message, error) {
 
 	// Validate readMask if provided
