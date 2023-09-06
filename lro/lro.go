@@ -213,11 +213,11 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
 // metadata if provided.
-func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metadata proto.Message) error {
+func (c *Client) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metadata proto.Message) (*longrunningpb.Operation, error) {
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// update done and result
@@ -225,7 +225,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	if response != nil {
 		resultAny, err := anypb.New(response)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
@@ -234,7 +234,7 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	if metadata != nil {
 		metaAny, err := anypb.New(metadata)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		op.Metadata = metaAny
 	}
@@ -243,19 +243,19 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return op, nil
 }
 
 // SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
 // if metaOptions.Update is true
-func (c *Client) SetFailed(ctx context.Context, operationName string, error error, metadata proto.Message) error {
+func (c *Client) SetFailed(ctx context.Context, operationName string, error error, metadata proto.Message) (*longrunningpb.Operation, error) {
 
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// update operation fields
@@ -282,7 +282,7 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error erro
 		// convert metadata to Any type as per longrunning.Operation requirement.
 		metaAny, err := anypb.New(metadata)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		op.Metadata = metaAny
 	}
@@ -291,24 +291,24 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error erro
 	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return op, nil
 }
 
 // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
 // contains progress information and common metadata such as create time.
-func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metadata proto.Message) error {
+func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metadata proto.Message) (*longrunningpb.Operation, error) {
 	// get operation and column name.
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// update metadata if required
 	metaAny, err := anypb.New(metadata)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	op.Metadata = metaAny
 
@@ -316,9 +316,9 @@ func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metad
 	err = c.deleteRow(ctx, c.rowKeyPrefix, op.GetName())
 	err = c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return op, nil
 }
 
 func (c *Client) writeToBigtable(ctx context.Context, rowKeyPrefix string, columnName string, op *longrunningpb.Operation) error {
