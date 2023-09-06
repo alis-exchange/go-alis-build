@@ -8,10 +8,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Events object to manage Publishing to a Pub/Sub topic.
-type Events struct {
-	client *pubsub.Client
-	topic  string
+// Client object to manage Publishing to a Pub/Sub topic.
+type Client struct {
+	pubsubClient *pubsub.Client
+	topic        string
 }
 
 // Options for the New method.
@@ -23,15 +23,15 @@ type Options struct {
 	Topic string
 }
 
-// PublishOptions used when publishing using the Events.Publish method.
+// PublishOptions used when publishing using the Client.Publish method.
 type PublishOptions struct {
 	// OrderingKey identifies related messages for which publish order should be respected. If empty string is used,
 	// message will be sent unordered.
 	OrderingKey string
 }
 
-// New creates a new instance of the Events object.
-func New(project string, opts *Options) (*Events, error) {
+// New creates a new instance of the Client object.
+func New(project string, opts *Options) (*Client, error) {
 	// Validate arguments
 	if project == "" {
 		return nil, fmt.Errorf("project is required but not provided")
@@ -49,14 +49,14 @@ func New(project string, opts *Options) (*Events, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Events{
-		client: client,
-		topic:  topic,
+	return &Client{
+		pubsubClient: client,
+		topic:        topic,
 	}, nil
 }
 
 // Publish the event
-func (e *Events) Publish(ctx context.Context, event proto.Message, opts *PublishOptions) error {
+func (c *Client) Publish(ctx context.Context, event proto.Message, opts *PublishOptions) error {
 
 	if event == nil {
 		return fmt.Errorf("event is required but not provided")
@@ -78,7 +78,7 @@ func (e *Events) Publish(ctx context.Context, event proto.Message, opts *Publish
 		"type": string(event.ProtoReflect().Descriptor().FullName()),
 	}
 
-	topic := e.client.Topic(e.topic)
+	topic := c.pubsubClient.Topic(c.topic)
 	defer topic.Stop()
 	result := topic.Publish(ctx, &pubsub.Message{
 		Data:        data,

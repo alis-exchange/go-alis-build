@@ -10,7 +10,7 @@ import (
 
 func TestEvents_Publish(t *testing.T) {
 
-	// Instantiate a client
+	// Instantiate a pubsubClient
 	ctx := context.Background()
 	client, err := pubsub.NewClient(ctx, "your-project-id")
 	if err != nil {
@@ -48,9 +48,9 @@ func TestEvents_Publish(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &Events{
-				client: tt.fields.client,
-				topic:  tt.fields.topic,
+			e := &Client{
+				pubsubClient: tt.fields.client,
+				topic:        tt.fields.topic,
 			}
 			if err := e.Publish(tt.args.ctx, tt.args.event, tt.args.opts); (err != nil) != tt.wantErr {
 				t.Errorf("Publish() error = %v, wantErr %v", err, tt.wantErr)
@@ -67,7 +67,7 @@ func TestNew(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    *Events
+		want    *Client
 		wantErr bool
 	}{
 		{},

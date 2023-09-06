@@ -9,7 +9,7 @@ func ExampleNew() {
 
 	ctx := context.Background()
 
-	// Create a new client
+	// Create a new pubsubClient
 	client, _ := New("your-google-project", &Options{Topic: "my-topic"})
 
 	// Publish a message as the event.
