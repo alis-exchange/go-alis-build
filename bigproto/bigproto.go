@@ -152,7 +152,7 @@ func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, colum
 		muts = append(muts, mut)
 	}
 
-	errs, err := b.table.ApplyBulk(ctx, rowKeys, muts, nil)
+	errs, err := b.table.ApplyBulk(ctx, rowKeys, muts)
 	if err != nil {
 		return nil, err
 	}
