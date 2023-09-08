@@ -127,6 +127,41 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 	return nil
 }
 
+// BatchWriteProtos writes the provided proto messages to Bigtable by marshaling it to bytes and storing the data at the
+// given row keys, and column family.  Two types of failures may occur. If the entire process fails, (nil, err) will be
+// returned. If specific mutations fail to apply, ([]err, nil) will be returned, and the errors will correspond
+// to the relevant rowKeys arguments.
+func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, columnFamilies []string, messages []proto.Message) ([]error, error) {
+	timestamp := bigtable.Now()
+
+	// The row lengths should all match
+	if len(rowKeys) != len(messages) {
+		return nil, fmt.Errorf("rowKeys and messages should be of the same length")
+	}
+	if len(messages) != len(columnFamilies) {
+		return nil, fmt.Errorf("messages and columnFamilies should be of the same length")
+	}
+
+	// Construct a list of mutations required by the ApplyBulk method in Bigtable.
+	var muts []*bigtable.Mutation
+	for i, _ := range rowKeys {
+		dataBytes, err := proto.Marshal(messages[i])
+		if err != nil {
+			return nil, err
+		}
+
+		mut := bigtable.NewMutation()
+		mut.Set(columnFamilies[i], DefaultColumnName, timestamp, dataBytes)
+		muts = append(muts, mut)
+	}
+
+	errs, err := b.table.ApplyBulk(ctx, rowKeys, muts, nil)
+	if err != nil {
+		return nil, err
+	}
+	return errs, nil
+}
+
 // ReadProto obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read mask and
 // stores the result in the provided message pointer.
 func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
