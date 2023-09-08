@@ -131,15 +131,12 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 // given row keys, and column family.  Two types of failures may occur. If the entire process fails, (nil, err) will be
 // returned. If specific mutations fail to apply, ([]err, nil) will be returned, and the errors will correspond
 // to the relevant rowKeys arguments.
-func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, columnFamilies []string, messages []proto.Message) ([]error, error) {
+func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, columnFamily string, messages []proto.Message) ([]error, error) {
 	timestamp := bigtable.Now()
 
 	// The row lengths should all match
 	if len(rowKeys) != len(messages) {
 		return nil, fmt.Errorf("rowKeys and messages should be of the same length")
-	}
-	if len(messages) != len(columnFamilies) {
-		return nil, fmt.Errorf("messages and columnFamilies should be of the same length")
 	}
 
 	// Construct a list of mutations required by the ApplyBulk method in Bigtable.
@@ -151,7 +148,7 @@ func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, colum
 		}
 
 		mut := bigtable.NewMutation()
-		mut.Set(columnFamilies[i], DefaultColumnName, timestamp, dataBytes)
+		mut.Set(columnFamily, DefaultColumnName, timestamp, dataBytes)
 		muts = append(muts, mut)
 	}
 
@@ -234,6 +231,42 @@ func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily 
 	reflect.ValueOf(message).Elem().Set(reflect.ValueOf(currentMessage).Elem())
 
 	return nil
+}
+
+// BatchUpdateProtos obtains Bigtable row entries and unmarshalls the value at the given columnFamily to the type
+// provided. It then merges the updates as specified in the provided message, into the current type, in line with the
+// update mask and writes the updated protos back to Bigtable. The updated protos are also stored in the provided
+// message pointers.
+//
+// Two types of failures may occur. If the entire process fails, (nil, err) will be returned. If specific mutations fail
+// to apply, ([]err, nil) will be returned, and the errors will correspond to the relevant rowKeys arguments.
+func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, columnFamily string, messageType proto.Message, messages []proto.Message,
+	updateMasks []*fieldmaskpb.FieldMask) ([]error, error) {
+
+	// Get the current values in the database.
+	protos, err := b.BatchReadProtos(ctx, rowKeys, columnFamily, messageType, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// For each of the messages, merge the updates into the existing protos.
+	for i, _ := range rowKeys {
+		// merge the updates into currentMessage
+		err = mergeUpdates(protos[i], messages[i], updateMasks[i])
+		if err != nil {
+			return nil, err
+		}
+		// update the message pointer
+		reflect.ValueOf(messages[i]).Elem().Set(reflect.ValueOf(protos[i]).Elem())
+	}
+
+	// write the updated message back to bigtable
+	errs, err := b.BatchWriteProtos(ctx, rowKeys, columnFamily, protos)
+	if err != nil {
+		return nil, err
+	}
+
+	return errs, nil
 }
 
 // ReadRow returns the row from bigtable at the given rowKey. This allows for more custom read functionality to be
