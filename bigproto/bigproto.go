@@ -241,7 +241,7 @@ func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily 
 // Two types of failures may occur. If the entire process fails, (nil, err) will be returned. If specific mutations fail
 // to apply, ([]err, nil) will be returned, and the errors will correspond to the relevant rowKeys arguments.
 func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, columnFamily string, messageType proto.Message, messages []proto.Message,
-	updateMasks []*fieldmaskpb.FieldMask) ([]error, error) {
+	updateMasks []*fieldmaskpb.FieldMask, allowMissing []bool) ([]error, error) {
 
 	// Get the current values in the database.
 	protos, err := b.BatchReadProtos(ctx, rowKeys, columnFamily, messageType, nil)
@@ -251,6 +251,16 @@ func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, colu
 
 	// For each of the messages, merge the updates into the existing protos.
 	for i, _ := range rowKeys {
+
+		// Handle updates where an existing proto is not found.
+		if protos[i] == nil {
+			if allowMissing[i] {
+				protos[i] = proto.Clone(messages[i])
+			} else {
+				return nil, ErrNotFound{RowKey: rowKeys[i]}
+			}
+		}
+
 		// merge the updates into currentMessage
 		err = mergeUpdates(protos[i], messages[i], updateMasks[i])
 		if err != nil {

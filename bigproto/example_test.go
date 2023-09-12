@@ -3,6 +3,7 @@ package bigproto
 import (
 	"cloud.google.com/go/bigtable"
 	"context"
+	"errors"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"log"
@@ -18,7 +19,13 @@ func ExampleNew() {
 	table := New(client, "your-table")
 
 	// Read a single row
-	row, _ := table.ReadRow(ctx, "row-key-1")
+	row, err := table.ReadRow(ctx, "row-key-1")
+	if err != nil {
+		// Handle the specific errors here
+		if errors.As(err, &ErrNotFound{}) {
+			// TODO: handle error.
+		}
+	}
 
 	// use the bigtable row object.
 	_ = row
