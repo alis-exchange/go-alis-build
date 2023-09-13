@@ -90,3 +90,53 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts *Publish
 	_, err = result.Get(ctx)
 	return nil
 }
+
+func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts *PublishOptions) error {
+
+	results := make([]*pubsub.PublishResult, len(events))
+	topic := c.pubsubClient.Topic(c.topic)
+	defer topic.Stop()
+
+	// Iterate though the events
+	for i, event := range events {
+		i := i
+		if event == nil {
+			return fmt.Errorf("event at index %d is required but not provided", i)
+		}
+
+		// Handle the scenario where the opts parameter is not specified.
+		if opts == nil {
+			opts = &PublishOptions{}
+		}
+
+		// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
+		data, err := proto.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("marshal the message to bytes: %w", err)
+		}
+
+		// The type is derived from the message type, using proto reflection.
+		attributes := map[string]string{
+			"type": string(event.ProtoReflect().Descriptor().FullName()),
+		}
+
+		result := topic.Publish(ctx, &pubsub.Message{
+			Data:        data,
+			Attributes:  attributes,
+			OrderingKey: opts.OrderingKey,
+		})
+
+		results[i] = result
+	}
+
+	// Once all the messages has been sent, use the .Get method to confirm that all is done.  The Get method
+	// blocks until the Publish method is done.
+	for i, r := range results {
+		_, err := r.Get(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to send the message at batch index %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
