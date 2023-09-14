@@ -152,7 +152,18 @@ func (p *FilterParser) Transpile(query *firestore.Query, expression interface{},
 					return &q, nil
 				}
 			case "OR":
-				return nil, errors.New("OR operator is not supported")
+				q := query.WhereEntity(firestore.OrFilter{
+					Filters: []firestore.EntityFilter{
+
+						firestore.PropertyFilter{
+							Path:     "",
+							Operator: "",
+							Value:    nil,
+						},
+					},
+				})
+				return &q, errors.New("OR operator is not supported")
+
 			case "AND":
 				// Get the results for the left hand side expression
 				lhsQuery, err := p.Transpile(query, lhs, params)

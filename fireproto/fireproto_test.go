@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"cloud.google.com/go/firestore"
 	pb "cloud.google.com/go/firestore/apiv1/firestorepb"
 )
 
@@ -36,7 +37,7 @@ func TestFireProto_WriteProto(t *testing.T) {
 	data := struct {
 		A map[string]bool `firestore:"*"`
 	}{A: map[string]bool{"~": true}}
-	wr, err := doc.Set(ctx, data, Merge([]string{"*", "~"}))
+	wr, err := doc.Set(ctx, data, firestore.Merge([]string{"*", "~"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestFireProto_WriteProto(t *testing.T) {
 	}
 
 	// MergeAll cannot be used with structs.
-	_, err = doc.Set(ctx, data, MergeAll)
+	_, err = doc.Set(ctx, data, firestore.MergeAll)
 	if err == nil {
 		t.Errorf("got nil, want error")
 	}
