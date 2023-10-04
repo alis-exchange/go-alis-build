@@ -3,6 +3,7 @@ package lro
 import (
 	"context"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"strings"
 	"time"
 
@@ -178,11 +179,11 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 
 // WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete.
 // The metadataCallback parameter can be used to handle metadata provided by the operation.
-// Note that if you do not specify a timeout, the timeout is set to 15 seconds.
+// Note that if you do not specify a timeout, the timeout is set to 49 seconds.
 func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest, metadataCallback func(*anypb.Any)) (*longrunningpb.Operation, error) {
 	timeout := req.GetTimeout()
 	if timeout == nil {
-		timeout = &durationpb.Duration{Seconds: 15}
+		timeout = &durationpb.Duration{Seconds: 7 * 7}
 	}
 	startTime := time.Now()
 	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
@@ -209,6 +210,36 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 		}
 		time.Sleep(1 * time.Second)
 	}
+}
+
+// BatchWaitOperations is a batch version of the WaitOperation method.
+func (c *Client) BatchWaitOperations(ctx context.Context, operations []*longrunningpb.Operation, timeout *durationpb.Duration) ([]*longrunningpb.Operation, error) {
+
+	// iterate through the requests
+	errs, ctx := errgroup.WithContext(ctx)
+	results := make([]*longrunningpb.Operation, len(operations))
+	for i, operation := range operations {
+		i := i
+		errs.Go(func() error {
+			op, err := c.WaitOperation(ctx, &longrunningpb.WaitOperationRequest{
+				Name:    operation.GetName(),
+				Timeout: timeout,
+			}, nil)
+			if err != nil {
+				return err
+			}
+			results[i] = op
+
+			return nil
+		})
+	}
+
+	err := errs.Wait()
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
