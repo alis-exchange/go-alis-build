@@ -3,6 +3,7 @@ package lro
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -67,6 +68,10 @@ type ErrInvalidNextToken struct {
 func (e ErrInvalidNextToken) Error() string {
 	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
 }
+
+// EOF is the error returned when no more entities (such as children operations)
+// are available. Functions should return EOF only to signal a graceful end read.
+var EOF = errors.New("EOF")
 
 // Client manages the instance of the Bigtable table.
 type Client struct {
@@ -397,77 +402,115 @@ func (c *Client) GetParent(ctx context.Context, operation string) (string, error
 	return colName, nil
 }
 
-type GetAllChildrenOptions struct {
+// TraverseChildrenOperationsOptions is an optional parameter that
+// can be provided to TraverseChildrenOperations
+type TraverseChildrenOperationsOptions struct {
 	// The maximum depth of the tree to return. If not specified, the entire tree is returned.
-	maxDepth int
-}
-type OperationChild struct {
-	Operation string
-	Children  []*OperationChild
+	MaxDepth int
 }
 
-// GetAllChildren returns a tree of all children for a given operation
-func (c *Client) GetAllChildren(ctx context.Context, operation string, opts *GetAllChildrenOptions) ([]*OperationChild, error) {
-	immediateChildren, _, err := c.GetImmediateChildren(ctx, operation, &GetImmediateChildrenOptions{})
+// OperationNode provides a data structure to represent
+// the relationship between an operation and potential
+// children operations.
+type OperationNode struct {
+	// The name of the operation.
+	//
+	// In the case that ChildrenOperations
+	// exist, Operation represents a parent
+	// operation that can be further traversed.
+	// Else, the operation is the last node in
+	// the overall operation tree.
+	Operation string
+	// The set of children operations to
+	// the Operation.
+	ChildrenOperations []*OperationNode
+}
+
+// TraverseChildrenOperations returns a tree of all children for a given parent operation
+func (c *Client) TraverseChildrenOperations(ctx context.Context, operation string, opts *TraverseChildrenOperationsOptions) ([]*OperationNode, error) {
+	immediateChildren, _, err := c.ListImmediateChildrenOperations(ctx, operation, nil)
 	if err != nil {
 		return nil, err
 	}
-	if len(immediateChildren) == 0 || opts.maxDepth == -1 {
-		return []*OperationChild{}, nil
-	} else {
-		var res []*OperationChild
-		for _, immediateChild := range immediateChildren {
-			child := &OperationChild{
-				Operation: immediateChild.GetName(),
-			}
-			newMaxDepth := opts.maxDepth - 1
-			if newMaxDepth == 0 {
-				newMaxDepth = -1
-			} else if newMaxDepth == -1 {
-				newMaxDepth = 0 // if maxDepth is -1, set newMaxDepth to 0 so that the entire tree is returned
-			}
-			children, err := c.GetAllChildren(ctx, immediateChild.GetName(), &GetAllChildrenOptions{maxDepth: newMaxDepth})
-			if err != nil {
+	if len(immediateChildren) == 0 || opts.MaxDepth == -1 {
+		// This signals the end of the sequence.
+		// Ie. that the OperationNode does not
+		// have any children.
+		return nil, EOF
+	}
+
+	var res []*OperationNode
+	for _, immediateChild := range immediateChildren {
+		child := &OperationNode{
+			Operation: immediateChild.GetName(),
+		}
+
+		// TODO: add explanation
+		newMaxDepth := opts.MaxDepth - 1
+		if newMaxDepth == 0 {
+			newMaxDepth = -1
+		} else if newMaxDepth == -1 {
+			newMaxDepth = 0 // if MaxDepth is -1, set newMaxDepth to 0 so that the entire tree is returned
+		}
+		children, err := c.TraverseChildrenOperations(ctx, immediateChild.GetName(), &TraverseChildrenOperationsOptions{MaxDepth: newMaxDepth})
+		if err != nil {
+			if !errors.Is(err, EOF) {
 				return nil, err
 			}
-			child.Children = children
-			res = append(res, child)
 		}
-		return res, nil
+		child.ChildrenOperations = children
+		res = append(res, child)
 	}
+	return res, nil
 }
 
-type GetImmediateChildrenOptions struct {
-	// The maximum number of children to return. If not specified, the entire list is returned.
-	maxChildren int
-	// The nextToken from the previous response. If not specified, the first page of results is returned.
-	nextToken string
+// ListImmediateChildrenOperationsOptions is an optional parameter that
+// can be provided to ListImmediateChildrenOperations
+type ListImmediateChildrenOperationsOptions struct {
+	// The maximum number of children operations to return.
+	// If not specified, the entire list is returned.
+	PageSize int
+	// A page token, received from a previous ListImmediateChildrenOperations call.
+	// If not specified, the first page of results is returned.
+	//
+	// When paginating, all other parameters provided to `ListBooks` must match
+	// the call that provided the page token.
+	PageToken string
 }
 
-// GetChildren provides the list of immediate children for a given operation
-func (c *Client) GetImmediateChildren(ctx context.Context, operation string, opts *GetImmediateChildrenOptions) ([]*longrunningpb.Operation, string, error) {
+// ListImmediateChildrenOperations provides the list of immediate children for a given operation
+func (c *Client) ListImmediateChildrenOperations(ctx context.Context, parent string, opts *ListImmediateChildrenOperationsOptions) ([]*longrunningpb.Operation, string, error) {
 
-	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
-	// the previous response, and thus the first element returned in this response will be ignored
-	if opts.nextToken != "" && opts.maxChildren != 0 {
-		opts.maxChildren++
+	// In the case that opts is not provided,
+	// create an empty opts object that will
+	// be used in the later aspects of the function
+	if opts == nil {
+		opts = &ListImmediateChildrenOperationsOptions{
+			PageSize:  0,
+			PageToken: "",
+		}
+	} else if opts.PageToken != "" && opts.PageSize != 0 {
+		// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
+		// the previous response, and thus the first element returned in this response will be ignored
+		opts.PageSize++
 	}
+
 	// set up reading options
 	var readingOpts []bigtable.ReadOption
-	if opts.maxChildren != 0 {
-		readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.maxChildren)))
+	if opts.PageSize != 0 {
+		readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.PageSize)))
 	}
 	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
 		bigtable.LatestNFilter(1),
-		bigtable.ColumnFilter(operation),
+		bigtable.ColumnFilter(parent),
 	)))
 
 	// create a rowSet to read from
 	startKey := ""
-	if opts.nextToken != "" {
-		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.nextToken)
+	if opts.PageToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
 		if err != nil {
-			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
+			return nil, "", ErrInvalidNextToken{nextToken: opts.PageToken}
 		}
 		startKey = string(startKeyBytes)
 	}
@@ -511,11 +554,11 @@ func (c *Client) GetImmediateChildren(ctx context.Context, operation string, opt
 	if err != nil {
 		return nil, lastRowKey, err
 	}
-	if len(res) != 0 && opts.nextToken != "" {
+	if len(res) != 0 && opts.PageToken != "" {
 		res = res[1:]
 	}
 
-	if len(res) < int(opts.maxChildren) || len(res) == 0 {
+	if len(res) < opts.PageSize || len(res) == 0 {
 		lastRowKey = ""
 	} else {
 		// base64 encode lastRowKey
