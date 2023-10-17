@@ -406,11 +406,11 @@ func TestClient_WaitOperation(t *testing.T) {
 	}
 }
 
-func TestClient_GetChildren(t *testing.T) {
+func TestClient_GetImmediateChildren(t *testing.T) {
 	type args struct {
 		ctx           context.Context
 		operationName string
-		pageSize      int64
+		pageSize      int
 		nextToken     string
 	}
 	// create a test operation with 5 children
@@ -463,7 +463,7 @@ func TestClient_GetChildren(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, got1, err := lro.GetChildren(tt.args.ctx, tt.args.operationName, tt.args.pageSize, tt.args.nextToken)
+			got, got1, err := lro.GetImmediateChildren(tt.args.ctx, tt.args.operationName, &GetImmediateChildrenOptions{maxChildren: tt.args.pageSize, nextToken: tt.args.nextToken})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Client.GetChildren() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -515,6 +515,78 @@ func TestClient_GetParent(t *testing.T) {
 			got, err := lro.GetParent(tt.args.ctx, tt.args.operationName)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Client.GetParent() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			t.Logf("got: %v", got)
+		})
+	}
+}
+
+func TestClient_GetAllChildren(t *testing.T) {
+	type args struct {
+		ctx           context.Context
+		operationName string
+		maxDepth      int
+	}
+	// create a test operation with 5 children
+	lro := &Client{
+		table: Table,
+	}
+	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	for i := 0; i < 5; i++ {
+		lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Parent: parentOp.GetName(), Metadata: nil})
+		sucOp, err := lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10), nil, nil)
+		if err != nil {
+			t.Errorf("SetSuccessful() error = %v", err)
+		}
+		t.Logf("sucOp: %v", sucOp)
+		// if even, create three children under it
+		if i%2 == 0 {
+			for j := 0; j < 3; j++ {
+				lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10) + "-" + strconv.FormatInt(int64(j), 10), Parent: sucOp.GetName(), Metadata: nil})
+				sucOp, err = lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10)+"-"+strconv.FormatInt(int64(j), 10), nil, nil)
+				if err != nil {
+					t.Errorf("SetSuccessful() error = %v", err)
+				}
+				t.Logf("sucOp: %v", sucOp)
+			}
+		}
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    []*longrunningpb.Operation
+		want1   string
+		wantErr bool
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx:           context.Background(),
+				operationName: parentOp.GetName(),
+			},
+		},
+		{
+			name: "maxDepth",
+			args: args{
+				ctx:           context.Background(),
+				operationName: parentOp.GetName(),
+				maxDepth:      3,
+			},
+		},
+		{
+			name: "no children",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1-1",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := lro.GetAllChildren(tt.args.ctx, tt.args.operationName, &GetAllChildrenOptions{maxDepth: tt.args.maxDepth})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Client.GetChildren() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			t.Logf("got: %v", got)

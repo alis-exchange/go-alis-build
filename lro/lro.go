@@ -390,24 +390,72 @@ func (c *Client) GetParent(ctx context.Context, operation string) (string, error
 	if err != nil {
 		return "", err
 	}
-	// if colName is ParentlessOpColumn, return empty string
+	// if colName is ParentlessOpColumn, return not found error
 	if colName == ParentlessOpColumn {
-		return "", nil
+		return "", ErrNotFound{Operation: operation}
 	}
 	return colName, nil
 }
 
-// GetChildren provides the set of children for a given operation
-func (c *Client) GetChildren(ctx context.Context, operation string, pageSize int64, nextToken string) ([]*longrunningpb.Operation, string, error) {
+type GetAllChildrenOptions struct {
+	// The maximum depth of the tree to return. If not specified, the entire tree is returned.
+	maxDepth int
+}
+type OperationChild struct {
+	Operation string
+	Children  []*OperationChild
+}
+
+func (c *Client) GetAllChildren(ctx context.Context, operation string, opts *GetAllChildrenOptions) ([]*OperationChild, error) {
+	immediateChildren, _, err := c.GetImmediateChildren(ctx, operation, &GetImmediateChildrenOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if len(immediateChildren) == 0 || opts.maxDepth == -1 {
+		return []*OperationChild{}, nil
+	} else {
+		var res []*OperationChild
+		for _, immediateChild := range immediateChildren {
+			child := &OperationChild{
+				Operation: immediateChild.GetName(),
+			}
+			newMaxDepth := opts.maxDepth - 1
+			if newMaxDepth == 0 {
+				newMaxDepth = -1
+			} else if newMaxDepth == -1 {
+				newMaxDepth = 0 // if maxDepth is -1, set newMaxDepth to 0 so that the entire tree is returned
+			}
+			children, err := c.GetAllChildren(ctx, immediateChild.GetName(), &GetAllChildrenOptions{maxDepth: newMaxDepth})
+			if err != nil {
+				return nil, err
+			}
+			child.Children = children
+			res = append(res, child)
+		}
+		return res, nil
+	}
+}
+
+type GetImmediateChildrenOptions struct {
+	// The maximum number of children to return. If not specified, the entire list is returned.
+	maxChildren int
+	// The nextToken from the previous response. If not specified, the first page of results is returned.
+	nextToken string
+}
+
+// GetChildren provides the list of immediate children for a given operation
+func (c *Client) GetImmediateChildren(ctx context.Context, operation string, opts *GetImmediateChildrenOptions) ([]*longrunningpb.Operation, string, error) {
 
 	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
 	// the previous response, and thus the first element returned in this response will be ignored
-	if nextToken != "" {
-		pageSize++
+	if opts.nextToken != "" && opts.maxChildren != 0 {
+		opts.maxChildren++
 	}
 	// set up reading options
 	var readingOpts []bigtable.ReadOption
-	readingOpts = append(readingOpts, bigtable.LimitRows(pageSize))
+	if opts.maxChildren != 0 {
+		readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.maxChildren)))
+	}
 	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
 		bigtable.LatestNFilter(1),
 		bigtable.ColumnFilter(operation),
@@ -415,10 +463,10 @@ func (c *Client) GetChildren(ctx context.Context, operation string, pageSize int
 
 	// create a rowSet to read from
 	startKey := ""
-	if nextToken != "" {
-		startKeyBytes, err := base64.StdEncoding.DecodeString(nextToken)
+	if opts.nextToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.nextToken)
 		if err != nil {
-			return nil, "", ErrInvalidNextToken{nextToken: nextToken}
+			return nil, "", ErrInvalidNextToken{nextToken: opts.nextToken}
 		}
 		startKey = string(startKeyBytes)
 	}
@@ -462,17 +510,16 @@ func (c *Client) GetChildren(ctx context.Context, operation string, pageSize int
 	if err != nil {
 		return nil, lastRowKey, err
 	}
-	if len(res) != 0 && nextToken != "" {
+	if len(res) != 0 && opts.nextToken != "" {
 		res = res[1:]
 	}
 
-	if len(res) < int(pageSize) {
+	if len(res) < int(opts.maxChildren) || len(res) == 0 {
 		lastRowKey = ""
 	} else {
 		// base64 encode lastRowKey
 		lastRowKeyBytes := []byte(lastRowKey)
 		lastRowKey = base64.StdEncoding.EncodeToString(lastRowKeyBytes)
-
 	}
 	return res, lastRowKey, nil
 }
