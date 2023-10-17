@@ -432,6 +432,11 @@ func (c *Client) TraverseChildrenOperations(ctx context.Context, operation strin
 	if err != nil {
 		return nil, err
 	}
+	if opts == nil {
+		opts = &TraverseChildrenOperationsOptions{
+			MaxDepth: 0,
+		}
+	}
 	if len(immediateChildren) == 0 || opts.MaxDepth == -1 {
 		// This signals the end of the sequence.
 		// Ie. that the OperationNode does not
@@ -445,13 +450,15 @@ func (c *Client) TraverseChildrenOperations(ctx context.Context, operation strin
 			Operation: immediateChild.GetName(),
 		}
 
-		// TODO: add explanation
-		newMaxDepth := opts.MaxDepth - 1
-		if newMaxDepth == 0 {
-			newMaxDepth = -1
-		} else if newMaxDepth == -1 {
-			newMaxDepth = 0 // if MaxDepth is -1, set newMaxDepth to 0 so that the entire tree is returned
+		// opts.MaxDepth = 0 indicates that there is no max depth, thus when 0 is reached, change it to -1 to indicate the end of the sequence
+		newMaxDepth := opts.MaxDepth
+		if opts.MaxDepth != 0 {
+			newMaxDepth = opts.MaxDepth - 1
+			if newMaxDepth == 0 {
+				newMaxDepth = -1
+			}
 		}
+
 		children, err := c.TraverseChildrenOperations(ctx, immediateChild.GetName(), &TraverseChildrenOperationsOptions{MaxDepth: newMaxDepth})
 		if err != nil {
 			if !errors.Is(err, EOF) {

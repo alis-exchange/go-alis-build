@@ -462,10 +462,6 @@ func TestClient_ListImmediateChildrenOperations(t *testing.T) {
 		table: Table,
 	}
 	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
-	type fields struct {
-		table        *bigtable.Table
-		rowKeyPrefix string
-	}
 	type args struct {
 		ctx    context.Context
 		parent string
@@ -473,7 +469,6 @@ func TestClient_ListImmediateChildrenOperations(t *testing.T) {
 	}
 	tests := []struct {
 		name    string
-		fields  fields
 		args    args
 		want    []*longrunningpb.Operation
 		want1   string
@@ -515,11 +510,10 @@ func TestClient_ListImmediateChildrenOperations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				table:        tt.fields.table,
-				rowKeyPrefix: tt.fields.rowKeyPrefix,
+			lro := &Client{
+				table: Table,
 			}
-			got, got1, err := c.ListImmediateChildrenOperations(tt.args.ctx, tt.args.parent, tt.args.opts)
+			got, got1, err := lro.ListImmediateChildrenOperations(tt.args.ctx, tt.args.parent, tt.args.opts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ListImmediateChildrenOperations() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -561,11 +555,6 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 		}
 	}
 
-	type fields struct {
-		table        *bigtable.Table
-		rowKeyPrefix string
-	}
-
 	type args struct {
 		ctx       context.Context
 		operation string
@@ -573,7 +562,6 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 	}
 	tests := []struct {
 		name    string
-		fields  fields
 		args    args
 		wantErr bool
 	}{
@@ -598,15 +586,15 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 				ctx:       context.Background(),
 				operation: "operations/test-id-1-1",
 			},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				table:        tt.fields.table,
-				rowKeyPrefix: tt.fields.rowKeyPrefix,
+			lro := &Client{
+				table: Table,
 			}
-			got, err := c.TraverseChildrenOperations(tt.args.ctx, tt.args.operation, tt.args.opts)
+			got, err := lro.TraverseChildrenOperations(tt.args.ctx, tt.args.operation, tt.args.opts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("TraverseChildrenOperations() error = %v, wantErr %v", err, tt.wantErr)
 				return
