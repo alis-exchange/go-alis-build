@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -406,74 +407,6 @@ func TestClient_WaitOperation(t *testing.T) {
 	}
 }
 
-func TestClient_GetImmediateChildren(t *testing.T) {
-	type args struct {
-		ctx           context.Context
-		operationName string
-		pageSize      int
-		nextToken     string
-	}
-	// create a test operation with 5 children
-	lro := &Client{
-		table: Table,
-	}
-	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
-	for i := 0; i < 5; i++ {
-		lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Parent: parentOp.GetName(), Metadata: nil})
-		sucOp, err := lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10), nil, nil)
-		if err != nil {
-			t.Errorf("SetSuccessful() error = %v", err)
-		}
-		t.Logf("sucOp: %v", sucOp)
-	}
-	tests := []struct {
-		name    string
-		args    args
-		want    []*longrunningpb.Operation
-		want1   string
-		wantErr bool
-	}{
-		{
-			name: "basic",
-			args: args{
-				ctx:           context.Background(),
-				operationName: parentOp.GetName(),
-				pageSize:      3,
-				nextToken:     "",
-			},
-		},
-		{
-			name: "nextPage",
-			args: args{
-				ctx:           context.Background(),
-				operationName: parentOp.GetName(),
-				pageSize:      3,
-				nextToken:     "dGVzdC1pZC0xLTI=",
-			},
-		},
-		{
-			name: "no children",
-			args: args{
-				ctx:           context.Background(),
-				operationName: "operations/test-id-1-1",
-				pageSize:      3,
-				nextToken:     "",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, got1, err := lro.GetImmediateChildren(tt.args.ctx, tt.args.operationName, &GetImmediateChildrenOptions{maxChildren: tt.args.pageSize, nextToken: tt.args.nextToken})
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.GetChildren() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			t.Logf("got: %v", got)
-			t.Logf("got1: %v", got1)
-		})
-	}
-}
-
 func TestClient_GetParent(t *testing.T) {
 	type args struct {
 		ctx           context.Context
@@ -522,12 +455,87 @@ func TestClient_GetParent(t *testing.T) {
 	}
 }
 
-func TestClient_GetAllChildren(t *testing.T) {
-	type args struct {
-		ctx           context.Context
-		operationName string
-		maxDepth      int
+func TestClient_ListImmediateChildrenOperations(t *testing.T) {
+
+	// create a test operation with 5 children
+	lro := &Client{
+		table: Table,
 	}
+	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	type fields struct {
+		table        *bigtable.Table
+		rowKeyPrefix string
+	}
+	type args struct {
+		ctx    context.Context
+		parent string
+		opts   *ListImmediateChildrenOperationsOptions
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    []*longrunningpb.Operation
+		want1   string
+		wantErr bool
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx:    context.Background(),
+				parent: parentOp.GetName(),
+				opts: &ListImmediateChildrenOperationsOptions{
+					PageSize:  3,
+					PageToken: "",
+				},
+			},
+		},
+		{
+			name: "nextPage",
+			args: args{
+				ctx:    context.Background(),
+				parent: parentOp.GetName(),
+				opts: &ListImmediateChildrenOperationsOptions{
+					PageSize:  3,
+					PageToken: "dGVzdC1pZC0xLTI=",
+				},
+			},
+		},
+		{
+			name: "no children",
+			args: args{
+				ctx:    context.Background(),
+				parent: "operations/test-id-1-1",
+				opts: &ListImmediateChildrenOperationsOptions{
+					PageSize:  3,
+					PageToken: "dGVzdC1pZC0xLTI=",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{
+				table:        tt.fields.table,
+				rowKeyPrefix: tt.fields.rowKeyPrefix,
+			}
+			got, got1, err := c.ListImmediateChildrenOperations(tt.args.ctx, tt.args.parent, tt.args.opts)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ListImmediateChildrenOperations() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ListImmediateChildrenOperations() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("ListImmediateChildrenOperations() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func TestClient_TraverseChildrenOperations(t *testing.T) {
+
 	// create a test operation with 5 children
 	lro := &Client{
 		table: Table,
@@ -552,44 +560,58 @@ func TestClient_GetAllChildren(t *testing.T) {
 			}
 		}
 	}
+
+	type fields struct {
+		table        *bigtable.Table
+		rowKeyPrefix string
+	}
+
+	type args struct {
+		ctx       context.Context
+		operation string
+		opts      *TraverseChildrenOperationsOptions
+	}
 	tests := []struct {
 		name    string
+		fields  fields
 		args    args
-		want    []*longrunningpb.Operation
-		want1   string
 		wantErr bool
 	}{
 		{
 			name: "basic",
 			args: args{
-				ctx:           context.Background(),
-				operationName: parentOp.GetName(),
+				ctx:       context.Background(),
+				operation: parentOp.GetName(),
 			},
 		},
 		{
-			name: "maxDepth",
+			name: "MaxDepth",
 			args: args{
-				ctx:           context.Background(),
-				operationName: parentOp.GetName(),
-				maxDepth:      3,
+				ctx:       context.Background(),
+				operation: parentOp.GetName(),
+				opts:      &TraverseChildrenOperationsOptions{MaxDepth: 3},
 			},
 		},
 		{
 			name: "no children",
 			args: args{
-				ctx:           context.Background(),
-				operationName: "operations/test-id-1-1",
+				ctx:       context.Background(),
+				operation: "operations/test-id-1-1",
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := lro.GetAllChildren(tt.args.ctx, tt.args.operationName, &GetAllChildrenOptions{maxDepth: tt.args.maxDepth})
+			c := &Client{
+				table:        tt.fields.table,
+				rowKeyPrefix: tt.fields.rowKeyPrefix,
+			}
+			got, err := c.TraverseChildrenOperations(tt.args.ctx, tt.args.operation, tt.args.opts)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.GetChildren() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("TraverseChildrenOperations() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			t.Logf("got: %v", got)
+			fmt.Println(got)
 		})
 	}
 }
