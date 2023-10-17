@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"cloud.google.com/go/bigtable"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -26,6 +25,13 @@ import (
 const (
 	ColumnFamily       = "0"
 	ParentlessOpColumn = "0"
+)
+
+// Metadata constants
+const (
+	// MetaKeyAlisLroParent specifies the metadata key name
+	// for a long-running operation parent
+	MetaKeyAlisLroParent = "x-alis-lro-parent"
 )
 
 // ErrNotFound is returned when the requested operation does not exist in bigtable
@@ -111,11 +117,11 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	if opts.Parent != "" {
 		colName = opts.Parent
 	} else {
-		incomingMeta, incomingExists := metadata.FromIncomingContext(ctx)
-		if incomingExists {
-			key := "x-alis-lro"
-			if incomingMeta[key] != nil {
-				colName = incomingMeta[key][0]
+		if incomingMeta, ok := metadata.FromIncomingContext(ctx); ok {
+			if incomingMeta[MetaKeyAlisLroParent] != nil {
+				if len(incomingMeta[MetaKeyAlisLroParent]) > 0 {
+					colName = incomingMeta[MetaKeyAlisLroParent][0]
+				}
 			}
 		}
 	}
@@ -129,8 +135,9 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	return op, nil
 }
 
+// SetOutgoingContextParentOperation appends the outgoing context metadata with the operation name, using the key as MetaKeyAlisLroParent
 func (c *Client) SetOutgoingContextParentOperation(ctx context.Context, operationName string) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, "x-alis-lro", operationName)
+	return metadata.AppendToOutgoingContext(ctx, MetaKeyAlisLroParent, operationName)
 }
 
 // GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
@@ -376,9 +383,10 @@ func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metad
 	return op, nil
 }
 
-func (c *Client) GetParent(ctx context.Context, operationName string) (string, error) {
+// GetParent attempts to retrieve the parent operation name for a specified operation
+func (c *Client) GetParent(ctx context.Context, operation string) (string, error) {
 	// get operation and column name
-	_, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+	_, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operation)
 	if err != nil {
 		return "", err
 	}
@@ -389,8 +397,8 @@ func (c *Client) GetParent(ctx context.Context, operationName string) (string, e
 	return colName, nil
 }
 
-// query bigtable for all rows with a value in column=operationName
-func (c *Client) GetChildren(ctx context.Context, operationName string, pageSize int64, nextToken string) ([]*longrunningpb.Operation, string, error) {
+// GetChildren provides the set of children for a given operation
+func (c *Client) GetChildren(ctx context.Context, operation string, pageSize int64, nextToken string) ([]*longrunningpb.Operation, string, error) {
 
 	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
 	// the previous response, and thus the first element returned in this response will be ignored
@@ -402,7 +410,7 @@ func (c *Client) GetChildren(ctx context.Context, operationName string, pageSize
 	readingOpts = append(readingOpts, bigtable.LimitRows(pageSize))
 	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
 		bigtable.LatestNFilter(1),
-		bigtable.ColumnFilter(operationName),
+		bigtable.ColumnFilter(operation),
 	)))
 
 	// create a rowSet to read from
