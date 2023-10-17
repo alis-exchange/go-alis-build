@@ -2,16 +2,19 @@ package lro
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"cloud.google.com/go/bigtable"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -49,6 +52,14 @@ type InvalidOperationName struct {
 
 func (e InvalidOperationName) Error() string {
 	return fmt.Sprintf("%s is not a valid operation name (must start with 'operations/')", e.Name)
+}
+
+type ErrInvalidNextToken struct {
+	nextToken string
+}
+
+func (e ErrInvalidNextToken) Error() string {
+	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
 }
 
 // Client manages the instance of the Bigtable table.
@@ -96,8 +107,17 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 
 	// set column name
 	colName := ParentlessOpColumn
+
 	if opts.Parent != "" {
 		colName = opts.Parent
+	} else {
+		incomingMeta, incomingExists := metadata.FromIncomingContext(ctx)
+		if incomingExists {
+			key := "x-alis-lro"
+			if incomingMeta[key] != nil {
+				colName = incomingMeta[key][0]
+			}
+		}
 	}
 
 	//write to bigtable
@@ -107,6 +127,10 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	}
 
 	return op, nil
+}
+
+func (c *Client) SetOutgoingContextParentOperation(ctx context.Context, operationName string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "x-alis-lro", operationName)
 }
 
 // GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
@@ -352,6 +376,99 @@ func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metad
 	return op, nil
 }
 
+func (c *Client) GetParent(ctx context.Context, operationName string) (string, error) {
+	// get operation and column name
+	_, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
+	if err != nil {
+		return "", err
+	}
+	// if colName is ParentlessOpColumn, return empty string
+	if colName == ParentlessOpColumn {
+		return "", nil
+	}
+	return colName, nil
+}
+
+// query bigtable for all rows with a value in column=operationName
+func (c *Client) GetChildren(ctx context.Context, operationName string, pageSize int64, nextToken string) ([]*longrunningpb.Operation, string, error) {
+
+	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
+	// the previous response, and thus the first element returned in this response will be ignored
+	if nextToken != "" {
+		pageSize++
+	}
+	// set up reading options
+	var readingOpts []bigtable.ReadOption
+	readingOpts = append(readingOpts, bigtable.LimitRows(pageSize))
+	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
+		bigtable.LatestNFilter(1),
+		bigtable.ColumnFilter(operationName),
+	)))
+
+	// create a rowSet to read from
+	startKey := ""
+	if nextToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(nextToken)
+		if err != nil {
+			return nil, "", ErrInvalidNextToken{nextToken: nextToken}
+		}
+		startKey = string(startKeyBytes)
+	}
+	endKey := "~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+	rowSet := bigtable.NewRange(startKey, endKey)
+
+	lastRowKey := ""
+	var res []*longrunningpb.Operation
+	err := c.table.ReadRows(ctx, rowSet,
+		func(row bigtable.Row) bool {
+
+			// if the row is empty, append an empty value and continue
+			if row == nil {
+				res = append(res, nil)
+				return true
+			}
+
+			// Each collection is stored in a corresponding Bigtable family
+			columns := row[ColumnFamily]
+
+			// if there are no results in the row, append an empty value and continue
+			if len(columns) == 0 {
+				res = append(res, nil)
+				return true
+			}
+
+			// only the first column is used by the resource.
+			column := columns[0]
+			// unmarshal column.value into long-running operation resource
+			op := &longrunningpb.Operation{}
+			err := proto.Unmarshal(column.Value, op)
+			if err != nil {
+				return false
+			}
+			res = append(res, op)
+			lastRowKey = row.Key()
+			return true
+		},
+		readingOpts...,
+	)
+	if err != nil {
+		return nil, lastRowKey, err
+	}
+	if len(res) != 0 && nextToken != "" {
+		res = res[1:]
+	}
+
+	if len(res) < int(pageSize) {
+		lastRowKey = ""
+	} else {
+		// base64 encode lastRowKey
+		lastRowKeyBytes := []byte(lastRowKey)
+		lastRowKey = base64.StdEncoding.EncodeToString(lastRowKeyBytes)
+
+	}
+	return res, lastRowKey, nil
+}
+
 func (c *Client) writeToBigtable(ctx context.Context, rowKeyPrefix string, columnName string, op *longrunningpb.Operation) error {
 	// marshal proto into bytes
 	dataBytes, err := proto.Marshal(op)
@@ -408,9 +525,9 @@ func (c *Client) getOpAndColumn(ctx context.Context, rowKeyPrefix, operation str
 	if err != nil {
 		return nil, "", err
 	}
-
+	columnName := strings.Split(column.Column, ":")[1]
 	// return operation and column name
-	return op, column.Column, nil
+	return op, columnName, nil
 }
 
 // DeleteRow deletes an entire row from bigtable at the given rowKey.

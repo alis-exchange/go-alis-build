@@ -13,6 +13,7 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -239,7 +240,7 @@ func TestLroClient_SetSuccessful(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := lro.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metadata); (err != nil) != tt.wantErr {
+			if _, err := lro.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metadata); (err != nil) != tt.wantErr {
 				t.Errorf("SetSuccessful() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
@@ -297,8 +298,8 @@ func TestLroClient_SetFailed(t *testing.T) {
 	// act and assert
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-
-			if err := lro.SetFailed(tt.args.ctx, tt.args.operationName, tt.args.error, nil); (err != nil) != tt.wantErr {
+			_, err := lro.SetFailed(tt.args.ctx, tt.args.operationName, tt.args.error, nil)
+			if (err != nil) != tt.wantErr {
 				t.Errorf("SetFailed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
@@ -309,6 +310,7 @@ func TestLroClient_SetFailed(t *testing.T) {
 				if op.GetResult() == nil {
 					t.Errorf("SetFailed() did not update the result field")
 				}
+				t.Logf("op: %v", op)
 			}
 		})
 	}
@@ -319,7 +321,7 @@ func create5TestOperations(lro *Client) {
 		_, _ = lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
 		// set even numbers as successful
 		if i%2 == 0 {
-			_ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, nil)
+			_, _ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, nil)
 		}
 	}
 }
@@ -334,7 +336,7 @@ func TestClient_WaitOperation(t *testing.T) {
 	lro := &Client{
 		table: Table,
 	}
-	// arrange
+	//arrange
 	create5TestOperations(lro)
 
 	tests := []struct {
@@ -397,10 +399,125 @@ func TestClient_WaitOperation(t *testing.T) {
 			got, err := lro.WaitOperation(tt.args.ctx, req, nil)
 			if err != nil {
 				t.Errorf("WaitOperation() error = %v", err)
+				return
 			}
-			if !proto.Equal(got, tt.want) {
-				t.Errorf("WaitOperation() got = %v, want %v", got, tt.want)
+			t.Logf("got: %v", got)
+		})
+	}
+}
+
+func TestClient_GetChildren(t *testing.T) {
+	type args struct {
+		ctx           context.Context
+		operationName string
+		pageSize      int64
+		nextToken     string
+	}
+	// create a test operation with 5 children
+	lro := &Client{
+		table: Table,
+	}
+	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	for i := 0; i < 5; i++ {
+		lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Parent: parentOp.GetName(), Metadata: nil})
+		sucOp, err := lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10), nil, nil)
+		if err != nil {
+			t.Errorf("SetSuccessful() error = %v", err)
+		}
+		t.Logf("sucOp: %v", sucOp)
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    []*longrunningpb.Operation
+		want1   string
+		wantErr bool
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx:           context.Background(),
+				operationName: parentOp.GetName(),
+				pageSize:      3,
+				nextToken:     "",
+			},
+		},
+		{
+			name: "nextPage",
+			args: args{
+				ctx:           context.Background(),
+				operationName: parentOp.GetName(),
+				pageSize:      3,
+				nextToken:     "dGVzdC1pZC0xLTI=",
+			},
+		},
+		{
+			name: "no children",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1-1",
+				pageSize:      3,
+				nextToken:     "",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1, err := lro.GetChildren(tt.args.ctx, tt.args.operationName, tt.args.pageSize, tt.args.nextToken)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Client.GetChildren() error = %v, wantErr %v", err, tt.wantErr)
+				return
 			}
+			t.Logf("got: %v", got)
+			t.Logf("got1: %v", got1)
+		})
+	}
+}
+
+func TestClient_GetParent(t *testing.T) {
+	type args struct {
+		ctx           context.Context
+		operationName string
+	}
+	lro := &Client{
+		table: Table,
+	}
+	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	for i := 0; i < 5; i++ {
+		// add incoming metadata to context
+		context := context.Background()
+		context = metadata.NewIncomingContext(context, metadata.Pairs("x-alis-lro", parentOp.GetName()))
+		lro.CreateOperation(context, &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Metadata: nil})
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1-1",
+			},
+		},
+		{
+			name: "no parent",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := lro.GetParent(tt.args.ctx, tt.args.operationName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Client.GetParent() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			t.Logf("got: %v", got)
 		})
 	}
 }

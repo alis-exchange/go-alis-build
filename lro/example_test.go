@@ -29,9 +29,9 @@ func ExampleNewClient() {
 
 		// handle long-running results
 		if err != nil {
-			_ = lroClient.SetSuccessful(ctx, operationName, response, nil)
+			op, _ = lroClient.SetSuccessful(ctx, operationName, response, nil)
 		} else {
-			_ = lroClient.SetFailed(ctx, operationName, err, nil)
+			op, _ = lroClient.SetFailed(ctx, operationName, err, nil)
 		}
 	}(op.Name)
 
