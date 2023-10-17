@@ -406,6 +406,7 @@ type OperationChild struct {
 	Children  []*OperationChild
 }
 
+// GetAllChildren returns a tree of all children for a given operation
 func (c *Client) GetAllChildren(ctx context.Context, operation string, opts *GetAllChildrenOptions) ([]*OperationChild, error) {
 	immediateChildren, _, err := c.GetImmediateChildren(ctx, operation, &GetImmediateChildrenOptions{})
 	if err != nil {
