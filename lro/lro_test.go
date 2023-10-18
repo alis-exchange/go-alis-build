@@ -603,3 +603,78 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 		})
 	}
 }
+
+func TestClient_SetParentInOutgoingMetadata(t *testing.T) {
+	lro := &Client{
+		table: Table,
+	}
+	type args struct {
+		ctx           context.Context
+		operationName string
+	}
+	tests := []struct {
+		name string
+		args args
+		want context.Context
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx:           context.Background(),
+				operationName: "operations/test-id-1",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newCtx := lro.SetParentInOutgoingMetadata(tt.args.ctx, tt.args.operationName)
+			if outgoingMeta, ok := metadata.FromOutgoingContext(newCtx); ok {
+				if outgoingMeta[MetaKeyAlisLroParent] != nil {
+					if len(outgoingMeta[MetaKeyAlisLroParent]) > 0 {
+						parent := outgoingMeta[MetaKeyAlisLroParent][0]
+						if parent != tt.args.operationName {
+							t.Errorf("SetParentInOutgoingMetadata() = %v, want %v", parent, tt.args.operationName)
+						}
+					}
+				}
+			}
+
+		})
+	}
+}
+
+func TestForwardIncomingParentMetadata(t *testing.T) {
+	type args struct {
+		ctx context.Context
+	}
+	lro := &Client{
+		table: Table,
+	}
+	tests := []struct {
+		name string
+		args args
+		want context.Context
+	}{
+		{
+			name: "basic",
+			args: args{
+				ctx: metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-alis-lro-parent", "operations/test-id-1")),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newCtx := lro.ForwardIncomingParentMetadata(tt.args.ctx)
+			if outgoingMeta, ok := metadata.FromOutgoingContext(newCtx); ok {
+				if outgoingMeta[MetaKeyAlisLroParent] != nil {
+					if len(outgoingMeta[MetaKeyAlisLroParent]) > 0 {
+						parent := outgoingMeta[MetaKeyAlisLroParent][0]
+						if parent != "operations/test-id-1" {
+							t.Errorf("SetParentInOutgoingMetadata() = %v, want %v", parent, "operations/test-id-1")
+						}
+					}
+				}
+			}
+		})
+	}
+}

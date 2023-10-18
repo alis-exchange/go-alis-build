@@ -141,8 +141,20 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 }
 
 // SetOutgoingContextParentOperation appends the outgoing context metadata with the operation name, using the key as MetaKeyAlisLroParent
-func (c *Client) SetOutgoingContextParentOperation(ctx context.Context, operationName string) context.Context {
+func (c *Client) SetParentInOutgoingMetadata(ctx context.Context, operationName string) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, MetaKeyAlisLroParent, operationName)
+}
+
+// ForwardIncomingParentMetadata forwards the incoming context metadata with the operation name, using the key as MetaKeyAlisLroParent
+func (c *Client) ForwardIncomingParentMetadata(ctx context.Context) context.Context {
+	if incomingMeta, ok := metadata.FromIncomingContext(ctx); ok {
+		if incomingMeta[MetaKeyAlisLroParent] != nil {
+			if len(incomingMeta[MetaKeyAlisLroParent]) > 0 {
+				return metadata.AppendToOutgoingContext(ctx, MetaKeyAlisLroParent, incomingMeta[MetaKeyAlisLroParent][0])
+			}
+		}
+	}
+	return ctx
 }
 
 // GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
@@ -152,7 +164,6 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	if err != nil {
 		// if error is of type ErrNotFound, retry with delay of 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 2s
 		if _, ok := err.(ErrNotFound); ok {
-			println("operation not found, waiting 1 second and trying again")
 			time.Sleep(5 * time.Millisecond)
 			op, _, err = c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 			if err != nil {
