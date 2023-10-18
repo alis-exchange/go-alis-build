@@ -140,7 +140,7 @@ func TestLroClient_CreateOperation(t *testing.T) {
 			l := &Client{
 				table: tt.fields.table,
 			}
-			got, err := l.CreateOperation(tt.args.ctx, tt.args.opts)
+			got, err := l.CreateOperation(&tt.args.ctx, tt.args.opts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateOperation() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -318,8 +318,9 @@ func TestLroClient_SetFailed(t *testing.T) {
 }
 
 func create5TestOperations(lro *Client) {
+	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		_, _ = lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
+		_, _ = lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-" + strconv.FormatInt(int64(i), 10), Parent: "test-parent", Metadata: nil})
 		// set even numbers as successful
 		if i%2 == 0 {
 			_, _ = lro.SetSuccessful(context.Background(), "operations/test-id-"+strconv.FormatInt(int64(i), 10), nil, nil)
@@ -415,12 +416,13 @@ func TestClient_GetParent(t *testing.T) {
 	lro := &Client{
 		table: Table,
 	}
-	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	ctx := context.Background()
+	parentOp, _ := lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-1", Metadata: nil})
 	for i := 0; i < 5; i++ {
 		// add incoming metadata to context
 		context := context.Background()
-		context = metadata.NewIncomingContext(context, metadata.Pairs("x-alis-lro", parentOp.GetName()))
-		lro.CreateOperation(context, &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Metadata: nil})
+		context = metadata.NewIncomingContext(context, metadata.Pairs("x-alis-lro-parent", parentOp.GetName()))
+		lro.CreateOperation(&context, &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Metadata: nil})
 	}
 	tests := []struct {
 		name    string
@@ -441,6 +443,7 @@ func TestClient_GetParent(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/test-id-1",
 			},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -461,7 +464,8 @@ func TestClient_ListImmediateChildrenOperations(t *testing.T) {
 	lro := &Client{
 		table: Table,
 	}
-	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	ctx := context.Background()
+	parentOp, _ := lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-1", Metadata: nil})
 	type args struct {
 		ctx    context.Context
 		parent string
@@ -534,9 +538,10 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 	lro := &Client{
 		table: Table,
 	}
-	parentOp, _ := lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1", Metadata: nil})
+	ctx := context.Background()
+	parentOp, _ := lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-1", Metadata: nil})
 	for i := 0; i < 5; i++ {
-		lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Parent: parentOp.GetName(), Metadata: nil})
+		lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10), Parent: parentOp.GetName(), Metadata: nil})
 		sucOp, err := lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10), nil, nil)
 		if err != nil {
 			t.Errorf("SetSuccessful() error = %v", err)
@@ -545,7 +550,7 @@ func TestClient_TraverseChildrenOperations(t *testing.T) {
 		// if even, create three children under it
 		if i%2 == 0 {
 			for j := 0; j < 3; j++ {
-				lro.CreateOperation(context.Background(), &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10) + "-" + strconv.FormatInt(int64(j), 10), Parent: sucOp.GetName(), Metadata: nil})
+				lro.CreateOperation(&ctx, &CreateOptions{Id: "test-id-1-" + strconv.FormatInt(int64(i), 10) + "-" + strconv.FormatInt(int64(j), 10), Parent: sucOp.GetName(), Metadata: nil})
 				sucOp, err = lro.SetSuccessful(context.Background(), "operations/test-id-1-"+strconv.FormatInt(int64(i), 10)+"-"+strconv.FormatInt(int64(j), 10), nil, nil)
 				if err != nil {
 					t.Errorf("SetSuccessful() error = %v", err)

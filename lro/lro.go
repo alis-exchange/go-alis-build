@@ -101,7 +101,7 @@ type CreateOptions struct {
 }
 
 // CreateOperation stores a new long-running operation in bigtable, with done=false
-func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*longrunningpb.Operation, error) {
+func (c *Client) CreateOperation(ctx *context.Context, opts *CreateOptions) (*longrunningpb.Operation, error) {
 	// create new unpopulated long-running operation
 	op := &longrunningpb.Operation{}
 
@@ -122,7 +122,7 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	if opts.Parent != "" {
 		colName = opts.Parent
 	} else {
-		if incomingMeta, ok := metadata.FromIncomingContext(ctx); ok {
+		if incomingMeta, ok := metadata.FromIncomingContext(*ctx); ok {
 			if incomingMeta[MetaKeyAlisLroParent] != nil {
 				if len(incomingMeta[MetaKeyAlisLroParent]) > 0 {
 					colName = incomingMeta[MetaKeyAlisLroParent][0]
@@ -132,10 +132,13 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 	}
 
 	//write to bigtable
-	err := c.writeToBigtable(ctx, c.rowKeyPrefix, colName, op)
+	err := c.writeToBigtable(*ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return nil, err
 	}
+
+	// add opName to outgoing context metadata
+	*ctx = metadata.AppendToOutgoingContext(*ctx, MetaKeyAlisLroParent, op.GetName())
 
 	return op, nil
 }
