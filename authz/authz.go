@@ -72,12 +72,15 @@ func (a *Authz) SetSuperAdmins(superAdmins []string) {
 	a.superAdmins = superAdmins
 }
 
-// Validate evaluates the Context and checks whether a Principal have the required Permission on the
+// Authorize evaluates the Context and checks whether a Principal have the required Permission on the
 // provided resources.
 // Under the hood it retrieves the relevant policies for the provided resource
-func (a *Authz) Validate(ctx context.Context, resource string, permission string) error {
+func (a *Authz) Authorize(ctx context.Context, resource string, permission string) error {
 	var policy *iampb.Policy
 	var err error
+
+	// Add the principal to the context from the incoming context.
+	addPrincipalToContext(&ctx)
 
 	// If a resource is provided, get the policy.
 	if resource != "" {
@@ -89,37 +92,10 @@ func (a *Authz) Validate(ctx context.Context, resource string, permission string
 		}
 	}
 
-	return a.validateAgainstPolicy(ctx, resource, permission, policy)
+	return a.AuthorizeWithPolicies(ctx, resource, permission, []*iampb.Policy{policy})
 }
 
-// ValidateAgainstPolicy evaluates the Context and checks whether a Principal have the required Permission on the
-// provided resources, for a given Policy
-func (a *Authz) validateAgainstPolicy(ctx context.Context, resource string, permission string, policy *iampb.Policy) error {
-	var principal, principalEmail, member string
-
-	// Extract the member from the context, as specified by the principal information
-	principal = fmt.Sprintf("%s", ctx.Value("principal"))
-	principalEmail = fmt.Sprintf("%s", ctx.Value("principal-email"))
-
-	// construct a Policy Binding member from the principal, which includes the user:... or serviceAccount: portion.
-	if strings.Contains(principalEmail, ".gserviceaccount.com") {
-		member = fmt.Sprintf("serviceAccount:%s", principal)
-	} else {
-		member = fmt.Sprintf("user:%s", principal)
-	}
-
-	// If the user has the required permission on the resource, grant access.
-	// Otherwise, deny access.
-	if a.hasPermission(permission, member, policy) {
-		return nil
-	} else {
-		return status.Errorf(codes.PermissionDenied,
-			"%s does not have %s permission on resource %s, or it may not exists",
-			principalEmail, permission, resource)
-	}
-}
-
-// ValidateAgainstPolicies evaluates the Context and checks whether a Principal has the required Permission on the
+// AuthorizeAgainstPolicies evaluates the Context and checks whether a Principal has the required Permission on the
 // provided resources, for a set of policies. If a user has the required permission in any
 // of the policies, access is granted.
 //
@@ -145,7 +121,7 @@ func (a *Authz) validateAgainstPolicy(ctx context.Context, resource string, perm
 //  3. A principle has the productConsumer role on the product deployment
 //     A principle has the productBuilder role on the product level
 //     Access is granted as soon as the first permission is valid
-func (a *Authz) ValidateAgainstPolicies(ctx context.Context, resource string, permission string, policies []*iampb.Policy) error {
+func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, permission string, policies []*iampb.Policy) error {
 	var principal, principalEmail, member string
 
 	// Extract the member from the context, as specified by the principal information
@@ -201,9 +177,9 @@ func (a *Authz) hasPermission(requiredPermission string, member string, policy *
 	return false
 }
 
-// AddPrincipalToContext will inspect the authorization header, extracts the principal email and identifier
+// addPrincipalToContext will inspect the authorization header, extracts the principal email and identifier
 // and add these to the context.
-func AddPrincipalToContext(ctx *context.Context) error {
+func addPrincipalToContext(ctx *context.Context) error {
 	var principal, email string
 	var err error
 
