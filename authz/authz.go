@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"go.alis.build/bigproto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -79,16 +80,14 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 	var policy *iampb.Policy
 	var err error
 
-	// Add the principal to the context from the incoming context.
-	addPrincipalToContext(&ctx)
-
 	// If a resource is provided, get the policy.
 	if resource != "" {
 		// Iterate through all related policies and construct a unique list of permissions.
 		policy, err = a.policy.Read(ctx, resource)
-		// don't fail if no policy is found, the admin may still need to access the method.
-		if err != nil && status.Code(err) != codes.NotFound {
-			return status.Error(codes.Internal, err.Error())
+		if _, ok := err.(bigproto.ErrNotFound); !ok {
+			return status.Errorf(codes.NotFound, "failed to read policy: %v", err)
+		} else {
+			// don't fail if no policy is found, the admin may still need to access the method.
 		}
 	}
 
@@ -123,6 +122,12 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 //     Access is granted as soon as the first permission is valid
 func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, permission string, policies []*iampb.Policy) error {
 	var principal, principalEmail, member string
+
+	// Add the principal to the context from the incoming context.
+	err := addPrincipalToContext(&ctx)
+	if err != nil {
+		return fmt.Errorf("add principal to context: %w", err)
+	}
 
 	// Extract the member from the context, as specified by the principal information
 	principal = fmt.Sprintf("%s", ctx.Value("alis-principal"))
