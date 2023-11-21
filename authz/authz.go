@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
-	"go.alis.build/bigproto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -84,9 +83,7 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 	if resource != "" {
 		// Iterate through all related policies and construct a unique list of permissions.
 		policy, err = a.policy.Read(ctx, resource)
-		if _, ok := err.(bigproto.ErrNotFound); !ok {
-			return status.Errorf(codes.NotFound, "failed to read policy: %v", err)
-		} else {
+		if err != nil {
 			// don't fail if no policy is found, the admin may still need to access the method.
 		}
 	}
