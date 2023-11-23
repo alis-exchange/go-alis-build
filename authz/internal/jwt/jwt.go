@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -51,7 +52,7 @@ func ParsePayload(idToken string) (*Payload, error) {
 func parseJWT(idToken string) (*jwt, error) {
 	segments := strings.Split(idToken, ".")
 	if len(segments) != 3 {
-		return nil, fmt.Errorf("jwt: invalid token, token must have three segments; found %d", len(segments))
+		return nil, fmt.Errorf("jwt: invalid token, token must have three segments, found %d", len(segments))
 	}
 	return &jwt{
 		header:    segments[0],
@@ -130,4 +131,12 @@ func (j *jwt) String() string {
 
 func decode(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
+}
+
+// ValidateRegex validates an argument and returns an error if not valid
+func ValidateRegex(name string, value string, regex string) error {
+	if !regexp.MustCompile(regex).MatchString(value) {
+		return fmt.Errorf("%s (%s) is not of the right format: %s", name, value, regex)
+	}
+	return nil
 }

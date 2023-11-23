@@ -12,12 +12,28 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// header is used to store custom Alis Build headers as a string
+type header string
+
+// String returns a string representation of the header
+func (h header) String() string {
+	return string(h)
+}
+
+const (
+	alisPrincipal      header = "x-alis-principal"
+	alisPrincipalEmail header = "x-alis-principal-email"
+	ESPv2ProxyJWT      header = "x-endpoint-api-userinfo"  // The header used by ESPv2 gateways to forward the JWT token
+	IAPJWTAssertion    header = "x-goog-iap-jwt-assertion" // The header used by IAP to forward the JWT token
+)
+
 // Authz is a struct that contains the dependencies required to validate access
 // at the method level
 type Authz struct {
-	policy      Policy
-	superAdmins []string
-	roles       map[string][]string
+	policy              Policy
+	superAdmins         []string
+	roles               map[string][]string
+	bypassIfNoPrincipal bool
 }
 
 // Policy is an interface which is used to facilitate implementing a custom Read method
@@ -60,15 +76,24 @@ For example:
 		"/alis.os.resources.solutions.v1.SolutionsService/ListSolutions",
 	}
 */
-func (a *Authz) SetRoles(roles map[string][]string) {
+func (a *Authz) WithRoles(roles map[string][]string) *Authz {
 	a.roles = roles
+	return a
 }
 
 // SetSuperAdmins registers the set of super administrators for which to bypass authentication.
 // Each needs to be prefixed by 'user:' or 'serviceAccount:' for example:
 // ["user:10.....297", "serviceAccount:10246.....354"]
-func (a *Authz) SetSuperAdmins(superAdmins []string) {
+func (a *Authz) WithSuperAdmins(superAdmins []string) *Authz {
 	a.superAdmins = superAdmins
+	return a
+}
+
+// If no principal is present in the context, bypass the authorization check.
+// This is typically used when a method is called by
+func (a *Authz) BypassIfNoPrinciple() *Authz {
+	a.bypassIfNoPrincipal = true
+	return a
 }
 
 // Authorize evaluates the Context and checks whether a Principal have the required Permission on the
@@ -76,15 +101,12 @@ func (a *Authz) SetSuperAdmins(superAdmins []string) {
 // Under the hood it retrieves the relevant policies for the provided resource
 func (a *Authz) Authorize(ctx context.Context, resource string, permission string) error {
 	var policy *iampb.Policy
-	var err error
 
 	// If a resource is provided, get the policy.
 	if resource != "" {
 		// Iterate through all related policies and construct a unique list of permissions.
-		policy, err = a.policy.Read(ctx, resource)
-		if err != nil {
-			// don't fail if no policy is found, the admin may still need to access the method.
-		}
+		policy, _ = a.policy.Read(ctx, resource)
+		// We intentionally don't handle the error since we don't fail if no policy is found, the SuperAdmin may still need to access the method.
 	}
 
 	return a.AuthorizeWithPolicies(ctx, resource, permission, []*iampb.Policy{policy})
@@ -119,11 +141,40 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, permission string, policies []*iampb.Policy) error {
 	var principal, principalEmail, member string
 
-	// Extract the member from the context, as specified by the principal information
-	principal = fmt.Sprintf("%s", ctx.Value("x-alis-principal"))
-	principalEmail = fmt.Sprintf("%s", ctx.Value("x-alis-principal-email"))
+	// Ensure valid principal headers are present within the incoming context.
+	// If no headers are present, then fail only if bypassIfNoPrincipal is false.
+	alisPrincipalValue := ctx.Value(alisPrincipal)
+	if alisPrincipalValue == nil {
+		if a.bypassIfNoPrincipal {
+			return nil
+		} else {
+			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%s' from the request header", alisPrincipal)
+		}
+	}
+	alisPrincipalEmailValue := ctx.Value(alisPrincipalEmail)
+	if alisPrincipalEmailValue == nil {
+		if a.bypassIfNoPrincipal {
+			return nil
+		} else {
+			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%sl' from the request header", alisPrincipalEmail)
+		}
+	}
 
-	// construct a Policy Binding member from the principal, which includes the user:... or serviceAccount: portion.
+	// Validate the format of these values.
+	err := jwt.ValidateRegex(alisPrincipal.String(), alisPrincipalValue.(string), `^[0-9]+$`)
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "%s", err)
+	} else {
+		principal = ctx.Value(alisPrincipal).(string)
+	}
+	err = jwt.ValidateRegex(alisPrincipalEmail.String(), alisPrincipalEmailValue.(string), `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "%s", err)
+	} else {
+		principalEmail = ctx.Value(alisPrincipalEmail).(string)
+	}
+
+	// construct a Policy Binding Member from the principal, which includes the user:... or serviceAccount: portion.
 	if strings.Contains(principalEmail, ".gserviceaccount.com") {
 		member = fmt.Sprintf("serviceAccount:%s", principal)
 	} else {
@@ -138,8 +189,8 @@ func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, perm
 		}
 	}
 	return status.Errorf(codes.PermissionDenied,
-		"%s does not have %s permission on resource %s, or it may not exists",
-		principalEmail, permission, resource)
+		"%s (%s) does not have %s permission on resource %s, or it may not exists",
+		principalEmail, principal, permission, resource)
 }
 
 // hasPermission iterates through all related policies and construct a unique list of permissions and
@@ -172,51 +223,98 @@ func (a *Authz) hasPermission(requiredPermission string, member string, policy *
 	return false
 }
 
-// AddPrincipalToContext will inspect the authorization header, extracts the principal email and identifier
-// and add these to the context.
+// AddPrincipalToContext will inspect the authorization header, extracts the principal and email
+// and add these to the context.  This method is intended to be used as a by consoles protected by
+// Identity Aware Proxy (IAP) and/or backend services protected by ESPv2 gateways.
 func AddPrincipalToContext(ctx *context.Context) error {
+	var principal, principalEmail string
+
 	// Retrieve the metadata from the context.
 	md, ok := metadata.FromIncomingContext(*ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
-	// Determine which header to use to get the token
-	authorizationHeaderId := "authorization" // The default header is 'authorization'
-	if md.Get("x-goog-iap-jwt-assertion") != nil {
-		// IAP adds a X-Goog-IAP-JWT-Assertion header which contains the JWT token, if present
-		authorizationHeaderId = "x-goog-iap-jwt-assertion"
-	} else if md.Get("X-Endpoint-API-UserInfo") != nil {
-		// ESPv2 Proxy adds a X-Endpoint-API-UserInfo header which contains the JWT token, if present
-		authorizationHeaderId = "X-Endpoint-API-UserInfo"
-	}
+	// Ensure that there are no existing values for the principal and principal email. We'll generate these from
+	// the JWT token.
+	md.Delete(alisPrincipal.String())
+	md.Delete(alisPrincipalEmail.String())
 
-	authHeaders := md.Get(authorizationHeaderId)
-	if len(authHeaders) > 0 {
+	switch {
+	case len(md.Get(IAPJWTAssertion.String())) > 0:
+		// If the IAP header is present, then extract the principal from the JWT token.
+
 		// Extract the Token from the Authorization header.
-		token := strings.TrimPrefix(authHeaders[0], "Bearer ")
+		// IAP passes on the token in the header 'x-goog-iap-jwt-assertion' as per their documentation
+		// at https://cloud.google.com/iap/docs/identity-howto
+		token := strings.TrimPrefix(md.Get(IAPJWTAssertion.String())[0], "Bearer ")
 
 		// Using our internal library, parse the token and extract the payload.
 		payload, err := jwt.ParsePayload(token)
 		if err != nil {
-			return status.Errorf(codes.Unauthenticated, "jwt: unable to parse JWT payload: %s", err)
+			return status.Errorf(codes.Unauthenticated, "%s", err)
 		}
 
-		if payload.Email == "" {
-			return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
-		}
-		if payload.Subject == "" {
-			return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
+		// Validate the payload Subject value
+		err = jwt.ValidateRegex("subject", payload.Subject, `^accounts\.google\.com:[0-9]+$`)
+		if err != nil {
+			return status.Errorf(codes.Unauthenticated, "%s", err)
+		} else {
+			// Extract the principal from the payload.
+			// Example of subject: accounts.google.com:102983596311101582297
+			principal = strings.Split(payload.Subject, ":")[1]
 		}
 
-		// Now that we have the principal details, add it to the context.
-		*ctx = context.WithValue(*ctx, "x-alis-principal-email", payload.Email)
-		*ctx = context.WithValue(*ctx, "x-alis-principal", payload.Subject)
+		// Validate the payload Email value
+		err = jwt.ValidateRegex("email", payload.Email, `^accounts\.google\.com:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+		if err != nil {
+			return status.Errorf(codes.Unauthenticated, "%s", err)
+		} else {
+			// Extract the principal from the payload.
+			// Example of email: accounts.google.com:example@gmail.com
+			principalEmail = strings.Split(payload.Email, ":")[1]
+		}
 
-	} else {
-		return status.Errorf(codes.Unauthenticated, "unable to retrieve metadata from the %s header", authorizationHeaderId)
+	case len(md.Get(ESPv2ProxyJWT.String())) > 0:
+		// If the ESPv2 Proxy header is present, then extract the principal from the JWT token.
+		// TODO: implement jwt parsing for ESPv2 gateways.
+
+	default:
+		return status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
+	// Now that we have the principal details, add it to the context.
+	if principal != "" {
+		*ctx = context.WithValue(*ctx, alisPrincipal, principal)
+	} else {
+		return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
+	}
+	if principalEmail != "" {
+		*ctx = context.WithValue(*ctx, alisPrincipalEmail, principalEmail)
+	} else {
+		return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
+	}
+
+	return nil
+}
+
+// Retrieve will simply forward the x-alis-principal and x-alis-principal-email from the incoming
+// request header to the outgoing context
+func ForwardPrincipalDetails(ctx *context.Context) error {
+	// Retrieve the metadata from the context.
+	md, ok := metadata.FromIncomingContext(*ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+	}
+
+	// Extract the principal from the metadata, and if present, add it to the context.
+	if len(md.Get(alisPrincipal.String())) > 0 {
+		*ctx = context.WithValue(*ctx, alisPrincipal, md.Get(alisPrincipal.String())[0])
+	}
+	// Extract the principal email from the metadata, and if present, add it to the context.
+	if len(md.Get(alisPrincipalEmail.String())) > 0 {
+		*ctx = context.WithValue(*ctx, alisPrincipalEmail, md.Get(alisPrincipalEmail.String())[0])
+	}
 	return nil
 }
 
