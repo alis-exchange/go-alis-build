@@ -2,12 +2,11 @@ package authz
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"go.alis.build/authz/internal/jwt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -95,7 +94,7 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 // provided resources, for a set of policies. If a user has the required permission in any
 // of the policies, access is granted.
 //
-// This method is primarily used when validating access to resources that may
+// This method handles a list of policies and can therefore be used when validating access to resources that may
 // have hierarchical permissions. The policies must be read prior to making the call.
 //
 // An example of such is:
@@ -120,15 +119,9 @@ func (a *Authz) Authorize(ctx context.Context, resource string, permission strin
 func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, permission string, policies []*iampb.Policy) error {
 	var principal, principalEmail, member string
 
-	// Add the principal to the context from the incoming context.
-	err := addPrincipalToContext(&ctx)
-	if err != nil {
-		return fmt.Errorf("add principal to context: %w", err)
-	}
-
 	// Extract the member from the context, as specified by the principal information
-	principal = fmt.Sprintf("%s", ctx.Value("alis-principal"))
-	principalEmail = fmt.Sprintf("%s", ctx.Value("alis-principal-email"))
+	principal = fmt.Sprintf("%s", ctx.Value("x-alis-principal"))
+	principalEmail = fmt.Sprintf("%s", ctx.Value("x-alis-principal-email"))
 
 	// construct a Policy Binding member from the principal, which includes the user:... or serviceAccount: portion.
 	if strings.Contains(principalEmail, ".gserviceaccount.com") {
@@ -179,65 +172,50 @@ func (a *Authz) hasPermission(requiredPermission string, member string, policy *
 	return false
 }
 
-// addPrincipalToContext will inspect the authorization header, extracts the principal email and identifier
+// AddPrincipalToContext will inspect the authorization header, extracts the principal email and identifier
 // and add these to the context.
-func addPrincipalToContext(ctx *context.Context) error {
-	var principal, email string
-	var err error
-
+func AddPrincipalToContext(ctx *context.Context) error {
+	// Retrieve the metadata from the context.
 	md, ok := metadata.FromIncomingContext(*ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
-	getSubFromAuthHeader := func(header string) (string, string, error) {
-		authHeaders := md.Get(header)
-		if len(authHeaders) > 0 {
-			// Extract the Token from the Authorization header.
-			token := strings.TrimPrefix(authHeaders[0], "Bearer ")
+	// Determine which header to use to get the token
+	authorizationHeaderId := "authorization" // The default header is 'authorization'
+	if md.Get("x-goog-iap-jwt-assertion") != nil {
+		// IAP adds a X-Goog-IAP-JWT-Assertion header which contains the JWT token, if present
+		authorizationHeaderId = "x-goog-iap-jwt-assertion"
+	} else if md.Get("X-Endpoint-API-UserInfo") != nil {
+		// ESPv2 Proxy adds a X-Endpoint-API-UserInfo header which contains the JWT token, if present
+		authorizationHeaderId = "X-Endpoint-API-UserInfo"
+	}
 
-			// Decode token Payload and unmarshall into JWT Payload
-			// jwtPayload represents the payload portion of a standard JWT token.
-			type jwtPayload struct {
-				Iss           string `json:"iss"`
-				Azp           string `json:"azp"`
-				Aud           string `json:"aud"`
-				Sub           string `json:"sub"`
-				Hd            string `json:"hd"`
-				Email         string `json:"email"`
-				EmailVerified bool   `json:"email_verified"`
-				AtHash        string `json:"at_hash"`
-				Iat           int    `json:"iat"`
-				Exp           int    `json:"exp"`
-			}
+	authHeaders := md.Get(authorizationHeaderId)
+	if len(authHeaders) > 0 {
+		// Extract the Token from the Authorization header.
+		token := strings.TrimPrefix(authHeaders[0], "Bearer ")
 
-			jwt := jwtPayload{}
-			payloadEncoded := strings.Split(token, ".")[1]
-			payload := make([]byte, base64.RawStdEncoding.DecodedLen(len(payloadEncoded)))
-			n, err := base64.RawStdEncoding.Decode(payload, []byte(payloadEncoded))
-			if err != nil {
-				return "", "", status.Error(codes.Internal, "unable to decode the JWT payload")
-			}
-			payload = payload[:n]
-			err = json.Unmarshal(payload, &jwt)
-			if err != nil {
-				return "", "", status.Error(codes.Internal, "unable to unmarshal the JWT payload")
-			}
-
-			// The 'sub' attribute in the jwt payload represents the principal.
-			return jwt.Sub, jwt.Email, nil
-		} else {
-			return "", "", status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+		// Using our internal library, parse the token and extract the payload.
+		payload, err := jwt.ParsePayload(token)
+		if err != nil {
+			return status.Errorf(codes.Unauthenticated, "jwt: unable to parse JWT payload: %s", err)
 		}
-	}
 
-	principal, email, err = getSubFromAuthHeader("authorization")
-	if err != nil {
-		return err
-	}
+		if payload.Email == "" {
+			return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
+		}
+		if payload.Subject == "" {
+			return status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
+		}
 
-	*ctx = context.WithValue(*ctx, "alis-principal-email", email)
-	*ctx = context.WithValue(*ctx, "alis-principal", principal)
+		// Now that we have the principal details, add it to the context.
+		*ctx = context.WithValue(*ctx, "x-alis-principal-email", payload.Email)
+		*ctx = context.WithValue(*ctx, "x-alis-principal", payload.Subject)
+
+	} else {
+		return status.Errorf(codes.Unauthenticated, "unable to retrieve metadata from the %s header", authorizationHeaderId)
+	}
 
 	return nil
 }
