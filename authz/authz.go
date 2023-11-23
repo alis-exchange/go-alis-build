@@ -272,8 +272,8 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
 		} else {
 			// Extract the principal from the payload.
-			// Example of email: accounts.google.com:example@gmail.com
-			principalEmail = strings.Split(payload.Email, ":")[1]
+			// Example of email: example@gmail.com
+			principalEmail = payload.Email
 		}
 
 	case len(md.Get(ESPv2ProxyJWT.String())) > 0:
