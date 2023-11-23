@@ -322,12 +322,12 @@ func AddPrincipalFromIncomingContext(ctx context.Context) (context.Context, erro
 // ForwardPrincipalToOutgoingContext will add the x-alis-principal-id and x-alis-principal-email to the outgoing context.
 func AddPrincipalToOutgoingContext(ctx context.Context) (context.Context, error) {
 	// Extract the principal from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalId.String()) != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalId.String(), ctx.Value(alisPrincipalId.String()).(string))
+	if ctx.Value(alisPrincipalId) != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalId.String(), ctx.Value(alisPrincipalId).(string))
 	}
 	// Extract the principal email from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalEmail.String()) != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalEmail.String(), ctx.Value(alisPrincipalEmail.String()).(string))
+	if ctx.Value(alisPrincipalEmail) != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalEmail.String(), ctx.Value(alisPrincipalEmail).(string))
 	}
 	return ctx, nil
 }
