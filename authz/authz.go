@@ -266,7 +266,8 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 		}
 
 		// Validate the payload Email value
-		err = jwt.ValidateRegex("email", payload.Email, `^accounts\.google\.com:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+		// Contrary to their documentation, the format is simply the email, and not 'accounts.google.com:...'
+		err = jwt.ValidateRegex("email", payload.Email, `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
 		} else {
