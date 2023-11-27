@@ -332,6 +332,19 @@ func AddPrincipalToOutgoingContext(ctx context.Context) (context.Context, error)
 	return ctx, nil
 }
 
+// Retrieve Principal Id and Principal Email from Context
+func RetrievePrincipalFromContext(ctx context.Context) (principalId string, principalEmail string) {
+	// Extract the principal from the metadata, and if present, add it to the outgoing context.
+	if ctx.Value(alisPrincipalId) != nil {
+		principalId = ctx.Value(alisPrincipalId).(string)
+	}
+	// Extract the principal email from the metadata, and if present, add it to the outgoing context.
+	if ctx.Value(alisPrincipalEmail) != nil {
+		principalEmail = ctx.Value(alisPrincipalEmail).(string)
+	}
+	return principalId, principalEmail
+}
+
 // contains checks whether the element is in the list
 func contains(e string, s []string) bool {
 	for _, a := range s {
