@@ -21,8 +21,8 @@ func (h header) String() string {
 }
 
 const (
-	alisPrincipalId    header = "x-alis-principal-id"
-	alisPrincipalEmail header = "x-alis-principal-email"
+	AlisPrincipalId    header = "x-alis-principal-id"
+	AlisPrincipalEmail header = "x-alis-principal-email"
 	ESPv2ProxyJWT      header = "x-endpoint-api-userinfo"  // The header used by ESPv2 gateways to forward the JWT token
 	IAPJWTAssertion    header = "x-goog-iap-jwt-assertion" // The header used by IAP to forward the JWT token
 )
@@ -143,35 +143,35 @@ func (a *Authz) AuthorizeWithPolicies(ctx context.Context, resource string, perm
 
 	// Ensure valid principal headers are present within the incoming context.
 	// If no headers are present, then fail only if bypassIfNoPrincipal is false.
-	alisPrincipalValue := ctx.Value(alisPrincipalId)
+	alisPrincipalValue := ctx.Value(AlisPrincipalId)
 	if alisPrincipalValue == nil {
 		if a.bypassIfNoPrincipal {
 			return nil
 		} else {
-			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%s' from the request header", alisPrincipalId)
+			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%s' from the request header", AlisPrincipalId)
 		}
 	}
-	alisPrincipalEmailValue := ctx.Value(alisPrincipalEmail)
+	alisPrincipalEmailValue := ctx.Value(AlisPrincipalEmail)
 	if alisPrincipalEmailValue == nil {
 		if a.bypassIfNoPrincipal {
 			return nil
 		} else {
-			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%sl' from the request header", alisPrincipalEmail)
+			return status.Errorf(codes.Unauthenticated, "unable to retrieve '%sl' from the request header", AlisPrincipalEmail)
 		}
 	}
 
 	// Validate the format of these values.
-	err := jwt.ValidateRegex(alisPrincipalId.String(), alisPrincipalValue.(string), `^[0-9]+$`)
+	err := jwt.ValidateRegex(AlisPrincipalId.String(), alisPrincipalValue.(string), `^[0-9]+$`)
 	if err != nil {
 		return status.Errorf(codes.Unauthenticated, "%s", err)
 	} else {
-		principal = ctx.Value(alisPrincipalId).(string)
+		principal = ctx.Value(AlisPrincipalId).(string)
 	}
-	err = jwt.ValidateRegex(alisPrincipalEmail.String(), alisPrincipalEmailValue.(string), `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	err = jwt.ValidateRegex(AlisPrincipalEmail.String(), alisPrincipalEmailValue.(string), `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	if err != nil {
 		return status.Errorf(codes.Unauthenticated, "%s", err)
 	} else {
-		principalEmail = ctx.Value(alisPrincipalEmail).(string)
+		principalEmail = ctx.Value(AlisPrincipalEmail).(string)
 	}
 
 	// construct a Policy Binding Member from the principal, which includes the user:... or serviceAccount: portion.
@@ -237,8 +237,8 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 
 	// Ensure that there are no existing values for the principal and principal email. We'll generate these from
 	// the JWT token.
-	md.Delete(alisPrincipalId.String())
-	md.Delete(alisPrincipalEmail.String())
+	md.Delete(AlisPrincipalId.String())
+	md.Delete(AlisPrincipalEmail.String())
 
 	switch {
 	case len(md.Get(IAPJWTAssertion.String())) > 0:
@@ -286,12 +286,12 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 
 	// Now that we have the principal details, add it to the context.
 	if principalId != "" {
-		ctx = context.WithValue(ctx, alisPrincipalId, principalId)
+		ctx = context.WithValue(ctx, AlisPrincipalId, principalId)
 	} else {
 		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
 	}
 	if principalEmail != "" {
-		ctx = context.WithValue(ctx, alisPrincipalEmail, principalEmail)
+		ctx = context.WithValue(ctx, AlisPrincipalEmail, principalEmail)
 	} else {
 		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
 	}
@@ -309,12 +309,12 @@ func AddPrincipalFromIncomingContext(ctx context.Context) (context.Context, erro
 	}
 
 	// Extract the principal from the metadata, and if present, add it to the context.
-	if len(md.Get(alisPrincipalId.String())) > 0 {
-		ctx = context.WithValue(ctx, alisPrincipalId, md.Get(alisPrincipalId.String())[0])
+	if len(md.Get(AlisPrincipalId.String())) > 0 {
+		ctx = context.WithValue(ctx, AlisPrincipalId, md.Get(AlisPrincipalId.String())[0])
 	}
 	// Extract the principal email from the metadata, and if present, add it to the context.
-	if len(md.Get(alisPrincipalEmail.String())) > 0 {
-		ctx = context.WithValue(ctx, alisPrincipalEmail, md.Get(alisPrincipalEmail.String())[0])
+	if len(md.Get(AlisPrincipalEmail.String())) > 0 {
+		ctx = context.WithValue(ctx, AlisPrincipalEmail, md.Get(AlisPrincipalEmail.String())[0])
 	}
 	return ctx, nil
 }
@@ -322,12 +322,12 @@ func AddPrincipalFromIncomingContext(ctx context.Context) (context.Context, erro
 // ForwardPrincipalToOutgoingContext will add the x-alis-principal-id and x-alis-principal-email to the outgoing context.
 func AddPrincipalToOutgoingContext(ctx context.Context) (context.Context, error) {
 	// Extract the principal from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalId) != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalId.String(), ctx.Value(alisPrincipalId).(string))
+	if ctx.Value(AlisPrincipalId) != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx, AlisPrincipalId.String(), ctx.Value(AlisPrincipalId).(string))
 	}
 	// Extract the principal email from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalEmail) != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx, alisPrincipalEmail.String(), ctx.Value(alisPrincipalEmail).(string))
+	if ctx.Value(AlisPrincipalEmail) != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx, AlisPrincipalEmail.String(), ctx.Value(AlisPrincipalEmail).(string))
 	}
 	return ctx, nil
 }
@@ -335,14 +335,14 @@ func AddPrincipalToOutgoingContext(ctx context.Context) (context.Context, error)
 // Retrieve Principal Id and Principal Email from Context
 func RetrievePrincipalFromContext(ctx context.Context) (principalId string, principalEmail string, err error) {
 	// Extract the principal from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalId) != nil {
-		principalId = ctx.Value(alisPrincipalId).(string)
+	if ctx.Value(AlisPrincipalId) != nil {
+		principalId = ctx.Value(AlisPrincipalId).(string)
 	} else {
 		return "", "", status.Errorf(codes.NotFound, "unable to extract the principal id from the context")
 	}
 	// Extract the principal email from the metadata, and if present, add it to the outgoing context.
-	if ctx.Value(alisPrincipalEmail) != nil {
-		principalEmail = ctx.Value(alisPrincipalEmail).(string)
+	if ctx.Value(AlisPrincipalEmail) != nil {
+		principalEmail = ctx.Value(AlisPrincipalEmail).(string)
 	} else {
 		return "", "", status.Errorf(codes.NotFound, "unable to extract the principal email from the context")
 	}
