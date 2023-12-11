@@ -132,7 +132,8 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 	return nil
 }
 
-// WriteProtoIamPolicy
+// WriteProtoIamPolicy writes the provided IAM policy to Bigtable by marshaling it to bytes and storing the data at the
+// given row key, and column family.
 func (b *BigProto) WriteIamPolicy(ctx context.Context, rowKey string, policyColumnFamily string, policy *iampb.Policy) error {
 	timestamp := bigtable.Now()
 	dataBytes, err := proto.Marshal(policy)
@@ -227,8 +228,8 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 	return nil
 }
 
-// ReadProto obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read mask and
-// stores the result in the provided message pointer.
+// ReadProtoWithPolicy obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read
+// mask and stores the result in the provided message pointer. It also returns the IAM policy for the row.
 func (b *BigProto) ReadProtoWithPolicy(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
 	readMask *fieldmaskpb.FieldMask, policyColumnFamily string,
 ) (*iampb.Policy, error) {
@@ -462,8 +463,8 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 }
 
 type RowWithPolicy struct {
-	row    proto.Message
-	policy *iampb.Policy
+	Row    proto.Message
+	Policy *iampb.Policy
 }
 
 // ListProtosWithPolicies returns the list of results where each result has a row and poicy for a specified set of rows
@@ -517,8 +518,8 @@ func (b *BigProto) ListProtosWithPolicies(ctx context.Context, columnFamily stri
 					}
 				}
 				rowWithPolicy := &RowWithPolicy{
-					row:    message,
-					policy: policy,
+					Row:    message,
+					Policy: policy,
 				}
 				res = append(res, rowWithPolicy)
 			}
@@ -727,7 +728,7 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 	return protos, newNextToken, nil
 }
 
-// PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
+// PageProtosWithPolicies enables paginated list requests that include the policy of each row in the response. if opts.maxPageSize is 0 (default value), 100 will be used
 func (b *BigProto) PageProtosWithPolicies(ctx context.Context, columnFamily string, messageType proto.Message, policyColumnFamily string,
 	opts PageOptions,
 ) ([]*RowWithPolicy, string, error) {
