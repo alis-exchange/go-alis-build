@@ -234,7 +234,7 @@ func (b *BigProto) ReadProtoWithPolicy(ctx context.Context, rowKey string, colum
 	readMask *fieldmaskpb.FieldMask, policyColumnFamily string,
 ) (*iampb.Policy, error) {
 	// retrieve the resource from bigtable
-	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1))
+	filter := bigtable.LatestNFilter(1)
 	row, err := b.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
 	if err != nil {
 		return nil, err
@@ -771,9 +771,9 @@ func (b *BigProto) PageProtosWithPolicies(ctx context.Context, columnFamily stri
 	// set the bigtable reading options
 	var readingOpts []bigtable.ReadOption
 	readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.PageSize)))
-	readingOpts = append(readingOpts, bigtable.RowFilter(bigtable.ChainFilters(
+	readingOpts = append(readingOpts, bigtable.RowFilter(
 		bigtable.LatestNFilter(1),
-	)))
+	))
 
 	// list the protos and set the newNextToken as the base64 encoded lastRowKey
 	rowWithPolicies, lastRowKey, err := b.ListProtosWithPolicies(ctx, columnFamily, messageType, opts.ReadMask, rowSet, policyColumnFamily, readingOpts...)
