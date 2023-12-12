@@ -299,6 +299,52 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
+func ExtractPrincipalFromJWTWithHeader(ctx context.Context, header string) (context.Context, error) {
+	var principalId, principalEmail string
+
+	// Retrieve the metadata from the context.
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+	}
+
+	// Ensure that there are no existing values for the principal and principal email. We'll generate these from
+	// the JWT token.
+	md.Delete(AlisPrincipalId.String())
+	md.Delete(AlisPrincipalEmail.String())
+
+	switch {
+	case len(md.Get(header)) > 0:
+		// Get token from header
+		token := strings.TrimPrefix(md.Get(header)[0], "Bearer ")
+
+		// Using our internal library, parse the token and extract the payload.
+		payload, err := jwt.ParsePayload(token)
+		if err != nil {
+			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+		}
+
+		principalId = payload.Subject
+		principalEmail = payload.Email
+
+	default:
+		return nil, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+	}
+
+	// Now that we have the principal details, add it to the context.
+	if principalId != "" {
+		ctx = context.WithValue(ctx, AlisPrincipalId, principalId)
+	} else {
+		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
+	}
+	if principalEmail != "" {
+		ctx = context.WithValue(ctx, AlisPrincipalEmail, principalEmail)
+	} else {
+		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
+	}
+	return ctx, nil
+}
+
 // AddPrincipalFromIncomingContext will simply add the x-alis-principal-id and x-alis-principal-email from the incoming
 // request header to the current context
 func AddPrincipalFromIncomingContext(ctx context.Context) (context.Context, error) {
