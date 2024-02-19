@@ -25,6 +25,7 @@ const (
 	AlisPrincipalEmail header = "x-alis-principal-email"
 	ESPv2ProxyJWT      header = "x-endpoint-api-userinfo"  // The header used by ESPv2 gateways to forward the JWT token
 	IAPJWTAssertion    header = "x-goog-iap-jwt-assertion" // The header used by IAP to forward the JWT token
+	Authorization      header = "authorization"            // The most common header used to store the JWT token.
 )
 
 // Authz is a struct that contains the dependencies required to validate access
@@ -232,7 +233,7 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 	// Retrieve the metadata from the context.
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+		return ctx, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
 	// Ensure that there are no existing values for the principal and principal email. We'll generate these from
@@ -252,13 +253,13 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 		// Using our internal library, parse the token and extract the payload.
 		payload, err := jwt.ParsePayload(token)
 		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+			return ctx, status.Errorf(codes.Unauthenticated, "%s", err)
 		}
 
 		// Validate the payload Subject value
 		err = jwt.ValidateRegex("subject", payload.Subject, `^accounts\.google\.com:[0-9]+$`)
 		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+			return ctx, status.Errorf(codes.Unauthenticated, "%s", err)
 		} else {
 			// Extract the principal from the payload.
 			// Example of subject: accounts.google.com:102983596311101582297
@@ -269,7 +270,7 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 		// Contrary to their documentation, the format is simply the email, and not 'accounts.google.com:...'
 		err = jwt.ValidateRegex("email", payload.Email, `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+			return ctx, status.Errorf(codes.Unauthenticated, "%s", err)
 		} else {
 			// Extract the principal from the payload.
 			// Example of email: example@gmail.com
@@ -281,19 +282,19 @@ func ExtractPrincipalFromJWT(ctx context.Context) (context.Context, error) {
 		// TODO: implement jwt parsing for ESPv2 gateways.
 
 	default:
-		return nil, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+		return ctx, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
 	// Now that we have the principal details, add it to the context.
 	if principalId != "" {
 		ctx = context.WithValue(ctx, AlisPrincipalId, principalId)
 	} else {
-		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
+		return ctx, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve principal from JWT payload")
 	}
 	if principalEmail != "" {
 		ctx = context.WithValue(ctx, AlisPrincipalEmail, principalEmail)
 	} else {
-		return nil, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
+		return ctx, status.Errorf(codes.Unauthenticated, "jwt: unable to retrieve email from JWT payload")
 	}
 
 	return ctx, nil
@@ -305,7 +306,7 @@ func AddPrincipalFromIncomingContext(ctx context.Context) (context.Context, erro
 	// Retrieve the metadata from the context.
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
+		return ctx, status.Error(codes.Unauthenticated, "unable to retrieve metadata from the request header")
 	}
 
 	// Extract the principal from the metadata, and if present, add it to the context.
