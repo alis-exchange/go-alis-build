@@ -4,21 +4,25 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"go.alis.build/alog"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
 	"os"
 	"reflect"
 	"strings"
 
+	"go.alis.build/alog"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"cloud.google.com/go/bigtable"
+	"cloud.google.com/go/iam/apiv1/iampb"
 	"github.com/mennanov/fmutils"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-const DefaultColumnName = "0"
+const (
+	DefaultColumnName = "0"
+)
 
 type BigProto struct {
 	table *bigtable.Table
@@ -66,8 +70,9 @@ func NewClient(ctx context.Context, googleProject string, bigTableInstance strin
 // instance, except that you need to run "export BIGTABLE_EMULATOR_HOST=localhost:8086" in your terminal session before
 // running any cbt commands.
 func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, tableName string,
-	columnFamilies []string, createIfNotExist bool, resetIfExist bool) {
-	//set environment variable that will make the bigtable client connect to local bigtable
+	columnFamilies []string, createIfNotExist bool, resetIfExist bool,
+) {
+	// set environment variable that will make the bigtable client connect to local bigtable
 	_ = os.Setenv("BIGTABLE_EMULATOR_HOST", "localhost:8086")
 
 	// initialize admin client to create and/or delete table
@@ -127,6 +132,24 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 	return nil
 }
 
+// WriteProtoIamPolicy writes the provided IAM policy to Bigtable by marshaling it to bytes and storing the data at the
+// given row key, and column family.
+func (b *BigProto) WriteIamPolicy(ctx context.Context, rowKey string, policyColumnFamily string, policy *iampb.Policy) error {
+	timestamp := bigtable.Now()
+	dataBytes, err := proto.Marshal(policy)
+	if err != nil {
+		return err
+	}
+
+	mut := bigtable.NewMutation()
+	mut.Set(policyColumnFamily, DefaultColumnName, timestamp, dataBytes)
+	err = b.table.Apply(ctx, rowKey, mut)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // BatchWriteProtos writes the provided proto messages to Bigtable by marshaling it to bytes and storing the data at the
 // given row keys, and column family.  Two types of failures may occur. If the entire process fails, (nil, err) will be
 // returned. If specific mutations fail to apply, ([]err, nil) will be returned, and the errors will correspond
@@ -141,7 +164,7 @@ func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, colum
 
 	// Construct a list of mutations required by the ApplyBulk method in Bigtable.
 	var muts []*bigtable.Mutation
-	for i, _ := range rowKeys {
+	for i := range rowKeys {
 		dataBytes, err := proto.Marshal(messages[i])
 		if err != nil {
 			return nil, err
@@ -162,7 +185,8 @@ func (b *BigProto) BatchWriteProtos(ctx context.Context, rowKeys []string, colum
 // ReadProto obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read mask and
 // stores the result in the provided message pointer.
 func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
-	readMask *fieldmaskpb.FieldMask) error {
+	readMask *fieldmaskpb.FieldMask,
+) error {
 	// retrieve the resource from bigtable
 	filter := bigtable.ChainFilters(bigtable.LatestNFilter(1), bigtable.FamilyFilter(columnFamily))
 	row, err := b.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
@@ -204,11 +228,69 @@ func (b *BigProto) ReadProto(ctx context.Context, rowKey string, columnFamily st
 	return nil
 }
 
+// ReadProtoWithPolicy obtains a Bigtable row entry, unmarshalls the value at the given columnFamily, applies the read
+// mask and stores the result in the provided message pointer. It also returns the IAM policy for the row.
+func (b *BigProto) ReadProtoWithPolicy(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
+	readMask *fieldmaskpb.FieldMask, policyColumnFamily string,
+) (*iampb.Policy, error) {
+	// retrieve the resource from bigtable
+	filter := bigtable.LatestNFilter(1)
+	row, err := b.table.ReadRow(ctx, rowKey, bigtable.RowFilter(filter))
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, ErrNotFound{RowKey: rowKey}
+	}
+
+	// Each collection is stored in a corresponding Bigtable family
+	columns, ok := row[columnFamily]
+	if !ok {
+		return nil, ErrNotFound{RowKey: rowKey}
+	}
+
+	// if there are no results in the row, exit and return a nil Map.
+	if len(columns) == 0 {
+		return nil, ErrNotFound{RowKey: rowKey}
+	}
+
+	// Only the first column is used by the resource.
+	column := columns[0]
+	err = proto.Unmarshal(column.Value, message)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply Read Mask if provided
+	if readMask != nil {
+		readMask.Normalize()
+		if !readMask.IsValid(message) {
+			return nil, ErrInvalidFieldMask
+		}
+		// Redact the request according to the provided field mask.
+		fmutils.Filter(message, readMask.GetPaths())
+	}
+
+	// Get policy - if the column family or column does not exist, return an empty policy
+	policy := &iampb.Policy{}
+	policyColumns, ok := row[policyColumnFamily]
+	if ok {
+		policyColumn := policyColumns[0]
+		err = proto.Unmarshal(policyColumn.Value, policy)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return policy, nil
+}
+
 // UpdateProto obtains a Bigtable row entry and unmarshalls the value at the given columnFamily to the type provided. It
 // then merges the updates as specified in the provided message, into the current type, in line with the update mask
 // and writes the updated proto back to Bigtable. The updated proto is also stored in the provided message pointer.
 func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message,
-	updateMask *fieldmaskpb.FieldMask) error {
+	updateMask *fieldmaskpb.FieldMask,
+) error {
 	// retrieve the resource from bigtable
 	currentMessage := newEmptyMessage(message)
 	err := b.ReadProto(ctx, rowKey, columnFamily, currentMessage, nil)
@@ -241,8 +323,8 @@ func (b *BigProto) UpdateProto(ctx context.Context, rowKey string, columnFamily 
 // Two types of failures may occur. If the entire process fails, (nil, err) will be returned. If specific mutations fail
 // to apply, ([]err, nil) will be returned, and the errors will correspond to the relevant rowKeys arguments.
 func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, columnFamily string, messageType proto.Message, messages []proto.Message,
-	updateMasks []*fieldmaskpb.FieldMask, allowMissing []bool) ([]error, error) {
-
+	updateMasks []*fieldmaskpb.FieldMask, allowMissing []bool,
+) ([]error, error) {
 	// Get the current values in the database.
 	protos, err := b.BatchReadProtos(ctx, rowKeys, columnFamily, messageType, nil)
 	if err != nil {
@@ -250,7 +332,7 @@ func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, colu
 	}
 
 	// For each of the messages, merge the updates into the existing protos.
-	for i, _ := range rowKeys {
+	for i := range rowKeys {
 
 		// Handle updates where an existing proto is not found.
 		if protos[i] == nil {
@@ -310,7 +392,6 @@ func (b *BigProto) WriteMutation(ctx context.Context, rowKey string, mut *bigtab
 
 // DeleteRow deletes an entire row from bigtable at the given rowKey.
 func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
-
 	// Create a single mutation to delete the row
 	mut := bigtable.NewMutation()
 	mut.DeleteRow()
@@ -323,7 +404,8 @@ func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
 
 // ListProtos returns the list of rows for a specified set of rows
 func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageType proto.Message,
-	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) ([]proto.Message, string, error) {
+	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption,
+) ([]proto.Message, string, error) {
 	var res []proto.Message
 
 	// Validate readMask if provided
@@ -337,7 +419,6 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	lastRowKey := ""
 	err := b.table.ReadRows(ctx, rowSet,
 		func(row bigtable.Row) bool {
-
 			// if the row is empty, append an empty value and continue
 			if row == nil {
 				res = append(res, nil)
@@ -381,11 +462,85 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 	return res, lastRowKey, nil
 }
 
+type RowWithPolicy struct {
+	Row    proto.Message
+	Policy *iampb.Policy
+}
+
+// ListProtosWithPolicies returns the list of results where each result has a row and poicy for a specified set of rows
+func (b *BigProto) ListProtosWithPolicies(ctx context.Context, columnFamily string, messageType proto.Message,
+	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, policyColumnFamily string, opts ...bigtable.ReadOption,
+) ([]*RowWithPolicy, string, error) {
+	var res []*RowWithPolicy
+
+	// Validate readMask if provided
+	if readMask != nil {
+		readMask.Normalize()
+		if !readMask.IsValid(messageType) {
+			return nil, "", ErrInvalidFieldMask
+		}
+	}
+
+	lastRowKey := ""
+	err := b.table.ReadRows(ctx, rowSet,
+		func(row bigtable.Row) bool {
+			// Each collection is stored in a corresponding Bigtable family
+			columns := row[columnFamily]
+
+			// if there are no results in the row, return
+			if len(columns) == 0 {
+				return true
+			}
+
+			// only the first column is used by the resource.
+			column := columns[0]
+			var message proto.Message
+			err := proto.Unmarshal(column.Value, messageType)
+			if err != nil {
+				return false
+			}
+			message = proto.Clone(messageType)
+			if message != nil {
+				// Apply Read Mask if provided
+				if readMask != nil {
+					// Redact the request according to the provided field mask.
+					fmutils.Filter(message, readMask.GetPaths())
+				}
+
+				// get policy if any
+				policy := &iampb.Policy{}
+				policyColumns, ok := row[policyColumnFamily]
+				if ok {
+					policyColumn := policyColumns[0]
+					err = proto.Unmarshal(policyColumn.Value, policy)
+					if err != nil {
+						return false
+					}
+				}
+				rowWithPolicy := &RowWithPolicy{
+					Row:    message,
+					Policy: policy,
+				}
+				res = append(res, rowWithPolicy)
+			}
+			lastRowKey = row.Key()
+			return true
+		},
+		opts...,
+	)
+	if err != nil {
+		return nil, lastRowKey, err
+	}
+
+	return res, lastRowKey, nil
+}
+
 // BatchReadProtos returns the list of rows for a specified set of rowKeys.  The order of the response is consistent
 // with the order of the rowKeys.  Also, if a particular rowKey is not found, the corresponding response will be a nil
 // entry in the list of messages returned.
 func (b *BigProto) BatchReadProtos(ctx context.Context, rowKeys []string, columnFamily string, messageType proto.Message,
-	readMask *fieldmaskpb.FieldMask, opts ...bigtable.ReadOption) ([]proto.Message, error) {
+	readMask *fieldmaskpb.FieldMask, opts ...bigtable.ReadOption,
+) ([]proto.Message, error) {
 	var res []proto.Message
 
 	// Create a map of messages which is used to set the order of the returned response.  The key of the map is the
@@ -407,7 +562,6 @@ func (b *BigProto) BatchReadProtos(ctx context.Context, rowKeys []string, column
 
 	err := b.table.ReadRows(ctx, rowList,
 		func(row bigtable.Row) bool {
-
 			// if the row is empty, append an empty value and continue
 			if row == nil {
 				return true
@@ -456,8 +610,8 @@ func (b *BigProto) BatchReadProtos(ctx context.Context, rowKeys []string, column
 
 // StreamProtos returns the list of rows for a specified set of rows
 func (b *BigProto) StreamProtos(ctx context.Context, stream chan<- proto.Message, columnFamily string, messageType proto.Message,
-	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption) error {
-
+	readMask *fieldmaskpb.FieldMask, rowSet bigtable.RowSet, opts ...bigtable.ReadOption,
+) error {
 	// Validate readMask if provided
 	if readMask != nil {
 		readMask.Normalize()
@@ -468,7 +622,6 @@ func (b *BigProto) StreamProtos(ctx context.Context, stream chan<- proto.Message
 
 	err := b.table.ReadRows(ctx, rowSet,
 		func(row bigtable.Row) bool {
-
 			// if the row is empty, append an empty value and continue
 			if row == nil {
 				return true
@@ -511,8 +664,8 @@ func (b *BigProto) StreamProtos(ctx context.Context, stream chan<- proto.Message
 
 // PageProtos enables paginated list requests. if opts.maxPageSize is 0 (default value), 100 will be used.
 func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageType proto.Message,
-	opts PageOptions) ([]proto.Message, string, error) {
-
+	opts PageOptions,
+) ([]proto.Message, string, error) {
 	// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
 	startKey := opts.RowKeyPrefix
 	if opts.NextToken != "" {
@@ -573,7 +726,71 @@ func (b *BigProto) PageProtos(ctx context.Context, columnFamily string, messageT
 		protos = protos[1:]
 	}
 	return protos, newNextToken, nil
+}
 
+// PageProtosWithPolicies enables paginated list requests that include the policy of each row in the response. if opts.maxPageSize is 0 (default value), 100 will be used
+func (b *BigProto) PageProtosWithPolicies(ctx context.Context, columnFamily string, messageType proto.Message, policyColumnFamily string,
+	opts PageOptions,
+) ([]*RowWithPolicy, string, error) {
+	// create a rowSet with the required start and endKey based on the rowKeyPrefix and nextToken
+	startKey := opts.RowKeyPrefix
+	if opts.NextToken != "" {
+		startKeyBytes, err := base64.StdEncoding.DecodeString(opts.NextToken)
+		if err != nil {
+			return nil, "", ErrInvalidNextToken{nextToken: opts.NextToken}
+		}
+		startKey = string(startKeyBytes)
+		if !strings.HasPrefix(startKey, opts.RowKeyPrefix) {
+			return nil, "", ErrInvalidNextToken{nextToken: opts.NextToken}
+		}
+	}
+	endKey := opts.RowKeyPrefix + "~~~~~~~~~~~~"
+	rowSet := bigtable.NewRange(startKey, endKey)
+
+	// set page size to max if max is not 0 (thus has been set), and pageSize is 0 or over set maximum
+	if opts.MaxPageSize < 0 {
+		return nil, "", ErrNegativePageSize{}
+	}
+
+	// set max page size to 100 if unset
+	if opts.MaxPageSize < 1 {
+		opts.MaxPageSize = 100
+	}
+
+	// ensure pageSize is not 0 or greater than maxSize
+	if opts.PageSize == 0 || opts.PageSize > opts.MaxPageSize {
+		opts.PageSize = opts.MaxPageSize
+	}
+
+	// increase page size by one if nextToken is set, because the nextToken is the rowKey of the last row returned in
+	// the previous response, and thus the first element returned in this response will be ignored
+	if opts.NextToken != "" {
+		opts.PageSize++
+	}
+
+	// set the bigtable reading options
+	var readingOpts []bigtable.ReadOption
+	readingOpts = append(readingOpts, bigtable.LimitRows(int64(opts.PageSize)))
+	readingOpts = append(readingOpts, bigtable.RowFilter(
+		bigtable.LatestNFilter(1),
+	))
+
+	// list the protos and set the newNextToken as the base64 encoded lastRowKey
+	rowWithPolicies, lastRowKey, err := b.ListProtosWithPolicies(ctx, columnFamily, messageType, opts.ReadMask, rowSet, policyColumnFamily, readingOpts...)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// determine new next token, which is empty if there is no more data
+	newNextToken := base64.StdEncoding.EncodeToString([]byte(lastRowKey))
+	if len(rowWithPolicies) != int(opts.PageSize) {
+		newNextToken = ""
+	}
+
+	if opts.NextToken != "" {
+		rowWithPolicies = rowWithPolicies[1:]
+	}
+	return rowWithPolicies, newNextToken, nil
 }
 
 // Now returns the time using Bigtable's time method.
