@@ -1,3 +1,3 @@
 module go.alis.build/utils
 
-go 1.20
+go 1.22
