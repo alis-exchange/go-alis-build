@@ -5,4 +5,4 @@
 /*
 Package events provides a lightweight set of methods which Builders could use to publish events.
 */
-package events //import "go.alis.build/events"
+package events // import "go.alis.build/events"
