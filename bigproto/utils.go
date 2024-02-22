@@ -3,11 +3,12 @@ package bigproto
 import (
 	"errors"
 	"fmt"
-	"github.com/imdario/mergo"
+	"reflect"
+
+	"dario.cat/mergo"
 	"github.com/mennanov/fmutils"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
-	"reflect"
 )
 
 // ErrNotFound is returned when the desired resource is not found in Bigtable.
