@@ -1,9 +1,10 @@
 package client
 
 import (
+	"regexp"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"regexp"
 )
 
 // validateArgument validates an argument and returns an error if not valid.
