@@ -13,7 +13,7 @@ type CellValue interface {
 
 // EntityCellValue represents the Excel.EntityCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.entitycellvalue
-type EntityCellValue struct {
+type entityCellValue struct {
 	Type       string               `json:"type"`
 	Text       string               `json:"text"`
 	Properties map[string]CellValue `json:"properties"`
@@ -56,7 +56,7 @@ type arrayCellValue struct {
 }
 
 // GetType retrieves the basicType value from the Excel.Entity
-func (f EntityCellValue) GetType() string { return f.Type }
+func (f entityCellValue) GetType() string { return f.Type }
 
 // GetType retrieves the basicType value from the Excel.Entity
 func (f formattedNumber) GetType() string { return f.Type }
@@ -133,9 +133,9 @@ func FormattedValue(x float64, format string) formattedNumber {
 	}
 }
 
-// NewCell is a helper function to generate a new EntityCellValue object, i.e. and Excel Card.
-func NewCell(text string, properties map[string]CellValue) EntityCellValue {
-	return EntityCellValue{
+// Entity is a helper function to generate a new EntityCellValue object, i.e. an Excel Card.
+func Entity(text string, properties map[string]CellValue) entityCellValue {
+	return entityCellValue{
 		Type:       "Entity",
 		Text:       text,
 		Properties: properties,
@@ -143,7 +143,7 @@ func NewCell(text string, properties map[string]CellValue) EntityCellValue {
 }
 
 // ToJSON marshals the EntiteyCellValue object to a JSON object ready for use by MS Excel.
-func (e *EntityCellValue) ToJSON() ([]byte, error) {
+func (e *entityCellValue) ToJSON() ([]byte, error) {
 	jsonBytes, err := json.Marshal(e)
 	if err != nil {
 		return nil, err
