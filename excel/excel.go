@@ -8,7 +8,7 @@ import (
 )
 
 type CellValue interface {
-	GetType() string
+	ToJSON() ([]byte, error)
 }
 
 // EntityCellValue represents the Excel.EntityCellValue interface as defined at
@@ -19,6 +19,24 @@ type entityCellValue struct {
 	Properties map[string]CellValue `json:"properties"`
 }
 
+// Entity is a helper function to generate a new EntityCellValue object, i.e. an Excel Card.
+func EntityValue(text string, properties map[string]CellValue) entityCellValue {
+	return entityCellValue{
+		Type:       "Entity",
+		Text:       text,
+		Properties: properties,
+	}
+}
+
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (e entityCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
 // FormattedNumber represents the Excel.FormattedNumber interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.formattednumbercellvalue
 type formattedNumber struct {
@@ -27,81 +45,12 @@ type formattedNumber struct {
 	NumberFormat string  `json:"numberFormat"`
 }
 
-// StringCellValue represents the Excel.StringCellValue interface as defined at
-// https://learn.microsoft.com/en-us/javascript/api/excel/excel.stringcellvalue
-type stringCellValue struct {
-	Type  string `json:"type"`
-	Value string `json:"basicValue"`
-}
-
-// BooleanCellValue The Excel.BooleanCellValue interface as defined at
-// https://learn.microsoft.com/en-us/javascript/api/excel/excel.booleancellvalue
-type booleanCellValue struct {
-	Type  string `json:"type"`
-	Value bool   `json:"basicValue"`
-}
-
-// DoubleCellValue represents the Excel.DoubleCellValue interface as defined at
-// https://learn.microsoft.com/en-us/javascript/api/excel/excel.doublecellvalue
-type doubleCellValue struct {
-	Type  string  `json:"type"`
-	Value float64 `json:"basicValue"`
-}
-
-// ArrayCellValue represents the Excel.ArrayCellValue interface as defined at
-// https://learn.microsoft.com/en-us/javascript/api/excel/excel.arraycellvalue
-type arrayCellValue struct {
-	Type     string        `json:"type"`
-	Elements [][]CellValue `json:"elements"`
-}
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f entityCellValue) GetType() string { return f.Type }
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f formattedNumber) GetType() string { return f.Type }
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f stringCellValue) GetType() string { return f.Type }
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f booleanCellValue) GetType() string { return f.Type }
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f doubleCellValue) GetType() string { return f.Type }
-
-// GetType retrieves the basicType value from the Excel.Entity
-func (f arrayCellValue) GetType() string { return f.Type }
-
-// BoolValue is a helper function to generate a BooleanCellValue object
-func BoolValue(x bool) booleanCellValue {
-	return booleanCellValue{
-		Type:  "Boolean",
-		Value: x,
-	}
-}
-
-// BoolValue is a helper function to generate a BooleanCellValue object
-func StringValue(x string) stringCellValue {
-	return stringCellValue{
-		Type:  "String",
-		Value: x,
-	}
-}
-
-// ArrayValue is a helper function to generate a ArrayCellValue object
-func ArrayValue(elements [][]CellValue) arrayCellValue {
-	return arrayCellValue{
-		Type:     "Array",
-		Elements: elements,
-	}
-}
-
-// DoubleValue is a helper function to generate a DoubleCellValue object
-func DoubleValue(x float64) doubleCellValue {
-	return doubleCellValue{
-		Type:  "Double",
-		Value: x,
+// FormattedNumber is a helper function to generate a FormattedCellValue object
+func FormattedNumber(x float64, format string) formattedNumber {
+	return formattedNumber{
+		Type:         "FormattedNumber",
+		Value:        x,
+		NumberFormat: format,
 	}
 }
 
@@ -124,27 +73,105 @@ func DateValue(x *date.Date, format string) formattedNumber {
 	}
 }
 
-// FormattedValue is a helper function to generate a FormattedCellValue object
-func FormattedValue(x float64, format string) formattedNumber {
-	return formattedNumber{
-		Type:         "FormattedNumber",
-		Value:        x,
-		NumberFormat: format,
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (f formattedNumber) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(f)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
+// StringCellValue represents the Excel.StringCellValue interface as defined at
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.stringcellvalue
+type stringCellValue struct {
+	Type  string `json:"type"`
+	Value string `json:"basicValue"`
+}
+
+// BoolValue is a helper function to generate a BooleanCellValue object
+func StringValue(x string) stringCellValue {
+	return stringCellValue{
+		Type:  "String",
+		Value: x,
 	}
 }
 
-// Entity is a helper function to generate a new EntityCellValue object, i.e. an Excel Card.
-func Entity(text string, properties map[string]CellValue) entityCellValue {
-	return entityCellValue{
-		Type:       "Entity",
-		Text:       text,
-		Properties: properties,
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (s stringCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(s)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
+// BooleanCellValue The Excel.BooleanCellValue interface as defined at
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.booleancellvalue
+type booleanCellValue struct {
+	Type  string `json:"type"`
+	Value bool   `json:"basicValue"`
+}
+
+// BoolValue is a helper function to generate a BooleanCellValue object
+func BoolValue(x bool) booleanCellValue {
+	return booleanCellValue{
+		Type:  "Boolean",
+		Value: x,
 	}
 }
 
-// ToJSON marshals the EntiteyCellValue object to a JSON object ready for use by MS Excel.
-func (e *entityCellValue) ToJSON() ([]byte, error) {
-	jsonBytes, err := json.Marshal(e)
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (b booleanCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
+// DoubleCellValue represents the Excel.DoubleCellValue interface as defined at
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.doublecellvalue
+type doubleCellValue struct {
+	Type  string  `json:"type"`
+	Value float64 `json:"basicValue"`
+}
+
+// DoubleValue is a helper function to generate a DoubleCellValue object
+func DoubleValue(x float64) doubleCellValue {
+	return doubleCellValue{
+		Type:  "Double",
+		Value: x,
+	}
+}
+
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (d doubleCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
+// ArrayCellValue represents the Excel.ArrayCellValue interface as defined at
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.arraycellvalue
+type arrayCellValue struct {
+	Type     string        `json:"type"`
+	Elements [][]CellValue `json:"elements"`
+}
+
+// ArrayValue is a helper function to generate a ArrayCellValue object
+func ArrayValue(elements [][]CellValue) arrayCellValue {
+	return arrayCellValue{
+		Type:     "Array",
+		Elements: elements,
+	}
+}
+
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (a arrayCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(a)
 	if err != nil {
 		return nil, err
 	}
