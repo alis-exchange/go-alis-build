@@ -16,6 +16,7 @@ var templateFs embed.FS
 
 type CellValue interface {
 	ToJSON() ([]byte, error)
+	ToScriptLabYAML() (string, error)
 }
 
 // EntityCellValue represents the Excel.EntityCellValue interface as defined at
@@ -129,8 +130,13 @@ ToScriptLabYAML function streamlines the process of validating your generated En
   - Enhanced Workflow: This streamlined process saves you time and effort.
 */
 func (a entityCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(a)
+}
+
+// parseImportYAML is a generic helper method using the '.ToJSON()' method from relevant CellValue types
+func parseImportYAML(c CellValue) (string, error) {
 	// Retrieve JSON version of the entity
-	entityCellValueJson, err := a.ToJSON()
+	entityCellValueJson, err := c.ToJSON()
 	if err != nil {
 		return "", fmt.Errorf("generating json: %w", err)
 	}
@@ -167,10 +173,10 @@ type formattedNumber struct {
 // FormattedNumber is a helper function to generate a FormattedCellValue object.
 //
 // Format examples, for the value 1234.56
-//   - $0.00 -> $1234.56
-//   - $0 000.00 -> $1 234.56
-//   - $ 0 -> $ 1234
-//   - $0.00 -> $1234.56
+//   - $#.00 -> $1234.56
+//   - $# ###.00 -> $1 234.56
+//   - $ # -> $ 1234
+//   - $#.00 -> $1234.56
 //   - "[Blue]#,##0.00_);[Red](#,##0.00);0.00;" -> 1,234.56 (in blue)
 //
 // https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
@@ -218,6 +224,22 @@ func (f formattedNumber) ToJSON() ([]byte, error) {
 	return jsonBytes, nil
 }
 
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (f formattedNumber) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(f)
+}
+
 // StringCellValue represents the Excel.StringCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.stringcellvalue
 type stringCellValue struct {
@@ -240,6 +262,22 @@ func (s stringCellValue) ToJSON() ([]byte, error) {
 		return nil, err
 	}
 	return jsonBytes, nil
+}
+
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (s stringCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(s)
 }
 
 // BooleanCellValue The Excel.BooleanCellValue interface as defined at
@@ -266,6 +304,22 @@ func (b booleanCellValue) ToJSON() ([]byte, error) {
 	return jsonBytes, nil
 }
 
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (b booleanCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(b)
+}
+
 // DoubleCellValue represents the Excel.DoubleCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.doublecellvalue
 type doubleCellValue struct {
@@ -290,6 +344,22 @@ func (d doubleCellValue) ToJSON() ([]byte, error) {
 	return jsonBytes, nil
 }
 
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (d doubleCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(d)
+}
+
 // ArrayCellValue represents the Excel.ArrayCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.arraycellvalue
 type arrayCellValue struct {
@@ -312,4 +382,20 @@ func (a arrayCellValue) ToJSON() ([]byte, error) {
 		return nil, err
 	}
 	return jsonBytes, nil
+}
+
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (a arrayCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(a)
 }
