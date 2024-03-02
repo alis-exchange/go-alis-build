@@ -10,10 +10,10 @@ formatted number values, entities, arrays within entities, and enhanced error da
 manipulation and presentation in Excel.
 
 Features:
-- Web Images Integration: Allows embedding and manipulation of web images within Excel cells, facilitating richer data visualization and context.
-- Formatted Number Values: Supports formatted number values, enabling precise numerical data representation with customized formatting.
-- Entity Management: Provides tools to create, modify, and display entities as entity cards, enriching Excel sheets with structured and linked data.
-- Array Support within Entities: Enables the use of arrays within entities, allowing for complex data structures to be organized and accessed efficiently.
-- Improved Error Handling: Introduces advanced error data types and handling mechanisms, improving the robustness and reliability of Excel add-ins.
+  - Web Images Integration: Allows embedding and manipulation of web images within Excel cells, facilitating richer data visualization and context.
+  - Formatted Number Values: Supports formatted number values, enabling precise numerical data representation with customized formatting.
+  - Entity Management: Provides tools to create, modify, and display entities as entity cards, enriching Excel sheets with structured and linked data.
+  - Array Support within Entities: Enables the use of arrays within entities, allowing for complex data structures to be organized and accessed efficiently.
+  - Improved Error Handling: Introduces advanced error data types and handling mechanisms, improving the robustness and reliability of Excel add-ins.
 */
 package excel // import "go.alis.build/excel"
