@@ -164,7 +164,16 @@ type formattedNumber struct {
 	NumberFormat string  `json:"numberFormat"`
 }
 
-// FormattedNumber is a helper function to generate a FormattedCellValue object
+// FormattedNumber is a helper function to generate a FormattedCellValue object.
+//
+// Format examples, for the value 1234.56
+//   - $0.00 -> $1234.56
+//   - $0 000.00 -> $1 234.56
+//   - $ 0 -> $ 1234
+//   - $0.00 -> $1234.56
+//   - "[Blue]#,##0.00_);[Red](#,##0.00);0.00;" -> 1,234.56 (in blue)
+//
+// https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
 func FormattedNumber(x float64, format string) formattedNumber {
 	return formattedNumber{
 		Type:         "FormattedNumber",
@@ -173,7 +182,15 @@ func FormattedNumber(x float64, format string) formattedNumber {
 	}
 }
 
-// DateValue is a helper function to generate a Date cell with a specified format
+// DateValue is a helper function to generate a Date cell with a specified format.
+//
+// Format examples, for the value 31 January 1980
+//   - yy-mm-dd -> 80-01-31
+//   - yyyy-mm-dd -> 1980-01-31
+//   - d mmm yyyy -> 31 Jan 1980
+//   - d mmmm yyyy, dddd -> 31 January 1980, Saturday
+//
+// https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
 func DateValue(x *date.Date, format string) formattedNumber {
 	// First convert the Date object to number of days since 1900
 	baseTime := time.Date(1900, 1, -1, 0, 0, 0, 0, time.UTC)
