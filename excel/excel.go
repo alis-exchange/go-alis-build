@@ -1,11 +1,18 @@
 package excel
 
 import (
+	"bytes"
+	"embed"
 	"encoding/json"
+	"fmt"
+	"text/template"
 	"time"
 
 	"google.golang.org/genproto/googleapis/type/date"
 )
+
+//go:embed script_lab.tmpl
+var templateFs embed.FS
 
 type CellValue interface {
 	ToJSON() ([]byte, error)
@@ -14,17 +21,89 @@ type CellValue interface {
 // EntityCellValue represents the Excel.EntityCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.entitycellvalue
 type entityCellValue struct {
-	Type       string               `json:"type"`
-	Text       string               `json:"text"`
-	Properties map[string]CellValue `json:"properties"`
+	Type       string               `json:"type"`                 // Represents the type of this cell value
+	Text       string               `json:"text"`                 // Represents the text shown when a cell with this value is rendered.
+	Properties map[string]CellValue `json:"properties,omitempty"` // Represents the properties of this entity and their metadata.
+	Layouts    *Layouts             `json:"layouts,omitempty"`    // Represents layout information for views of this entity.
+	Provider   *Provider            `json:"provider,omitempty"`   // Represents information that describes the service that provided the data in this EntityCellValue. This information can be used for branding in entity cards.
+}
+
+// entityViewLayouts represents layout information for various views of the entity.
+// Defined at: https://learn.microsoft.com/en-us/javascript/api/excel/excel.entityviewlayouts
+type Layouts struct {
+	// Represents the layout used when there is limited space to represent the entity.
+	Compact *Compact `json:"compact,omitempty"`
+	// Represents the layout of this entity in card view.
+	Card *Card `json:"card,omitempty"`
+}
+
+// Compact represents the compact layout properties for an entity, as defined at:
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.entitycompactlayout
+type Compact struct {
+	// Specifies the name of the icon which is used to open the card.
+	// Examples: Airplane, Alert, Code, Cloud, ShoppingBag, etc.
+	// Full list of icons available at https://learn.microsoft.com/en-us/javascript/api/excel/excel.entitycompactlayouticons
+	Icon string `json:"icon,omitempty"`
+}
+
+// Card represents the layout of a card in card view.
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.cardlayout
+// TODO: implement EntityArrayCardLayout version of the CardLayout type.
+type Card struct {
+	// Represents the title of the card or the specification of which property contains the title of the card.
+	Title *CardProperty `json:"title,omitempty"`
+	// Represents a specification of which property contains the subtitle of the card.
+	SubTitle *CardProperty `json:"subTitle,omitempty"`
+	// Specifies a property which will be used as the main image of the card.
+	MainImage *CardProperty `json:"mainImage,omitempty"`
+	// Represents the sections of the card.
+	Sections []Section `json:"sections,omitempty"`
+}
+
+// Represents the layout of a section of a card in card view.
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.cardlayoutsection
+type Section struct {
+	// Represents the type of layout for this section.
+	// Available values: "List", "Table"
+	Layout string `json:"layout,omitempty"`
+	// Represents the names of the properties in this section.
+	Properties []string `json:"properties,omitempty"`
+	// Represents the title of this section of the card.
+	Title *string `json:"title,omitempty"`
+	// Represents whether this section of the card is collapsible. If the card section
+	// has a title, the default value is true. If the card section doesn't have a title,
+	// the default value is false.
+	Collapsible *bool `json:"collapsible,omitempty"`
+	// Represents whether this section of the card is initially collapsed.
+	Collapsed *bool `json:"collapsed,omitempty"`
+}
+
+type CardProperty struct {
+	// The key of the relevant property within the Properties map attribute
+	Property string `json:"property,omitempty"`
+}
+
+// CellValueProviderAttributes as defined at:
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.cellvalueproviderattributes
+type Provider struct {
+	// Represents the provider description property that is used in card view if no logo is specified.
+	// If a logo is specified, this will be used as tooltip text.
+
+	Description string `json:"description,omitempty"`
+	// Represents a URL used to download an image that will be used as a logo in card view.
+	LogoSourceAddress string `json:"logoSourceAddress,omitempty"`
+	// Represents a URL that is the navigation target if the user clicks on the logo element in card view
+	LogoTargetAddress string `json:"logoTargetAddress,omitempty"`
 }
 
 // Entity is a helper function to generate a new EntityCellValue object, i.e. an Excel Card.
-func EntityValue(text string, properties map[string]CellValue) entityCellValue {
+func EntityValue(text string, properties map[string]CellValue, layouts *Layouts, provider *Provider) entityCellValue {
 	return entityCellValue{
 		Type:       "Entity",
 		Text:       text,
 		Properties: properties,
+		Layouts:    layouts,
+		Provider:   provider,
 	}
 }
 
@@ -35,6 +114,46 @@ func (e entityCellValue) ToJSON() ([]byte, error) {
 		return nil, err
 	}
 	return jsonBytes, nil
+}
+
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (a entityCellValue) ToScriptLabYAML() (string, error) {
+	// Retrieve JSON version of the entity
+	entityCellValueJson, err := a.ToJSON()
+	if err != nil {
+		return "", fmt.Errorf("generating json: %w", err)
+	}
+
+	// We'll use the built in template package to parse the script file.
+	var scriptBytes bytes.Buffer
+	fileTemplate, err := templateFs.ReadFile("script_lab.tmpl")
+	if err != nil {
+		return "", fmt.Errorf("read script_lab.tmpl file: %w", err)
+	}
+	t, err := template.New("scriptlab").Parse(string(fileTemplate))
+	if err != nil {
+		return "", fmt.Errorf("create parser: %w", err)
+	}
+
+	err = t.Execute(&scriptBytes, struct{ EntityCellValueJson string }{
+		EntityCellValueJson: string(entityCellValueJson),
+	})
+	if err != nil {
+		return "", fmt.Errorf("parse script_lab.tmpl file: %w", err)
+	}
+
+	return scriptBytes.String(), nil
 }
 
 // FormattedNumber represents the Excel.FormattedNumber interface as defined at
