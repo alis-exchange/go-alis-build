@@ -173,10 +173,9 @@ type formattedNumber struct {
 // FormattedNumber is a helper function to generate a FormattedCellValue object.
 //
 // Format examples, for the value 1234.56
-//   - $#.00 -> $1234.56
-//   - $# ###.00 -> $1 234.56
+//   - $0.00 -> $1234.56
+//   - $# ##0.00 -> $1 234.56
 //   - $ # -> $ 1234
-//   - $#.00 -> $1234.56
 //   - "[Blue]#,##0.00_);[Red](#,##0.00);0.00;" -> 1,234.56 (in blue)
 //
 // https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
