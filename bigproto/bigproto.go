@@ -390,6 +390,18 @@ func (b *BigProto) WriteMutation(ctx context.Context, rowKey string, mut *bigtab
 	return nil
 }
 
+// BatchWriteMutations writes a batch of mutations to bigtable at the given rowKeys. This allows for more custom write functionality to
+// be implemented on the rows that are written. This is useful for writing multiple columns to a row, or writing a row
+// with a filter. It also allows for things like "Source Prioritisation" whereby data may be duplicated across column
+// families for different sources and the sources are used in order of prior
+func (b *BigProto) BatchWriteMutations(ctx context.Context, rowKeys []string, mutations []*bigtable.Mutation) ([]error, error) {
+	errs, err := b.table.ApplyBulk(ctx, rowKeys, mutations)
+	if err != nil || (errs != nil && len(errs) > 0) {
+		return errs, err
+	}
+	return nil, nil
+}
+
 // DeleteRow deletes an entire row from bigtable at the given rowKey.
 func (b *BigProto) DeleteRow(ctx context.Context, rowKey string) error {
 	// Create a single mutation to delete the row
