@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"text/template"
 	"time"
 
@@ -115,6 +116,42 @@ func (e entityCellValue) ToJSON() ([]byte, error) {
 		return nil, err
 	}
 	return jsonBytes, nil
+}
+
+// ToLocalFiles saves a data.json and script.yaml files locally for testing purposes.
+func (e entityCellValue) ToLocalFiles() error {
+	jsonBytes, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+
+	// Save a copy of the generated data locally
+	file, err := os.Create("data.json")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(jsonBytes)
+	if err != nil {
+		return err
+	}
+
+	// Save a copy of the Script Lab Import YAML locally
+	dataYaml, err := e.ToScriptLabYAML()
+	if err != nil {
+		return err
+	}
+	file, err = os.Create("script.yaml")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write([]byte(dataYaml))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 /*
