@@ -197,7 +197,7 @@ func (a *Authz) AddRequesterJwtToOutgoingCtx(ctx context.Context) (context.Conte
 // GetPermissions extracts the principal from the incoming context, also accomodating for IAP and ESPv2 forwarded JWT tokens.
 // It then determines which permissions the principal has, based on the roles provided in the New method.
 // Use this for implementing TestIamPermissions in your grpc service.
-func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy) []string {
+func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy, permissions []string) []string {
 	authInfo, _ := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	permSet := map[string]bool{}
 	for _, policy := range policies {
@@ -213,13 +213,15 @@ func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy) []
 	}
 	perms := []string{}
 	for perm := range permSet {
-		perms = append(perms, perm)
+		if len(permissions) == 0 || sliceContains(permissions, perm) {
+			perms = append(perms, perm)
+		}
 	}
 	return perms
 }
 
 // GetPermissionsFromResources does the exact same thing as GetPermissions, except that it also retrieves the policies for the resources
-func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []string) []string {
+func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []string, permissions []string) []string {
 	var policies []*iampb.Policy
 	for _, resource := range resources {
 		policy, err := a.policyReader(ctx, resource)
@@ -228,5 +230,5 @@ func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []str
 		}
 		policies = append(policies, policy)
 	}
-	return a.GetPermissions(ctx, policies)
+	return a.GetPermissions(ctx, policies, permissions)
 }

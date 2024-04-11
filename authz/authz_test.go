@@ -187,7 +187,7 @@ func TestAuthz_GetPermissions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			permissions := authz.GetPermissions(tt.args.ctx, tt.args.policies)
+			permissions := authz.GetPermissions(tt.args.ctx, tt.args.policies, []string{"/testorg.aa.testservices.v1/CreateTest"})
 			t.Logf("permissions: %v", permissions)
 		})
 	}
