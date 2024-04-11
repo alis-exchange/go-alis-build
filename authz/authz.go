@@ -102,6 +102,11 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 		return nil, err
 	}
 
+	// If the principal is a super admin, grant access regardless of roles
+	if authInfo.IsSuperAdmin {
+		return authInfo, nil
+	}
+
 	// Get the roles that grant the required permission
 	rolesThatGrantThisPermission := a.permissionsMap[permission]
 	if rolesThatGrantThisPermission == nil {
@@ -134,11 +139,6 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 		return authInfo, nil
 	}
 
-	// If the principal is a super admin, grant access regardless of roles
-	if authInfo.IsSuperAdmin {
-		return authInfo, nil
-	}
-
 	// If the principal is not a super admin and is not part of any role that has the required permission, deny access
 	return authInfo, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
 }
@@ -146,7 +146,17 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 // AuthorizeFromResources does the exact same thing as Authorize, except that it also retrieves the policies for the resources
 // using the policyReader function provided in WithPolicyReader. This is useful when you have a list of resources and you want to
 // authorize a principal against all of them, without having to retrieve the policies manually.
-func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, resources []string) (authInfo *AuthInfo, err error) {
+func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, resources []string) (*AuthInfo, error) {
+	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the principal is a super admin, no need to pull policies, just grant access
+	if authInfo.IsSuperAdmin {
+		return authInfo, nil
+	}
+
 	var policies []*iampb.Policy
 	for _, resource := range resources {
 		policy, err := a.policyReader(ctx, resource)
