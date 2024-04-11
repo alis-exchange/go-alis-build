@@ -23,8 +23,10 @@ const (
 type Authz struct {
 	// permission=>set of roles
 	permissionsMap map[string](map[string]bool)
-	superAdmins    []string
-	policyReader   func(ctx context.Context, resource string) (*iampb.Policy, error)
+	// role => set of permissions
+	rolesMap     map[string](map[string]bool)
+	superAdmins  []string
+	policyReader func(ctx context.Context, resource string) (*iampb.Policy, error)
 }
 
 type Role struct {
@@ -58,6 +60,7 @@ type AuthInfo struct {
 func New(roles []*Role) *Authz {
 	a := &Authz{
 		permissionsMap: map[string](map[string]bool){},
+		rolesMap:       map[string](map[string]bool){},
 	}
 	rolesMap := map[string]*Role{}
 	for _, role := range roles {
@@ -65,7 +68,9 @@ func New(roles []*Role) *Authz {
 	}
 	for role := range rolesMap {
 		perms := getAllRolePermissions(rolesMap, role)
+		a.rolesMap[role] = make(map[string]bool)
 		for _, perm := range perms {
+			a.rolesMap[role][perm] = true
 			if _, ok := a.permissionsMap[perm]; !ok {
 				a.permissionsMap[perm] = make(map[string]bool)
 			}
@@ -187,4 +192,41 @@ func (a *Authz) AddRequesterJwtToOutgoingCtx(ctx context.Context) (context.Conte
 	ctx = metadata.NewOutgoingContext(ctx, currentOutgoingMd)
 
 	return ctx, nil
+}
+
+// GetPermissions extracts the principal from the incoming context, also accomodating for IAP and ESPv2 forwarded JWT tokens.
+// It then determines which permissions the principal has, based on the roles provided in the New method.
+// Use this for implementing TestIamPermissions in your grpc service.
+func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy) []string {
+	authInfo, _ := getAuthInfoWithoutRoles(ctx, a.superAdmins)
+	permSet := map[string]bool{}
+	for _, policy := range policies {
+		if policy != nil {
+			for _, binding := range policy.Bindings {
+				if sliceContains(binding.GetMembers(), authInfo.PolicyMember) {
+					for permission := range a.rolesMap[binding.GetRole()] {
+						permSet[permission] = true
+					}
+				}
+			}
+		}
+	}
+	perms := []string{}
+	for perm := range permSet {
+		perms = append(perms, perm)
+	}
+	return perms
+}
+
+// GetPermissionsFromResources does the exact same thing as GetPermissions, except that it also retrieves the policies for the resources
+func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []string) []string {
+	var policies []*iampb.Policy
+	for _, resource := range resources {
+		policy, err := a.policyReader(ctx, resource)
+		if err != nil {
+			continue
+		}
+		policies = append(policies, policy)
+	}
+	return a.GetPermissions(ctx, policies)
 }
