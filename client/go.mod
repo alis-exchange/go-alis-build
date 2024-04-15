@@ -3,6 +3,7 @@ module go.alis.build/client
 go 1.22
 
 require (
+	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	google.golang.org/api v0.166.0
 	google.golang.org/grpc v1.62.0
 )

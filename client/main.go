@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"strings"
+	"time"
 
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
@@ -36,7 +38,6 @@ Tokens generally have a one-hour expiration time, and the TokenSource logic cach
 refreshes the token upon expiration. This greatly simplifies token recycling within your service.
 */
 func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
 	err := validateArgument("host", host, `^[a-zA-Z0-9.-]+:\d+$`)
@@ -73,6 +74,7 @@ func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialO
 		}
 		// Add a per-RPC credentials option to the opts array using a grpcTokenSource instance created
 		// with an oauth.TokenSource instance created from the tokenSource.
+
 		opts = append(opts, grpc.WithPerRPCCredentials(grpcTokenSource{
 			TokenSource: oauth.TokenSource{
 				TokenSource: tokenSource,
@@ -81,4 +83,16 @@ func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialO
 	}
 
 	return grpc.Dial(host, opts...)
+}
+
+// Does the same as NewConn, but retries on temporary TCP connection resets, which is common when connecting to Cloud Run services.
+func NewConnWithRetry(ctx context.Context, host string, insecure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	retryOpts := []grpc_retry.CallOption{
+		grpc_retry.WithBackoff(grpc_retry.BackoffExponential(100 * time.Millisecond)),
+		grpc_retry.WithCodes(codes.Unavailable),
+		grpc_retry.WithMax(5),
+	}
+	retryInterceptorForTcpConnectionResets := grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...))
+	opts = append(opts, retryInterceptorForTcpConnectionResets)
+	return NewConn(ctx, host, insecure, opts...)
 }
