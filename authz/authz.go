@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"google.golang.org/grpc/codes"
@@ -17,26 +18,6 @@ const (
 	ServerlessAuthHeader1 = "X-Serverless-Authorization"
 	ServerlessAuthHeader2 = "x-serverless-authorization"
 )
-
-// Authz is a struct that contains the dependencies required to validate access
-// at the method level
-type Authz struct {
-	// permission=>set of roles
-	permissionsMap map[string](map[string]bool)
-	// role => set of permissions
-	rolesMap     map[string](map[string]bool)
-	superAdmins  []string
-	policyReader func(ctx context.Context, resource string) (*iampb.Policy, error)
-}
-
-type Role struct {
-	// The role name
-	Name string
-	// Permissions that this role has
-	Permissions []string
-	// Which other roles this role extends
-	Extends []string
-}
 
 type AuthInfo struct {
 	// The jwt token
@@ -54,6 +35,27 @@ type AuthInfo struct {
 
 	// The principal roles
 	Roles []string
+}
+
+// Authz is a struct that contains the dependencies required to validate access
+// at the method level
+type Authz struct {
+	// permission=>set of roles
+	permissionsMap map[string](map[string]bool)
+	// role => set of permissions
+	rolesMap       map[string](map[string]bool)
+	superAdmins    []string
+	policyReader   func(ctx context.Context, resource string) (*iampb.Policy, error)
+	memberResolver map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error))
+}
+
+type Role struct {
+	// The role name
+	Name string
+	// Permissions that this role has
+	Permissions []string
+	// Which other roles this role extends
+	Extends []string
 }
 
 // New returns a new Authz object used to authorize a permission on a resource.
@@ -98,6 +100,19 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 	return a
 }
 
+// WithMemberResolver registers a function to resolve whether a principal is a member of a principal group.
+// There can be multiple different types of principal groups, e.g. "team:engineering" (groupType = "team",groupId="engineering") or "domain:example.com" (groupType = "domain",groupId="example.com").
+// A group always has a type, but does not always have an id, e.g. "allAuthenticatedUsers" or "allAlisBuilders".
+// Group type of "user" and "serviceAccount" are reserved and should not be used.
+// Note within a single Authorize call, the same groupType:groupId pair will only be resolved once and cached.
+func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error)) *Authz {
+	if a.memberResolver == nil {
+		a.memberResolver = map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){}
+	}
+	a.memberResolver[groupType] = resolver
+	return a
+}
+
 // Authorize first extracts the principal from the incoming context, also accomodating for IAP and ESPv2 forwarded JWT tokens.
 // It then determines which roles will grant the required permission, based on the roles provided in the New method.
 // Lastly it checks whether the principal is part of any of the roles that grant the required permission.
@@ -120,16 +135,46 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 
 	// Loop through the policies to see whether the principal has permission
 	roles := map[string]bool{}
+	cachedMemberResolveResults := map[string]bool{}
 	for _, policy := range policies {
 		if policy != nil {
 			for _, binding := range policy.Bindings {
 				// if the role contains the required permission, check membership
 				_, ok := rolesThatGrantThisPermission[binding.GetRole()]
 				if ok {
-					// If the principal is included in the binding, add to roles. We are not returning here because we want to
-					// return all roles that the principal is part of, not just the first one that matches.
-					if sliceContains(binding.GetMembers(), authInfo.PolicyMember) {
-						roles[binding.GetRole()] = true
+					for _, member := range binding.GetMembers() {
+						if member == authInfo.PolicyMember {
+							roles[binding.GetRole()] = true
+						} else {
+							parts := strings.Split(member, ":")
+							partBeforeColon := parts[0]
+							for groupType, resolver := range a.memberResolver {
+								if partBeforeColon == groupType {
+									cachedRes, ok := cachedMemberResolveResults[member]
+									if ok {
+										if cachedRes {
+											roles[binding.GetRole()] = true
+										}
+									} else {
+										id := ""
+										if len(parts) > 1 {
+											id = strings.Join(parts[1:], ":")
+										}
+										isMember, err := resolver(ctx, id, authInfo)
+										if err != nil {
+											return nil, status.Errorf(codes.Internal, "unable to resolve group membership for groupType %s: %s", groupType, err)
+										}
+										if isMember {
+											cachedMemberResolveResults[member] = true
+											roles[binding.GetRole()] = true
+										} else {
+											cachedMemberResolveResults[member] = false
+										}
+									}
+
+								}
+							}
+						}
 					}
 				}
 			}
