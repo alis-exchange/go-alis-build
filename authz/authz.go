@@ -43,10 +43,11 @@ type Authz struct {
 	// permission=>set of roles
 	permissionsMap map[string](map[string]bool)
 	// role => set of permissions
-	rolesMap       map[string](map[string]bool)
-	superAdmins    []string
-	policyReader   func(ctx context.Context, resource string) (*iampb.Policy, error)
-	memberResolver map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error))
+	rolesMap                 map[string](map[string]bool)
+	superAdmins              []string
+	policyReader             func(ctx context.Context, resource string) (*iampb.Policy, error)
+	memberResolver           map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error))
+	skipAuthIfAuthJwtMissing bool
 }
 
 type Role struct {
@@ -94,6 +95,14 @@ func (a *Authz) WithSuperAdmins(superAdmins []string) *Authz {
 	return a
 }
 
+// Use SkipAuthIfAuthJwtMissing only if your service is behind some sort of auth proxy (e.g. a non-public cloudrun service, or a service behind ESPv2 or IAP).
+// This is useful if your methods need to call each other with empty contexts, and you want to bypass authorization in those cases.
+// If this is used, any method that calls Authorize or AuthorizeWithResources will need to check for nil authInfo (even if err==nil) and handle it accordingly.
+func (a *Authz) SkipAuthIfAuthJwtMissing() *Authz {
+	a.skipAuthIfAuthJwtMissing = true
+	return a
+}
+
 // WithPolicyReader registers the function to read the IAM policy for a resource. This is required if you are planning on using the AuthorizeFromResources method.
 func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource string) (*iampb.Policy, error)) *Authz {
 	a.policyReader = policyReader
@@ -119,7 +128,11 @@ func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.C
 func (a *Authz) Authorize(ctx context.Context, permission string, policies []*iampb.Policy) (*AuthInfo, error) {
 	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	if err != nil {
-		return nil, err
+		if a.skipAuthIfAuthJwtMissing {
+			return nil, nil
+		} else {
+			return nil, err
+		}
 	}
 
 	// If the principal is a super admin, grant access regardless of roles
@@ -199,7 +212,11 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, resources []string) (*AuthInfo, error) {
 	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	if err != nil {
-		return nil, err
+		if a.skipAuthIfAuthJwtMissing {
+			return nil, err
+		} else {
+			return nil, err
+		}
 	}
 
 	// If the principal is a super admin, no need to pull policies, just grant access
