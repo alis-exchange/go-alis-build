@@ -235,6 +235,52 @@ func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, r
 	return a.Authorize(ctx, permission, policies)
 }
 
+func (a *Authz) GetRoles(ctx context.Context, policies []*iampb.Policy) ([]string, error) {
+	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
+	if err != nil {
+		if a.skipAuthIfAuthJwtMissing {
+			return []string{}, nil
+		} else {
+			return nil, err
+		}
+	}
+
+	// If the principal is a super admin, it has no roles
+	if authInfo.IsSuperAdmin {
+		return []string{}, nil
+	}
+
+	roles := map[string]bool{}
+	for _, policy := range policies {
+		if policy != nil {
+			for _, binding := range policy.Bindings {
+				for _, member := range binding.GetMembers() {
+					if member == authInfo.PolicyMember {
+						roles[binding.GetRole()] = true
+					}
+				}
+			}
+		}
+	}
+	rolesList := []string{}
+	for role := range roles {
+		rolesList = append(rolesList, role)
+	}
+	return rolesList, nil
+}
+
+func (a *Authz) GetRolesFromResources(ctx context.Context, resources []string) ([]string, error) {
+	var policies []*iampb.Policy
+	for _, resource := range resources {
+		policy, err := a.policyReader(ctx, resource)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "unable to retrieve policy for resource %s: %s", resource, err)
+		}
+		policies = append(policies, policy)
+	}
+	return a.GetRoles(ctx, policies)
+}
+
 // This method is used to add the JWT token to the outgoing context in the x-forwarded-authorization header. This might be useful
 // if one service needs wants to make a grpc hit in the same product deployment as the requester, in stead of as itself.
 func (a *Authz) AddRequesterJwtToOutgoingCtx(ctx context.Context) (context.Context, error) {
