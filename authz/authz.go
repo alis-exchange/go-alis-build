@@ -217,7 +217,7 @@ func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, r
 	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	if err != nil {
 		if a.skipAuthIfAuthJwtMissing {
-			return nil, err
+			return nil, nil
 		} else {
 			return nil, err
 		}
@@ -278,6 +278,20 @@ func (a *Authz) GetRoles(ctx context.Context, policies []*iampb.Policy) ([]strin
 }
 
 func (a *Authz) GetRolesFromResources(ctx context.Context, resources []string) ([]string, error) {
+	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
+	if err != nil {
+		if a.skipAuthIfAuthJwtMissing {
+			return []string{}, nil
+		} else {
+			return nil, err
+		}
+	}
+
+	// If the principal is a super admin, it has no roles
+	if authInfo.IsSuperAdmin {
+		return []string{}, nil
+	}
+
 	var policies []*iampb.Policy
 	for _, resource := range resources {
 		policy, err := a.policyReader(ctx, resource)

@@ -49,6 +49,13 @@ func Test_getAuthInfoWithoutRoles(t *testing.T) {
 				superAdmins: []string{"serviceAccount:103720828881298872288"},
 			},
 		},
+		{
+			name: "EmptyCtx",
+			args: args{
+				ctx:         context.Background(),
+				superAdmins: []string{"serviceAccount:103720828881298872288"},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
