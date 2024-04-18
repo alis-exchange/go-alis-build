@@ -156,37 +156,12 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 				_, ok := rolesThatGrantThisPermission[binding.GetRole()]
 				if ok {
 					for _, member := range binding.GetMembers() {
-						if member == authInfo.PolicyMember {
+						isMember, err := a.isMember(authInfo, member, cachedMemberResolveResults)
+						if err != nil {
+							return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
+						}
+						if isMember {
 							roles[binding.GetRole()] = true
-						} else {
-							parts := strings.Split(member, ":")
-							partBeforeColon := parts[0]
-							for groupType, resolver := range a.memberResolver {
-								if partBeforeColon == groupType {
-									cachedRes, ok := cachedMemberResolveResults[member]
-									if ok {
-										if cachedRes {
-											roles[binding.GetRole()] = true
-										}
-									} else {
-										id := ""
-										if len(parts) > 1 {
-											id = strings.Join(parts[1:], ":")
-										}
-										isMember, err := resolver(ctx, id, authInfo)
-										if err != nil {
-											return nil, status.Errorf(codes.Internal, "unable to resolve group membership for groupType %s: %s", groupType, err)
-										}
-										if isMember {
-											cachedMemberResolveResults[member] = true
-											roles[binding.GetRole()] = true
-										} else {
-											cachedMemberResolveResults[member] = false
-										}
-									}
-
-								}
-							}
 						}
 					}
 				}
@@ -204,6 +179,35 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 
 	// If the principal is not a super admin and is not part of any role that has the required permission, deny access
 	return authInfo, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+}
+
+func (a *Authz) isMember(authInfo *AuthInfo, member string, cachedMemberResolveResults map[string]bool) (bool, error) {
+	if member == authInfo.PolicyMember {
+		return true, nil
+	} else {
+		parts := strings.Split(member, ":")
+		partBeforeColon := parts[0]
+		for groupType, resolver := range a.memberResolver {
+			if partBeforeColon == groupType {
+				cachedRes, ok := cachedMemberResolveResults[member]
+				if ok {
+					return cachedRes, nil
+				} else {
+					id := ""
+					if len(parts) > 1 {
+						id = strings.Join(parts[1:], ":")
+					}
+					isMember, err := resolver(context.Background(), id, authInfo)
+					if err != nil {
+						return false, err
+					}
+					cachedMemberResolveResults[member] = isMember
+					return isMember, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 // AuthorizeFromResources does the exact same thing as Authorize, except that it also retrieves the policies for the resources
@@ -255,7 +259,11 @@ func (a *Authz) GetRoles(ctx context.Context, policies []*iampb.Policy) ([]strin
 		if policy != nil {
 			for _, binding := range policy.Bindings {
 				for _, member := range binding.GetMembers() {
-					if member == authInfo.PolicyMember {
+					isMember, err := a.isMember(authInfo, member, map[string]bool{})
+					if err != nil {
+						return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
+					}
+					if isMember {
 						roles[binding.GetRole()] = true
 					}
 				}
