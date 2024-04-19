@@ -434,3 +434,43 @@ ToScriptLabYAML function streamlines the process of validating your generated En
 func (a arrayCellValue) ToScriptLabYAML() (string, error) {
 	return parseImportYAML(a)
 }
+
+// BooleanCellValue The Excel.BooleanCellValue interface as defined at
+// https://learn.microsoft.com/en-us/javascript/api/excel/excel.emptycellvalue
+type emptyCellValue struct {
+	Type  string `json:"type"`
+	Value bool   `json:"basicValue"`
+}
+
+// EmptyValue is a helper function to generate a EmptyCellValue object
+func EmptyValue(x bool) emptyCellValue {
+	return emptyCellValue{
+		Type:  "Empty",
+		Value: x,
+	}
+}
+
+// ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
+func (e emptyCellValue) ToJSON() ([]byte, error) {
+	jsonBytes, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, nil
+}
+
+/*
+ToScriptLabYAML function streamlines the process of validating your generated Entity objects. Here's how it works:
+
+# Getting Started:
+  - Install Script Lab: Enhance Excel with this Microsoft Garage add-in. Find it by going to Home -> Add-ins.
+  - Open a New Script: Navigate to Script Lab -> Code.
+  - Effortless Import: Copy and paste the text output from ToScriptLabImport into the Import section of your script.
+
+# Key Benefits:
+  - Fast and Easy Validation: Quickly confirm that your generated Entity objects function correctly within your Excel environment.
+  - Enhanced Workflow: This streamlined process saves you time and effort.
+*/
+func (e emptyCellValue) ToScriptLabYAML() (string, error) {
+	return parseImportYAML(e)
+}
