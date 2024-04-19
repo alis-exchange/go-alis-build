@@ -445,7 +445,7 @@ type emptyCellValue struct {
 // EmptyValue is a helper function to generate a EmptyCellValue object
 func EmptyValue() emptyCellValue {
 	return emptyCellValue{
-		Type:  "Empty",
+		Type:  "String",
 		Value: "",
 	}
 }
