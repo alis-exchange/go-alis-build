@@ -125,7 +125,6 @@ type CardProperty struct {
 type Provider struct {
 	// Represents the provider description property that is used in card view if no logo is specified.
 	// If a logo is specified, this will be used as tooltip text.
-
 	Description string `json:"description,omitempty"`
 	// Represents a URL used to download an image that will be used as a logo in card view.
 	LogoSourceAddress string `json:"logoSourceAddress,omitempty"`
@@ -403,6 +402,7 @@ type arrayCellValue struct {
 }
 
 // ArrayValue is a helper function to generate a ArrayCellValue object
+// This ArrayValue may not contain an ArrayValue (i.e. list of a list)
 func ArrayValue(elements [][]CellValue) arrayCellValue {
 	return arrayCellValue{
 		Type:     "Array",
@@ -439,14 +439,14 @@ func (a arrayCellValue) ToScriptLabYAML() (string, error) {
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.emptycellvalue
 type emptyCellValue struct {
 	Type  string `json:"type"`
-	Value bool   `json:"basicValue"`
+	Value string `json:"basicValue"`
 }
 
 // EmptyValue is a helper function to generate a EmptyCellValue object
-func EmptyValue(x bool) emptyCellValue {
+func EmptyValue() emptyCellValue {
 	return emptyCellValue{
 		Type:  "Empty",
-		Value: x,
+		Value: "",
 	}
 }
 
