@@ -129,7 +129,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	if err != nil {
 		if a.skipAuthIfAuthJwtMissing {
-			return nil, nil
+			return &AuthInfo{}, nil
 		} else {
 			return nil, err
 		}
@@ -217,7 +217,7 @@ func (a *Authz) AuthorizeFromResources(ctx context.Context, permission string, r
 	authInfo, err := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	if err != nil {
 		if a.skipAuthIfAuthJwtMissing {
-			return nil, nil
+			return &AuthInfo{}, nil
 		} else {
 			return nil, err
 		}
