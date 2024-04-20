@@ -3,6 +3,7 @@ package authz
 import (
 	"context"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"google.golang.org/grpc/codes"
@@ -48,6 +49,10 @@ type Authz struct {
 	policyReader             func(ctx context.Context, resource string) (*iampb.Policy, error)
 	memberResolver           map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error))
 	skipAuthIfAuthJwtMissing bool
+
+	resolverCaches            map[string](map[string]bool)
+	resolverCacheDurations    map[string]int32
+	cacheResetTimePerResolver map[string]time.Time
 }
 
 type Role struct {
@@ -114,11 +119,14 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 // A group always has a type, but does not always have an id, e.g. "allAuthenticatedUsers" or "allAlisBuilders".
 // Group type of "user" and "serviceAccount" are reserved and should not be used.
 // Note within a single Authorize call, the same groupType:groupId pair will only be resolved once and cached.
-func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error)) *Authz {
+func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error), minutesToCacheGroups int32) *Authz {
 	if a.memberResolver == nil {
 		a.memberResolver = map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){}
 	}
 	a.memberResolver[groupType] = resolver
+	a.resolverCaches[groupType] = map[string]bool{}
+	a.resolverCacheDurations[groupType] = minutesToCacheGroups
+	a.cacheResetTimePerResolver[groupType] = time.Now()
 	return a
 }
 
@@ -148,7 +156,6 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 
 	// Loop through the policies to see whether the principal has permission
 	roles := map[string]bool{}
-	cachedMemberResolveResults := map[string]bool{}
 	for _, policy := range policies {
 		if policy != nil {
 			for _, binding := range policy.Bindings {
@@ -156,7 +163,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 				_, ok := rolesThatGrantThisPermission[binding.GetRole()]
 				if ok {
 					for _, member := range binding.GetMembers() {
-						isMember, err := a.isMember(ctx, authInfo, member, cachedMemberResolveResults)
+						isMember, err := a.isMember(ctx, authInfo, member)
 						if err != nil {
 							return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
 						}
@@ -181,7 +188,8 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 	return authInfo, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
 }
 
-func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string, cachedMemberResolveResults map[string]bool) (bool, error) {
+func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string) (bool, error) {
+	now := time.Now()
 	if member == authInfo.PolicyMember {
 		return true, nil
 	} else {
@@ -189,7 +197,14 @@ func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string,
 		partBeforeColon := parts[0]
 		for groupType, resolver := range a.memberResolver {
 			if partBeforeColon == groupType {
-				cachedRes, ok := cachedMemberResolveResults[member]
+				timeSinceLastCache := now.Sub(a.cacheResetTimePerResolver[groupType])
+				if timeSinceLastCache.Minutes() > float64(a.resolverCacheDurations[groupType]) {
+					a.resolverCaches[groupType] = map[string]bool{}
+					a.cacheResetTimePerResolver[groupType] = now
+				}
+				memberCache := a.resolverCaches[groupType]
+
+				cachedRes, ok := memberCache[member]
 				if ok {
 					return cachedRes, nil
 				} else {
@@ -201,7 +216,8 @@ func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string,
 					if err != nil {
 						return false, err
 					}
-					cachedMemberResolveResults[member] = isMember
+					memberCache[member] = isMember
+					a.resolverCaches[member] = memberCache
 					return isMember, nil
 				}
 			}
@@ -259,7 +275,7 @@ func (a *Authz) GetRoles(ctx context.Context, policies []*iampb.Policy) ([]strin
 		if policy != nil {
 			for _, binding := range policy.Bindings {
 				for _, member := range binding.GetMembers() {
-					isMember, err := a.isMember(ctx, authInfo, member, map[string]bool{})
+					isMember, err := a.isMember(ctx, authInfo, member)
 					if err != nil {
 						return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
 					}
