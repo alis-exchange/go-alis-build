@@ -192,3 +192,71 @@ func TestAuthz_GetPermissions(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthz_isMember(t *testing.T) {
+	az := New([]*Role{}).WithMemberResolver("builders", func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error) {
+		if groupId == "" {
+			return true, nil
+		} else if groupId == "danielGroup" && authInfo.PolicyMember == "user:123" {
+			return true, nil
+		} else if groupId == "janGroup" && authInfo.PolicyMember == "user:456" {
+			return true, nil
+		}
+		return false, nil
+	}, 1)
+	isMember, err := az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if !isMember {
+		t.Errorf("Expected true, got false")
+	}
+
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:janGroup")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if isMember {
+		t.Errorf("Expected false, got true")
+	}
+
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if !isMember {
+		t.Errorf("Expected true, got false")
+	}
+
+	// do danielGroup again to check caching
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if !isMember {
+		t.Errorf("Expected true, got false")
+	}
+
+	// do builders again to check caching
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+
+	// now do user:456
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:janGroup")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if !isMember {
+		t.Errorf("Expected true, got false")
+	}
+
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:danielGroup")
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if isMember {
+		t.Errorf("Expected false, got true")
+	}
+}

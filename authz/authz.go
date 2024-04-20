@@ -50,7 +50,8 @@ type Authz struct {
 	memberResolver           map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error))
 	skipAuthIfAuthJwtMissing bool
 
-	resolverCaches            map[string](map[string]bool)
+	// groupType=>principal=>groupId
+	resolverCaches            map[string](map[string]map[string]bool)
 	resolverCacheDurations    map[string]int32
 	cacheResetTimePerResolver map[string]time.Time
 }
@@ -69,7 +70,7 @@ func New(roles []*Role) *Authz {
 	a := &Authz{
 		permissionsMap:            map[string](map[string]bool){},
 		rolesMap:                  map[string](map[string]bool){},
-		resolverCaches:            map[string](map[string]bool){},
+		resolverCaches:            map[string](map[string]map[string]bool){},
 		resolverCacheDurations:    map[string]int32{},
 		cacheResetTimePerResolver: map[string]time.Time{},
 		memberResolver:            map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){},
@@ -125,7 +126,7 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 // If you want to cache the results of the resolver, you can provide a non-zero minutesToCacheResults value. This is useful if the resolver needs to make hits to a database for each resolve.
 func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error), minutesToCacheResults int32) *Authz {
 	a.memberResolver[groupType] = resolver
-	a.resolverCaches[groupType] = map[string]bool{}
+	a.resolverCaches[groupType] = map[string]map[string]bool{}
 	a.resolverCacheDurations[groupType] = minutesToCacheResults
 	a.cacheResetTimePerResolver[groupType] = time.Now()
 	return a
@@ -200,25 +201,29 @@ func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string)
 			if partBeforeColon == groupType {
 				timeSinceLastCache := now.Sub(a.cacheResetTimePerResolver[groupType])
 				if timeSinceLastCache.Minutes() > float64(a.resolverCacheDurations[groupType]) {
-					a.resolverCaches[groupType] = map[string]bool{}
+					a.resolverCaches[groupType] = map[string]map[string]bool{}
 					a.cacheResetTimePerResolver[groupType] = now
 				}
-				memberCache := a.resolverCaches[groupType]
-
-				cachedRes, ok := memberCache[member]
+				typeCache := a.resolverCaches[groupType]
+				principalCache, ok := typeCache[authInfo.PolicyMember]
+				if !ok {
+					principalCache = map[string]bool{}
+					typeCache[authInfo.PolicyMember] = principalCache
+				}
+				id := ""
+				if len(parts) > 1 {
+					id = strings.Join(parts[1:], ":")
+				}
+				cachedRes, ok := principalCache[id]
 				if ok {
 					return cachedRes, nil
 				} else {
-					id := ""
-					if len(parts) > 1 {
-						id = strings.Join(parts[1:], ":")
-					}
+
 					isMember, err := resolver(ctx, id, authInfo)
 					if err != nil {
 						return false, err
 					}
-					memberCache[member] = isMember
-					a.resolverCaches[member] = memberCache
+					principalCache[id] = isMember
 					return isMember, nil
 				}
 			}
