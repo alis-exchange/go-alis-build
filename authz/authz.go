@@ -67,8 +67,12 @@ type Role struct {
 // New returns a new Authz object used to authorize a permission on a resource.
 func New(roles []*Role) *Authz {
 	a := &Authz{
-		permissionsMap: map[string](map[string]bool){},
-		rolesMap:       map[string](map[string]bool){},
+		permissionsMap:            map[string](map[string]bool){},
+		rolesMap:                  map[string](map[string]bool){},
+		resolverCaches:            map[string](map[string]bool){},
+		resolverCacheDurations:    map[string]int32{},
+		cacheResetTimePerResolver: map[string]time.Time{},
+		memberResolver:            map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){},
 	}
 	rolesMap := map[string]*Role{}
 	for _, role := range roles {
@@ -120,9 +124,6 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 // Group type of "user" and "serviceAccount" are reserved and should not be used.
 // If you want to cache the results of the resolver, you can provide a non-zero minutesToCacheResults value. This is useful if the resolver needs to make hits to a database for each resolve.
 func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error), minutesToCacheResults int32) *Authz {
-	if a.memberResolver == nil {
-		a.memberResolver = map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){}
-	}
 	a.memberResolver[groupType] = resolver
 	a.resolverCaches[groupType] = map[string]bool{}
 	a.resolverCacheDurations[groupType] = minutesToCacheResults
