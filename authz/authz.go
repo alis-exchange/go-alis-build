@@ -118,14 +118,14 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 // There can be multiple different types of principal groups, e.g. "team:engineering" (groupType = "team",groupId="engineering") or "domain:example.com" (groupType = "domain",groupId="example.com").
 // A group always has a type, but does not always have an id, e.g. "allAuthenticatedUsers" or "allAlisBuilders".
 // Group type of "user" and "serviceAccount" are reserved and should not be used.
-// Note within a single Authorize call, the same groupType:groupId pair will only be resolved once and cached.
-func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error), minutesToCacheGroups int32) *Authz {
+// If you want to cache the results of the resolver, you can provide a non-zero minutesToCacheResults value. This is useful if the resolver needs to make hits to a database for each resolve.
+func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error), minutesToCacheResults int32) *Authz {
 	if a.memberResolver == nil {
 		a.memberResolver = map[string](func(ctx context.Context, id string, authInfo *AuthInfo) (bool, error)){}
 	}
 	a.memberResolver[groupType] = resolver
 	a.resolverCaches[groupType] = map[string]bool{}
-	a.resolverCacheDurations[groupType] = minutesToCacheGroups
+	a.resolverCacheDurations[groupType] = minutesToCacheResults
 	a.cacheResetTimePerResolver[groupType] = time.Now()
 	return a
 }
