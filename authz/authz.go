@@ -156,7 +156,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 				_, ok := rolesThatGrantThisPermission[binding.GetRole()]
 				if ok {
 					for _, member := range binding.GetMembers() {
-						isMember, err := a.isMember(authInfo, member, cachedMemberResolveResults)
+						isMember, err := a.isMember(ctx, authInfo, member, cachedMemberResolveResults)
 						if err != nil {
 							return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
 						}
@@ -181,7 +181,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 	return authInfo, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
 }
 
-func (a *Authz) isMember(authInfo *AuthInfo, member string, cachedMemberResolveResults map[string]bool) (bool, error) {
+func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string, cachedMemberResolveResults map[string]bool) (bool, error) {
 	if member == authInfo.PolicyMember {
 		return true, nil
 	} else {
@@ -197,7 +197,7 @@ func (a *Authz) isMember(authInfo *AuthInfo, member string, cachedMemberResolveR
 					if len(parts) > 1 {
 						id = strings.Join(parts[1:], ":")
 					}
-					isMember, err := resolver(context.Background(), id, authInfo)
+					isMember, err := resolver(ctx, id, authInfo)
 					if err != nil {
 						return false, err
 					}
@@ -259,7 +259,7 @@ func (a *Authz) GetRoles(ctx context.Context, policies []*iampb.Policy) ([]strin
 		if policy != nil {
 			for _, binding := range policy.Bindings {
 				for _, member := range binding.GetMembers() {
-					isMember, err := a.isMember(authInfo, member, map[string]bool{})
+					isMember, err := a.isMember(ctx, authInfo, member, map[string]bool{})
 					if err != nil {
 						return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
 					}
