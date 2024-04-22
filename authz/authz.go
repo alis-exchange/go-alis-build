@@ -153,7 +153,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 	// Get the roles that grant the required permission
 	rolesThatGrantThisPermission := a.permissionsMap[permission]
 	if rolesThatGrantThisPermission == nil {
-		return nil, status.Errorf(codes.PermissionDenied, "no role has the permission %s", permission)
+		return authInfo, status.Errorf(codes.PermissionDenied, "no role has the permission %s", permission)
 	}
 
 	// Loop through the policies to see whether the principal has permission
