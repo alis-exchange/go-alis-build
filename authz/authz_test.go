@@ -94,7 +94,7 @@ func TestAuthz_Authorize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			authInfo, err := authz.Authorize(tt.args.ctx, tt.args.permission, tt.args.policies)
+			authInfo, err := authz.Authorize(tt.args.ctx, tt.args.permission, tt.args.policies, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Authz.Authorize() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -194,7 +194,17 @@ func TestAuthz_GetPermissions(t *testing.T) {
 }
 
 func TestAuthz_isMember(t *testing.T) {
-	az := New([]*Role{}).WithMemberResolver("builders", func(ctx context.Context, groupId string, authInfo *AuthInfo) (bool, error) {
+	type Cache struct {
+		someString string
+		someInt    int
+	}
+	az := New([]*Role{}).WithMemberResolver("builders", func(ctx context.Context, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error) {
+		// edit resolver data
+		if rd, ok := cache.(*Cache); ok {
+			println("Editing resolver data")
+			rd.someString = "edited"
+			rd.someInt = 456
+		}
 		if groupId == "" {
 			return true, nil
 		} else if groupId == "danielGroup" && authInfo.PolicyMember == "user:123" {
@@ -202,9 +212,16 @@ func TestAuthz_isMember(t *testing.T) {
 		} else if groupId == "janGroup" && authInfo.PolicyMember == "user:456" {
 			return true, nil
 		}
+
 		return false, nil
-	}, 1)
-	isMember, err := az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup")
+	})
+	az.WithPolicyReader(func(ctx context.Context, policyName string, cache interface{}) (*iampb.Policy, error) {
+		return nil, nil
+	})
+	memberCache := map[string]bool{}
+
+	cache := &Cache{}
+	isMember, err := az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -212,7 +229,7 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected true, got false")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:janGroup")
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:janGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -220,7 +237,7 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected false, got true")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders")
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -229,7 +246,7 @@ func TestAuthz_isMember(t *testing.T) {
 	}
 
 	// do danielGroup again to check caching
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup")
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -238,13 +255,7 @@ func TestAuthz_isMember(t *testing.T) {
 	}
 
 	// do builders again to check caching
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders")
-	if err != nil {
-		t.Errorf("Error: %v", err)
-	}
-
-	// now do user:456
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:janGroup")
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -252,7 +263,16 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected true, got false")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:danielGroup")
+	// now do user:456
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:janGroup", memberCache, cache)
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+	if !isMember {
+		t.Errorf("Expected true, got false")
+	}
+
+	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
