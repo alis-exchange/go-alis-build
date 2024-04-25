@@ -366,6 +366,10 @@ func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []str
 	return a.GetPermissions(ctx, policies, permissions)
 }
 
+func (a *Authz) GetRequesterAuthInfo(ctx context.Context) (*AuthInfo, error) {
+	return getAuthInfoWithoutRoles(ctx, a.superAdmins)
+}
+
 // SetPolicy first retrieves the current policy and if it exists it ensures the new policy's etag is the same as the current.
 // It also generates a new etag.
 func (a *Authz) SetPolicy(ctx context.Context, resource string, policy *iampb.Policy, cache interface{}) (*iampb.Policy, error) {
