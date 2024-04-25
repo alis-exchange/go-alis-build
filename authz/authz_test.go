@@ -198,7 +198,7 @@ func TestAuthz_isMember(t *testing.T) {
 		someString string
 		someInt    int
 	}
-	az := New([]*Role{}).WithMemberResolver("builders", func(ctx context.Context, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error) {
+	az := New([]*Role{}).WithMemberResolver("builders", func(ctx context.Context, groupType string, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error) {
 		// edit resolver data
 		if rd, ok := cache.(*Cache); ok {
 			println("Editing resolver data")

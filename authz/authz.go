@@ -46,7 +46,7 @@ type Authz struct {
 	rolesMap                 map[string](map[string]bool)
 	superAdmins              []string
 	policyReader             func(ctx context.Context, resource string, cache interface{}) (*iampb.Policy, error)
-	memberResolver           map[string](func(ctx context.Context, id string, authInfo *AuthInfo, cache interface{}) (bool, error))
+	memberResolver           map[string](func(ctx context.Context, groupType string, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error))
 	skipAuthIfAuthJwtMissing bool
 }
 
@@ -64,7 +64,7 @@ func New(roles []*Role) *Authz {
 	a := &Authz{
 		permissionsMap: map[string](map[string]bool){},
 		rolesMap:       map[string](map[string]bool){},
-		memberResolver: map[string](func(ctx context.Context, id string, authInfo *AuthInfo, cache interface{}) (bool, error)){},
+		memberResolver: map[string](func(ctx context.Context, groupType string, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error)){},
 	}
 	rolesMap := map[string]*Role{}
 	for _, role := range roles {
@@ -117,7 +117,7 @@ func (a *Authz) WithPolicyReader(policyReader func(ctx context.Context, resource
 // Group type of "user" and "serviceAccount" are reserved and should not be used.
 // Results are cached per Authorize/GetRoles call, so if you need to resolve the same group multiple times, it will only be resolved once.
 // The cache argument is passed to your policy reader function from the cache argument your program passes to the Authorize,AuthorizeFromResources,GetRoles,GetRolesFromResources,GetPermissions and GetPermissionsFromResources methods.
-func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error)) *Authz {
+func (a *Authz) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupType string, groupId string, authInfo *AuthInfo, cache interface{}) (bool, error)) *Authz {
 	a.memberResolver[groupType] = resolver
 	return a
 }
@@ -198,7 +198,7 @@ func (a *Authz) isMember(ctx context.Context, authInfo *AuthInfo, member string,
 					return cachedRes, nil
 				} else {
 
-					isMember, err := resolver(ctx, id, authInfo, resolverData)
+					isMember, err := resolver(ctx, groupType, id, authInfo, resolverData)
 					if err != nil {
 						return false, err
 					}
