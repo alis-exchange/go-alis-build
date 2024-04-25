@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -363,4 +364,30 @@ func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []str
 		policies = append(policies, policy)
 	}
 	return a.GetPermissions(ctx, policies, permissions)
+}
+
+// SetPolicy first retrieves the current policy and if it exists it ensures the new policy's etag is the same as the current.
+// It also generates a new etag.
+func (a *Authz) SetPolicy(ctx context.Context, resource string, policy *iampb.Policy, cache interface{}) (*iampb.Policy, error) {
+	currentPolicy, err := a.policyReader(ctx, resource, cache)
+	if err != nil {
+		// return error if not found error
+		if status.Code(err) != codes.NotFound {
+			return nil, err
+		}
+	}
+	if currentPolicy != nil {
+		// If the etag is not empty, it must match the current etag.
+		// Otherwise, if no etag is specified and the current policy has an etag, it is an error and the
+		// etag should be provided
+		if string(policy.Etag) != "" && string(policy.Etag) != string(currentPolicy.Etag) {
+			return nil, status.Errorf(codes.FailedPrecondition, "policy has changed since last read")
+		} else if string(policy.Etag) == "" && string(currentPolicy.Etag) != "" {
+			return nil, status.Errorf(codes.FailedPrecondition, "etag is required for existing policies but was not specified")
+		}
+	}
+
+	// now set etag to random string
+	policy.Etag = []byte(uuid.New().String())
+	return policy, nil
 }
