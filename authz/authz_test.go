@@ -221,7 +221,7 @@ func TestAuthz_isMember(t *testing.T) {
 	memberCache := map[string]bool{}
 
 	cache := &Cache{}
-	isMember, err := az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
+	isMember, err := az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected true, got false")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:janGroup", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:janGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected false, got true")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestAuthz_isMember(t *testing.T) {
 	}
 
 	// do danielGroup again to check caching
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAuthz_isMember(t *testing.T) {
 	}
 
 	// do builders again to check caching
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:123"}, "builders", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestAuthz_isMember(t *testing.T) {
 	}
 
 	// now do user:456
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:janGroup", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:janGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestAuthz_isMember(t *testing.T) {
 		t.Errorf("Expected true, got false")
 	}
 
-	isMember, err = az.isMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:danielGroup", memberCache, cache)
+	isMember, err = az.IsMember(context.Background(), &AuthInfo{PolicyMember: "user:456"}, "builders:danielGroup", memberCache, cache)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
