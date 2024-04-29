@@ -182,7 +182,7 @@ func (a *Authz) Authorize(ctx context.Context, permission string, policies []*ia
 	return authInfo, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
 }
 
-func (a *Authz) IsMember(ctx context.Context, authInfo *AuthInfo, member string, memberCache map[string]bool, resolverData interface{}) (bool, error) {
+func (a *Authz) IsMember(ctx context.Context, authInfo *AuthInfo, member string, memberCache map[string]bool, cache interface{}) (bool, error) {
 	if member == authInfo.PolicyMember {
 		return true, nil
 	} else {
@@ -199,7 +199,7 @@ func (a *Authz) IsMember(ctx context.Context, authInfo *AuthInfo, member string,
 					return cachedRes, nil
 				} else {
 
-					isMember, err := resolver(ctx, groupType, id, authInfo, resolverData)
+					isMember, err := resolver(ctx, groupType, id, authInfo, cache)
 					if err != nil {
 						return false, err
 					}
@@ -330,15 +330,23 @@ func (a *Authz) AddRequesterJwtToOutgoingCtx(ctx context.Context) (context.Conte
 // GetPermissions extracts the principal from the incoming context, also accomodating for IAP and ESPv2 forwarded JWT tokens.
 // It then determines which permissions the principal has, based on the roles provided in the New method.
 // Use this for implementing TestIamPermissions in your grpc service.
-func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy, permissions []string) []string {
+// Note if the list of permissions is empty, all permissions will be returned.
+func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy, permissions []string, cache interface{}) ([]string, error) {
 	authInfo, _ := getAuthInfoWithoutRoles(ctx, a.superAdmins)
 	permSet := map[string]bool{}
+	membersMap := map[string]bool{}
 	for _, policy := range policies {
 		if policy != nil {
 			for _, binding := range policy.Bindings {
-				if sliceContains(binding.GetMembers(), authInfo.PolicyMember) {
-					for permission := range a.rolesMap[binding.GetRole()] {
-						permSet[permission] = true
+				for _, member := range binding.GetMembers() {
+					isMember, err := a.IsMember(ctx, authInfo, member, membersMap, cache)
+					if err != nil {
+						return nil, status.Errorf(codes.Internal, "unable to resolve group membership for member %s: %s", member, err)
+					}
+					if isMember {
+						for permission := range a.rolesMap[binding.GetRole()] {
+							permSet[permission] = true
+						}
 					}
 				}
 			}
@@ -350,11 +358,12 @@ func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy, pe
 			perms = append(perms, perm)
 		}
 	}
-	return perms
+	return perms, nil
 }
 
 // GetPermissionsFromResources does the exact same thing as GetPermissions, except that it also retrieves the policies for the resources
-func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []string, permissions []string, cache interface{}) []string {
+// Note if the list of permissions is empty, all permissions will be returned.
+func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []string, permissions []string, cache interface{}) ([]string, error) {
 	var policies []*iampb.Policy
 	for _, resource := range resources {
 		policy, err := a.policyReader(ctx, resource, cache)
@@ -363,7 +372,7 @@ func (a *Authz) GetPermissionsFromResources(ctx context.Context, resources []str
 		}
 		policies = append(policies, policy)
 	}
-	return a.GetPermissions(ctx, policies, permissions)
+	return a.GetPermissions(ctx, policies, permissions, cache)
 }
 
 func (a *Authz) GetRequesterAuthInfo(ctx context.Context) (*AuthInfo, error) {
