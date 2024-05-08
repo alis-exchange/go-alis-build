@@ -35,9 +35,9 @@ type ReadOptions struct {
 	// SortColumns is a map of column names and their respective sort order.
 	SortColumns map[string]SortOrder
 	// Limit is the maximum number of rows to read.
-	Limit int
+	Limit int32
 	// Offset is the number of rows to skip before reading.
-	Offset int
+	Offset int32
 }
 
 /*
