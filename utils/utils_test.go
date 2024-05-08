@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -73,6 +74,35 @@ func TestContainsInt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := Contains(tt.args.s, tt.args.searchTerm); got != tt.want {
 				t.Errorf("Contains() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTransform(t *testing.T) {
+	type args[T any, U any] struct {
+		arr []T
+		fn  func(T) U
+	}
+	type testCase[T any, U any] struct {
+		name string
+		args args[T, U]
+		want []U
+	}
+	tests := []testCase[int, int]{
+		{
+			name: "Int:Double",
+			args: args[int, int]{
+				arr: []int{1, 2, 3},
+				fn:  func(i int) int { return i * 2 },
+			},
+			want: []int{2, 4, 6},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Transform(tt.args.arr, tt.args.fn); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Transform() = %v, want %v", got, tt.want)
 			}
 		})
 	}
