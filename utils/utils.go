@@ -17,10 +17,133 @@ func Contains[T comparable](s []T, searchTerm T) bool {
 //
 //	ints := []int{1, 2, 3}
 //	doubled := Transform(ints, func(i int) int { return i * 2 })
+//	// doubled = [2, 4, 6]
 func Transform[T, U any](arr []T, fn func(T) U) []U {
 	result := make([]U, len(arr))
 	for i, v := range arr {
 		result[i] = fn(v)
+	}
+	return result
+}
+
+// Find is a utility function for finding the first element in a slice that satisfies a given predicate.
+//
+// It takes a slice and a predicate function as arguments. The predicate function should return true if the
+// element satisfies the condition, and false otherwise.
+//
+// It returns the element, its index, and a boolean indicating whether the element was found.
+// If the element is not found, it returns the zero value of type T, -1, and false.
+//
+// For example, you can use it to find the first even number in a slice of integers:
+//
+//	ints := []int{1, 2, 3, 4, 5}
+//	even, index, found := Find(ints, func(i int) bool { return i%2 == 0 })
+//	// even = 2, index = 1, found = true
+func Find[T any](arr []T, fn func(T) bool) (T, int, bool) {
+	var zero T // zero value of type T
+	for i, v := range arr {
+		if fn(v) {
+			return v, i, true
+		}
+	}
+	return zero, -1, false
+}
+
+// Filter is a utility function for filtering elements that satisfy a given predicate from a slice.
+//
+// It takes a slice and a predicate function as arguments. The predicate function should return true if the
+// element satisfies the condition, and false otherwise.
+//
+// It returns a new slice containing only the elements that satisfy the condition.
+func Filter[T any](arr []T, fn func(T) bool) []T {
+	var result []T
+	for _, v := range arr {
+		if fn(v) {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// Reduce is a utility function for reducing a slice to a single value.
+//
+// It takes a slice, a reducer function, and an initial value as arguments. The reducer function should take
+// two arguments of the same type as the elements of the slice and return a single value of the same type.
+//
+// It returns the final reduced value.
+func Reduce[T any, R any](arr []T, fn func(R, T) R, initial R) R {
+	result := initial
+	for _, v := range arr {
+		result = fn(result, v)
+	}
+	return result
+}
+
+// Chunk is a utility function for splitting a slice into chunks of a given size.
+//
+// It takes a slice and a chunk size as arguments and returns a slice of slices, where each slice has at most
+// the given chunk size.
+//
+// For example, you can use it to split a slice of integers into chunks of size 2:
+//
+//	ints := []int{1, 2, 3, 4, 5}
+//	chunks := Chunk(ints, 2)
+//	// chunks = [[1, 2], [3, 4], [5]]
+func Chunk[T any](arr []T, size int) [][]T {
+	if size <= 0 {
+		return nil
+	}
+	var result [][]T
+	for size < len(arr) {
+		arr, result = arr[size:], append(result, arr[0:size:size])
+	}
+	result = append(result, arr)
+	return result
+}
+
+// Unique is a utility function for removing duplicate elements from a slice.
+//
+// It takes a slice as an argument and returns a new slice containing only the unique elements in the original slice.
+//
+// The elements in the slice must be comparable.
+//
+// For example, you can use it to remove duplicate integers from a slice:
+//
+//	ints := []int{1, 2, 2, 3, 3, 3}
+//	uniqueInts := Unique(ints)
+//	// uniqueInts = [1, 2, 3]
+func Unique[T comparable](arr []T) []T {
+	m := make(map[T]bool)
+	var result []T
+	for _, v := range arr {
+		if !m[v] {
+			m[v] = true
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// GroupBy is a utility function for grouping elements of a slice by a key function.
+//
+// It takes a slice and a key function as arguments and returns a map where the keys are the result of applying
+// the key function to the elements of the slice, and the values are slices of elements that have the same key.
+//
+// For example, you can use it to group a slice of integers by their parity:
+//
+//	ints := []int{1, 2, 3, 4, 5}
+//	grouped := GroupBy(ints, func(i int) string {
+//		if i%2 == 0 {
+//			return "even"
+//		}
+//		return "odd"
+//	})
+//	// grouped = map[string][]int{"even": [2, 4], "odd": [1, 3, 5]}
+func GroupBy[T any, K comparable](arr []T, fn func(T) K) map[K][]T {
+	result := make(map[K][]T)
+	for _, v := range arr {
+		key := fn(v)
+		result[key] = append(result[key], v)
 	}
 	return result
 }
