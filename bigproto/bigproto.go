@@ -113,6 +113,12 @@ func SetupAndUseBigtableEmulator(googleProject string, bigTableInstance string, 
 	}
 }
 
+// Table returns the underlying bigtable.Table. This opens up the possibility of using the bigtable client directly
+// for more advanced operations that are not covered by the bigproto package.
+func (b *BigProto) Table() *bigtable.Table {
+	return b.table
+}
+
 // WriteProto writes the provided proto message to Bigtable by marshaling it to bytes and storing the data at the given
 // row key, and column family.
 func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily string, message proto.Message) error {
@@ -388,6 +394,14 @@ func (b *BigProto) WriteMutation(ctx context.Context, rowKey string, mut *bigtab
 		return err
 	}
 	return nil
+}
+
+// BatchWriteMutations writes multiple mutations to bigtable at the given row keys. This allows for more custom write functionality to
+// be implemented on the rows that are written. This is useful for writing multiple columns to a row, or writing a row
+// with a filter. It also allows for things like "Source Prioritisation" whereby data may be duplicated across column
+// families for different sources and the sources are used in order of prior
+func (b *BigProto) BatchWriteMutations(ctx context.Context, rowKeys []string, muts []*bigtable.Mutation, opts ...bigtable.ApplyOption) ([]error, error) {
+	return b.table.ApplyBulk(ctx, rowKeys, muts, opts...)
 }
 
 // DeleteRow deletes an entire row from bigtable at the given rowKey.
