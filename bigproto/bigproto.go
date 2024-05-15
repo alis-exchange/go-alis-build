@@ -371,9 +371,9 @@ func (b *BigProto) BatchUpdateProtos(ctx context.Context, rowKeys []string, colu
 // implemented on the row that is returned. This is useful for reading multiple columns from a row, or reading a row
 // with a filter. It also allows for things like "Source Prioritisation" whereby data may be duplicated across column
 // families for different sources and the sources are used in order of prior
-func (b *BigProto) ReadRow(ctx context.Context, rowKey string) (bigtable.Row, error) {
+func (b *BigProto) ReadRow(ctx context.Context, rowKey string, opts ...bigtable.ReadOption) (bigtable.Row, error) {
 	// retrieve the resource from bigtable
-	row, err := b.table.ReadRow(ctx, rowKey)
+	row, err := b.table.ReadRow(ctx, rowKey, opts...)
 	if err != nil {
 		return nil, err
 	}
