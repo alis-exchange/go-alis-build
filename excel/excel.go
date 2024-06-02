@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/genproto/googleapis/type/date"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 //go:embed script_lab.tmpl
@@ -249,6 +250,33 @@ func DateValue(x *date.Date, format string) formattedNumber {
 	}
 }
 
+// TimestampValue is a helper function to generate a Date cell with a specified format.
+//
+// Format examples, for the value 31 January 1980 14h11 33 seconds
+//   - yyyyy-mm-dd hh:mm:ss -> 1980-01-31 14:11:33
+//   - yyyy-mm-dd -> 1980-01-31
+//   - d mmm yyyy -> 31 Jan 1980
+//   - d mmmm yyyy, dddd -> 31 January 1980, Saturday
+//
+// https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
+func TimestampValue(x *timestamppb.Timestamp, format string) formattedNumber {
+	// First convert the Date object to number of days since 1900
+	baseTime := time.Date(1900, 1, -1, 0, 0, 0, 0, time.UTC)
+	xTime := x.AsTime()
+
+	// Calculate duration between dates
+	duration := xTime.Sub(baseTime)
+
+	// Excel stores time as decimal fractions of a day, we'll be using nano second resulution.
+	seconds := float64(duration.Nanoseconds()) / (24 * 60 * 60 * 1000000000.0)
+
+	return formattedNumber{
+		Type:         "FormattedNumber",
+		Value:        seconds,
+		NumberFormat: format,
+	}
+}
+
 // ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
 func (f formattedNumber) ToJSON() ([]byte, error) {
 	jsonBytes, err := json.Marshal(f)
@@ -366,6 +394,14 @@ func DoubleValue(x float64) doubleCellValue {
 	return doubleCellValue{
 		Type:  "Double",
 		Value: x,
+	}
+}
+
+// IntegerValue is a helper function to generate a DoubleCellValue object for a provided Integer type.
+func IntegerValue(x int) doubleCellValue {
+	return doubleCellValue{
+		Type:  "Double",
+		Value: float64(x),
 	}
 }
 
