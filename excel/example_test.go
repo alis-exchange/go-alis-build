@@ -9,7 +9,7 @@ func ExampleEntityValue() {
 	e := excel.EntityValue(
 		"Card Top Title",
 		map[string]excel.CellValue{
-			"Total Amount": excel.DoubleValue(7777.77),
+			"Total Amount": excel.Double(7777.77),
 			"Price":        excel.FormattedNumber(55.40, "$0.00"),
 			"Validated":    excel.BoolValue(true),
 			"Owner":        excel.StringValue("Jan Krynauw"),

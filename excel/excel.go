@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/genproto/googleapis/type/date"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 //go:embed script_lab.tmpl
@@ -135,13 +136,21 @@ type Provider struct {
 
 // Entity is a helper function to generate a new EntityCellValue object, i.e. an Excel Card.
 func EntityValue(text string, properties map[string]CellValue, layouts *Layouts, provider *Provider) entityCellValue {
-	return entityCellValue{
+	res := entityCellValue{
 		Type:       "Entity",
 		Text:       text,
 		Properties: properties,
-		Layouts:    layouts,
-		Provider:   provider,
 	}
+
+	if layouts != nil {
+		res.Layouts = layouts
+	}
+
+	if provider != nil {
+		res.Provider = provider
+	}
+
+	return res
 }
 
 // ToJSON marshals the CellValue object to a JSON object ready for use by MS Excel.
@@ -220,6 +229,29 @@ func FormattedNumber(x float64, format string) formattedNumber {
 		Type:         "FormattedNumber",
 		Value:        x,
 		NumberFormat: format,
+	}
+}
+
+// FormattedNumber is a helper function to generate a FormattedCellValue object.
+//
+// Format examples, for the value 1234.56
+//   - $0.00 -> $1234.56
+//   - $# ##0.00 -> $1 234.56
+//   - $ # -> $ 1234
+//   - "[Blue]#,##0.00_);[Red](#,##0.00);0.00;" -> 1,234.56 (in blue)
+//
+// https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5
+func FormattedNumberValue(x *wrapperspb.DoubleValue, format string) formattedNumber {
+	if x != nil {
+		return formattedNumber{
+			Type:         "FormattedNumber",
+			Value:        x.GetValue(),
+			NumberFormat: format,
+		}
+	} else {
+		return formattedNumber{
+			Type: "NotAvailable",
+		}
 	}
 }
 
@@ -390,18 +422,62 @@ type doubleCellValue struct {
 }
 
 // DoubleValue is a helper function to generate a DoubleCellValue object
-func DoubleValue(x float64) doubleCellValue {
+func Double(x float64) doubleCellValue {
 	return doubleCellValue{
 		Type:  "Double",
 		Value: x,
 	}
 }
 
-// IntegerValue is a helper function to generate a DoubleCellValue object for a provided Integer type.
-func IntegerValue(x int) doubleCellValue {
+// DoubleWrapper is a helper function to generate a DoubleCellValue object
+func DoubleValue(x *wrapperspb.DoubleValue) doubleCellValue {
+	if x != nil {
+		return doubleCellValue{
+			Type:  "Double",
+			Value: x.GetValue(),
+		}
+	} else {
+		return doubleCellValue{
+			Type: "NotAvailable",
+		}
+	}
+}
+
+// Int is a helper function to generate a DoubleCellValue object for a provided Integer type.
+func Int(x int) doubleCellValue {
 	return doubleCellValue{
 		Type:  "Double",
 		Value: float64(x),
+	}
+}
+
+// Int32 is a helper function to generate a DoubleCellValue object for a provided Integer type.
+func Int32(x int32) doubleCellValue {
+	return doubleCellValue{
+		Type:  "Double",
+		Value: float64(x),
+	}
+}
+
+// Int64 is a helper function to generate a DoubleCellValue object for a provided Integer type.
+func Int64(x int64) doubleCellValue {
+	return doubleCellValue{
+		Type:  "Double",
+		Value: float64(x),
+	}
+}
+
+// Int32Value is a helper function to generate a DoubleCellValue object for a provided Integer type.
+func Int32Value(x *wrapperspb.Int32Value) doubleCellValue {
+	if x != nil {
+		return doubleCellValue{
+			Type:  "Double",
+			Value: float64(x.GetValue()),
+		}
+	} else {
+		return doubleCellValue{
+			Type: "NotAvailable",
+		}
 	}
 }
 
@@ -434,15 +510,21 @@ func (d doubleCellValue) ToScriptLabYAML() (string, error) {
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.arraycellvalue
 type arrayCellValue struct {
 	Type     string        `json:"type"`
-	Elements [][]CellValue `json:"elements"`
+	Elements [][]CellValue `json:"elements,omitempty"`
 }
 
 // ArrayValue is a helper function to generate a ArrayCellValue object
 // This ArrayValue may not contain an ArrayValue (i.e. list of a list)
 func ArrayValue(elements [][]CellValue) arrayCellValue {
-	return arrayCellValue{
-		Type:     "Array",
-		Elements: elements,
+	if len(elements) > 0 {
+		return arrayCellValue{
+			Type:     "Array",
+			Elements: elements,
+		}
+	} else {
+		return arrayCellValue{
+			Type: "NotAvailable",
+		}
 	}
 }
 
@@ -474,15 +556,13 @@ func (a arrayCellValue) ToScriptLabYAML() (string, error) {
 // BooleanCellValue The Excel.BooleanCellValue interface as defined at
 // https://learn.microsoft.com/en-us/javascript/api/excel/excel.emptycellvalue
 type emptyCellValue struct {
-	Type  string `json:"type"`
-	Value string `json:"basicValue"`
+	Type string `json:"type"`
 }
 
 // EmptyValue is a helper function to generate a EmptyCellValue object
 func EmptyValue() emptyCellValue {
 	return emptyCellValue{
-		Type:  "String",
-		Value: "",
+		Type: "NotAvailable",
 	}
 }
 
