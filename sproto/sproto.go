@@ -133,6 +133,111 @@ func (s *Sproto) ReadProto(ctx context.Context, tableName string, rowKey spanner
 }
 
 /*
+BatchReadProtos reads multiple proto messages from the specified table using the provided row keys and column name.
+
+The row keys are tuples of the rows' primary keys values and are used to identify the rows to read.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+The column name is used to specify the column where the proto messages are stored.
+The column must be of type PROTO.
+
+The method returns a slice of proto messages.
+*/
+func (s *Sproto) BatchReadProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnName string, message proto.Message, readMask *fieldmaskpb.FieldMask) ([]proto.Message, error) {
+	// Get the primary key columns
+	primaryKeyColumns, err := getPrimaryKeyColumns(ctx, s.client, tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the row key values using the length
+	for i, rowKey := range rowKeys {
+		primaryKeyValues := make([]interface{}, len(rowKey))
+		for i := 0; i < len(rowKey); i++ {
+			primaryKeyValues[i] = rowKey[i]
+		}
+
+		// Ensure the length of the row key matches the length of the primary key columns
+		if len(primaryKeyColumns) != len(primaryKeyValues) {
+			return nil, fmt.Errorf("row key length at rowKeys[%d] does not match the primary key columns length", i)
+		}
+	}
+
+	// Create a map of row key to its index
+	rowKeyToIndex := make(map[string]int)
+	for i, rowKey := range rowKeys {
+		var rowKeyParts []string
+		for _, d := range rowKey {
+			rowKeyParts = append(rowKeyParts, fmt.Sprintf("%v", d))
+		}
+		rowKeyToIndex[strings.Join(rowKeyParts, "-")] = i
+	}
+
+	// Construct spanner key sets
+	keySets := make([]spanner.KeySet, len(rowKeys))
+	for i, key := range rowKeys {
+		keySets[i] = key
+	}
+
+	var columns []string
+	columns = append(columns, primaryKeyColumns...)
+	columns = append(columns, columnName)
+
+	// Read the rows from the specified table
+	it := s.client.Single().Read(ctx, tableName, spanner.KeySets(keySets...), columns)
+	defer it.Stop()
+
+	// Iterate over the rows and construct the result
+	res := make([]proto.Message, len(rowKeys))
+	for {
+		row, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var rowKeyParts []string
+		for i := range primaryKeyColumns {
+			columnValue := parseStructPbValue(row.ColumnValue(i))
+
+			rowKeyParts = append(rowKeyParts, fmt.Sprintf("%v", columnValue))
+		}
+
+		// Get the column value as bytes
+		var dataBytes []byte
+		err = row.ColumnByName(columnName, &dataBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		// Unmarshal the bytes into the provided proto message
+		newMessage := newEmptyMessage(message)
+		err = proto.Unmarshal(dataBytes, newMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply Read Mask if provided
+		if readMask != nil {
+			readMask.Normalize()
+			// Ensure readMask is valid
+			if !readMask.IsValid(newMessage) {
+				return nil, ErrInvalidFieldMask
+			}
+			// Redact the request according to the provided field mask.
+			fmutils.Filter(newMessage, readMask.GetPaths())
+		}
+
+		res[rowKeyToIndex[strings.Join(rowKeyParts, "-")]] = newMessage
+	}
+
+	return res, nil
+}
+
+/*
 WriteProto writes a provided proto message to the provided table.
 
 The row key is a tuple of the row's primary keys values and is used to identify the row to write.
@@ -142,8 +247,9 @@ For example if the primary key is (id, name), the row key must be spanner.Key{{i
 The column name is used to specify the column where the proto message will be stored.
 This is still required even if it is included in the row key.
 
-The proto message will be serialized to bytes and stored in the specified column.
-The column must be of type BYTES.
+The proto message will be stored as is in the specified column.
+The column's type must match the full message name including the proto package.
+See https://cloud.google.com/spanner/docs/reference/standard-sql/protocol-buffers
 */
 func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message) error {
 	// Get the primary key columns
@@ -168,14 +274,10 @@ func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanne
 	for i, column := range primaryKeyColumns {
 		row[column] = primaryKeyValues[i]
 	}
-	// Marshal the proto message to bytes
-	protoBytes, err := proto.Marshal(message)
-	if err != nil {
-		return err
-	}
-	// Add the proto bytes to the row
+
+	// Add the message to the row
 	// This will overwrite the existing value if it exists
-	row[columnName] = protoBytes
+	row[columnName] = message
 
 	// Construct columns and values from the provided row
 	columns := make([]string, 0, len(row))
@@ -197,6 +299,322 @@ func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanne
 }
 
 /*
+ListProtos lists all proto messages from the specified table using the provided column name.
+
+The column name is used to specify the column where the proto messages are stored.
+The column must be of type PROTO.
+
+The method returns a slice of proto messages.
+*/
+func (s *Sproto) ListProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) ([]proto.Message, error) {
+	// Read the proto message from the specified table
+	it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.AllKeys(), []string{columnName}, opts)
+	defer it.Stop()
+
+	// Iterate over the rows and construct the result
+	var res []proto.Message
+	for {
+		row, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Get the column value as bytes
+		var dataBytes []byte
+		err = row.Columns(&dataBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		// Unmarshal the bytes into the provided proto message
+		newMessage := newEmptyMessage(message)
+		err = proto.Unmarshal(dataBytes, newMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		res = append(res, newMessage)
+	}
+
+	return res, nil
+}
+
+/*
+StreamProtos streams proto messages from the specified table using the provided column name.
+
+The column name is used to specify the column where the proto messages are stored.
+The column must be of type PROTO.
+
+The method returns a StreamResponse[proto.Message] which can be used to iterate over the proto messages.
+Call Next() on the StreamResponse to get the next item from the stream.
+Remember to check for io.EOF to determine when the stream is closed.
+*/
+func (s *Sproto) StreamProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) *StreamResponse[proto.Message] {
+
+	// Iterate over the rows and construct the result
+	res := NewStreamResponse[proto.Message]()
+
+	go func() {
+		// Read the proto message from the specified table
+		it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.AllKeys(), []string{columnName}, opts)
+		defer it.Stop()
+
+		for {
+			row, err := it.Next()
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			// Get the column value as bytes
+			var dataBytes []byte
+			err = row.Columns(&dataBytes)
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			// Unmarshal the bytes into the provided proto message
+			newMessage := newEmptyMessage(message)
+			err = proto.Unmarshal(dataBytes, newMessage)
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			res.addItem(&newMessage)
+		}
+
+		// Wait for wg
+		res.wait()
+		// Close channel
+		res.close()
+	}()
+
+	return res
+}
+
+/*
+QueryProtos reads multiple protos from the specified table using the provided column names and filtering condition.
+
+The column names are used to specify the columns where the proto messages are stored.
+Each column name must have a corresponding proto message in the messages slice at the same index.
+Specified columns must be of type PROTO.
+
+The filter is a SQL statement that is used to filter the rows to read. The statement should not include the WHERE keyword.
+The filter can include placeholders for parameters.
+The parameters are provided as a map where the key is the parameter name and the value is the parameter value.
+An example of a filter statement with parameters is "proto_column.name = @name" where "name" is the parameter name.
+Keep in mind that GoogleSQL uses parameters(@) whereas PostgreSQL uses placeholders($).
+
+Opts can be used to specify sorting, limiting and offsetting conditions.
+
+The method returns a map of column names and their respective values where the key is the column name and the value is a slice of the proto messages.
+*/
+func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) (map[string][]proto.Message, error) {
+	// Ensure length of column names matches the length of messages
+	if len(columnNames) != len(messages) {
+		return nil, fmt.Errorf("column names length does not match the messages length")
+	}
+
+	// Construct the query
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(columnNames, ","), tableName)
+	params := map[string]interface{}{}
+	// Add filtering condition if provided
+	if filter != nil && filter.SQL != "" {
+		query += " WHERE " + filter.SQL
+		if filter.Params != nil && len(filter.Params) > 0 {
+			params = filter.Params
+		}
+	}
+	// Add sorting conditions if provided
+	if opts != nil && opts.SortColumns != nil && len(opts.SortColumns) > 0 {
+		query += " ORDER BY "
+
+		sortColumns := make([]string, 0, len(opts.SortColumns))
+		for column, order := range opts.SortColumns {
+			sortColumns = append(sortColumns, fmt.Sprintf("%s %s", column, order.String()))
+		}
+
+		query += strings.Join(sortColumns, ", ")
+	}
+	// Add limit if provided
+	if opts != nil && opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
+	}
+	// Add offset if provided
+	if opts != nil && opts.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	}
+
+	// Create a map of column names and their respective proto messages
+	columnToMessage := make(map[string]proto.Message)
+	for i, columnName := range columnNames {
+		columnToMessage[columnName] = messages[i]
+	}
+
+	stmt := spanner.Statement{
+		SQL:    query,
+		Params: params,
+	}
+
+	it := s.client.Single().Query(ctx, stmt)
+	defer it.Stop()
+
+	// Iterate over the rows and construct the result
+	res := make(map[string][]proto.Message)
+	for {
+		row, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		for i, columnName := range row.ColumnNames() {
+			if _, ok := res[columnName]; !ok {
+				res[columnName] = []proto.Message{}
+			}
+
+			var dataBytes []byte
+			if err := row.Column(i, &dataBytes); err != nil {
+				return nil, err
+			}
+
+			// Unmarshal the bytes into the provided proto message
+			newMessage := newEmptyMessage(columnToMessage[columnName])
+			if err := proto.Unmarshal(dataBytes, newMessage); err != nil {
+				return nil, err
+			}
+
+			res[columnName] = append(res[columnName], newMessage)
+		}
+	}
+
+	return res, nil
+}
+
+/*
+StreamQueryProtos streams proto messages from the specified table using the provided column names and filtering condition.
+
+The column names are used to specify the columns where the proto messages are stored.
+Each column name must have a corresponding proto message in the messages slice at the same index.
+Specified columns must be of type PROTO.
+
+The filter is a SQL statement that is used to filter the rows to read. The statement should not include the WHERE keyword.
+The filter can include placeholders for parameters.
+The parameters are provided as a map where the key is the parameter name and the value is the parameter value.
+An example of a filter statement with parameters is "proto_column.name = @name" where "name" is the parameter name.
+Keep in mind that GoogleSQL uses parameters(@) whereas PostgreSQL uses placeholders($).
+
+Opts can be used to specify sorting, limiting and offsetting conditions.
+
+The method returns a StreamResponse[map[string]proto.Message] which can be used to iterate over the proto messages.
+Call Next() on the StreamResponse to get the next item from the stream.
+Remember to check for io.EOF to determine when the stream is closed.
+*/
+func (s *Sproto) StreamQueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) *StreamResponse[map[string]proto.Message] {
+	// Ensure length of column names matches the length of messages
+	if len(columnNames) != len(messages) {
+		res := NewStreamResponse[map[string]proto.Message]()
+		res.setError(fmt.Errorf("column names length does not match the messages length"))
+		return res
+	}
+
+	// Construct the query
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(columnNames, ","), tableName)
+	params := map[string]interface{}{}
+	// Add filtering condition if provided
+	if filter != nil && filter.SQL != "" {
+		query += " WHERE " + filter.SQL
+		if filter.Params != nil && len(filter.Params) > 0 {
+			params = filter.Params
+		}
+	}
+	// Add sorting conditions if provided
+	if opts != nil && opts.SortColumns != nil && len(opts.SortColumns) > 0 {
+		query += " ORDER BY "
+
+		sortColumns := make([]string, 0, len(opts.SortColumns))
+		for column, order := range opts.SortColumns {
+			sortColumns = append(sortColumns, fmt.Sprintf("%s %s", column, order.String()))
+		}
+
+		query += strings.Join(sortColumns, ", ")
+	}
+	// Add limit if provided
+	if opts != nil && opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
+	}
+	// Add offset if provided
+	if opts != nil && opts.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	}
+
+	// Create a map of column names and their respective proto messages
+	columnToMessage := make(map[string]proto.Message)
+	for i, columnName := range columnNames {
+		columnToMessage[columnName] = messages[i]
+	}
+
+	stmt := spanner.Statement{
+		SQL:    query,
+		Params: params,
+	}
+
+	res := NewStreamResponse[map[string]proto.Message]()
+	go func() {
+		it := s.client.Single().Query(ctx, stmt)
+		defer it.Stop()
+
+		for {
+			row, err := it.Next()
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			rowMap := make(map[string]proto.Message)
+			for i, columnName := range row.ColumnNames() {
+				var dataBytes []byte
+				if err := row.Column(i, &dataBytes); err != nil {
+					res.setError(err)
+					return
+				}
+
+				// Unmarshal the bytes into the provided proto message
+				newMessage := newEmptyMessage(columnToMessage[columnName])
+				if err := proto.Unmarshal(dataBytes, newMessage); err != nil {
+					res.setError(err)
+					return
+				}
+
+				rowMap[columnName] = newMessage
+			}
+
+			res.addItem(&rowMap)
+		}
+
+		// Wait for wg
+		res.wait()
+		// Close channel
+		res.close()
+	}()
+
+	return res
+}
+
+/*
 BatchWriteProtos writes multiple proto messages to the provided table.
 
 The row keys are tuples of the rows' primary keys values and are used to identify the rows to write.
@@ -208,7 +626,7 @@ The column names are used to specify the columns where the proto messages will b
 The column names must match the length of the messages and are a 1-to-1 mapping. Index i of the column names corresponds to index i of the messages.
 
 The proto messages will be serialized to bytes and stored in the specified columns.
-The columns must be of type BYTES.
+The columns must be of type PROTO.
 */
 func (s *Sproto) BatchWriteProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnNames []string, messages []proto.Message) error {
 	// Ensure the length of the row keys matches the length of the messages
@@ -245,14 +663,11 @@ func (s *Sproto) BatchWriteProtos(ctx context.Context, tableName string, rowKeys
 		}
 		// Marshal the proto message to bytes
 		message := messages[i]
-		protoBytes, err := proto.Marshal(message)
-		if err != nil {
-			return err
-		}
+
 		// Add the proto bytes to the row
 		// This will overwrite the existing value if it exists
 		columnName := columnNames[i]
-		row[columnName] = protoBytes
+		row[columnName] = message
 
 		// Construct columns and values from the provided row
 		columns := make([]string, 0, len(row))
