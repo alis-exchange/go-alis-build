@@ -6,6 +6,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -89,8 +90,8 @@ func New(roles []*Role) *Authz {
 // Super admins do not need to be members of any role to have access.
 // Super admins can forward authorization of other users in the x-forwarded-authorization header.
 // Super admins might have special permissions in your business logic (can call List methods without providing a parent)
-// Each needs to be prefixed by 'user:' or 'serviceAccount:' for example:
-// ["user:10.....297", "serviceAccount:10246.....354"]
+// Supported formats are the email or "user:{id}" or "serviceAccount:{id}".
+// E.g. ["user:10.....297", "serviceAccount:10246.....354","johndoe@gmail.com"]
 // It is recommended to only use the service accounts of your product deployment as super admins, and not individual users.
 func (a *Authz) WithSuperAdmins(superAdmins []string) *Authz {
 	a.superAdmins = superAdmins
@@ -354,7 +355,7 @@ func (a *Authz) GetPermissions(ctx context.Context, policies []*iampb.Policy, pe
 	}
 	perms := []string{}
 	for perm := range permSet {
-		if len(permissions) == 0 || sliceContains(permissions, perm) {
+		if len(permissions) == 0 || slices.Contains(permissions, perm) {
 			perms = append(perms, perm)
 		}
 	}

@@ -5,6 +5,7 @@ go 1.22
 require (
 	cloud.google.com/go/iam v1.1.6
 	github.com/google/uuid v1.6.0
+	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
 	google.golang.org/grpc v1.62.0
 )
 

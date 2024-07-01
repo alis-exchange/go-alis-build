@@ -95,7 +95,7 @@ func getAuthInfoWithoutRolesFromJwtHeader(ctx context.Context, header string, su
 		} else {
 			authInfo.PolicyMember = "user:" + authInfo.Id
 		}
-		authInfo.IsSuperAdmin = sliceContains(superAdmins, authInfo.PolicyMember)
+		authInfo.IsSuperAdmin = sliceContains(superAdmins, authInfo.PolicyMember, authInfo.Email)
 		return authInfo, nil
 
 	} else {
@@ -103,9 +103,9 @@ func getAuthInfoWithoutRolesFromJwtHeader(ctx context.Context, header string, su
 	}
 }
 
-func sliceContains(stringSlice []string, search string) bool {
+func sliceContains(stringSlice []string, search1 string, search2 string) bool {
 	for _, s := range stringSlice {
-		if s == search {
+		if s == search1 || s == search2 {
 			return true
 		}
 	}
