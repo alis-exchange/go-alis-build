@@ -60,9 +60,14 @@ func New(client *spanner.Client) *Sproto {
 
 /*
 NewClient creates a new Sproto instance with the provided Google Cloud Spanner configuration.
+Leave databaseRole empty if you are not using fine grained roles on the database.
 */
-func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName string) (*Sproto, error) {
-	spannerClient, err := spanner.NewClient(ctx, fmt.Sprintf("projects/%s/instances/%s/databases/%s", googleProject, spannerInstance, databaseName))
+func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName, databaseRole string) (*Sproto, error) {
+	clientConfig := spanner.ClientConfig{}
+	if databaseRole != "" {
+		clientConfig.DatabaseRole = databaseRole
+	}
+	spannerClient, err := spanner.NewClientWithConfig(ctx, fmt.Sprintf("projects/%s/instances/%s/databases/%s", googleProject, spannerInstance, databaseName), clientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +159,7 @@ func (s *Sproto) BatchReadProtos(ctx context.Context, tableName string, rowKeys 
 	// Get the row key values using the length
 	for i, rowKey := range rowKeys {
 		primaryKeyValues := make([]interface{}, len(rowKey))
-		for i := 0; i < len(rowKey); i++ {
-			primaryKeyValues[i] = rowKey[i]
-		}
+		copy(primaryKeyValues, rowKey)
 
 		// Ensure the length of the row key matches the length of the primary key columns
 		if len(primaryKeyColumns) != len(primaryKeyValues) {
@@ -260,9 +263,7 @@ func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanne
 
 	// Get the row key values using the length
 	primaryKeyValues := make([]interface{}, len(rowKey))
-	for i := 0; i < len(rowKey); i++ {
-		primaryKeyValues[i] = rowKey[i]
-	}
+	copy(primaryKeyValues, rowKey)
 
 	// Ensure the length of the row key matches the length of the primary key columns
 	if len(primaryKeyColumns) != len(primaryKeyValues) {
@@ -353,7 +354,6 @@ Call Next() on the StreamResponse to get the next item from the stream.
 Remember to check for io.EOF to determine when the stream is closed.
 */
 func (s *Sproto) StreamProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) *StreamResponse[proto.Message] {
-
 	// Iterate over the rows and construct the result
 	res := NewStreamResponse[proto.Message]()
 
@@ -648,9 +648,7 @@ func (s *Sproto) BatchWriteProtos(ctx context.Context, tableName string, rowKeys
 	for i, rowKey := range rowKeys {
 		// Get the row key values using the length
 		primaryKeyValues := make([]interface{}, len(rowKey))
-		for i := 0; i < len(rowKey); i++ {
-			primaryKeyValues[i] = rowKey[i]
-		}
+		copy(primaryKeyValues, rowKey)
 
 		// Ensure the length of the row key matches the length of the primary key columns
 		if len(primaryKeyColumns) != len(primaryKeyValues) {
@@ -700,7 +698,6 @@ The column name is used to specify the column where the proto message will be st
 This is still required even if it is included in the row key.
 */
 func (s *Sproto) UpdateProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
-
 	// Retrieve the current resource from the database
 	currentMessage := newEmptyMessage(message)
 	err := s.ReadProto(ctx, tableName, rowKey, columnName, currentMessage, nil)
@@ -781,7 +778,6 @@ Opts can be used to specify sorting, limiting and offsetting conditions.
 The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
 */
 func (s *Sproto) QueryRows(ctx context.Context, tableName string, columns []string, filter *spanner.Statement, opts *ReadOptions) ([]map[string]interface{}, error) {
-
 	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(columns, ", "), tableName)
 	params := map[string]interface{}{}
 	// Add filtering condition if provided
