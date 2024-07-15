@@ -19,3 +19,5 @@ google.golang.org/protobuf v1.26.0-rc.1/go.mod h1:jlhhOSvTdKEhbULTjvd4ARK9grFBp0
 google.golang.org/protobuf v1.26.0/go.mod h1:9q0QmTI4eRPtz6boOQmLYwt+qCgq0jsYwAQnmE0givc=
 google.golang.org/protobuf v1.33.0 h1:uNO2rsAINq/JlFpSdYEKIZ0uKD/R9cpdv0T+yoGwGmI=
 google.golang.org/protobuf v1.33.0/go.mod h1:c6P6GXX6sHbq/GpV6MGZEdwhWPcYBgnhAHhKbcUYpos=
+internal.os.alis.services/protobuf v1.239.0 h1:iLVpjn355BA16AEPh+63jSC2wz/gVr83ZYdu53W+g8U=
+internal.os.alis.services/protobuf v1.239.0/go.mod h1:10Q99DCiFHusaRCKqz4d7BCCntZhqHU1SnvCzsI0DcI=

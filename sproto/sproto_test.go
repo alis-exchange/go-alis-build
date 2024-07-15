@@ -31,7 +31,7 @@ func init() {
 	TestInstance = os.Getenv("SPANNER_INSTANCE")
 	TestDatabase = os.Getenv("SPANNER_DATABASE")
 
-	client, err := NewClient(context.Background(), TestProject, TestInstance, TestDatabase)
+	client, err := NewClient(context.Background(), TestProject, TestInstance, TestDatabase, "")
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +40,6 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
-
 	flag.BoolVar(&ignoreSetupInTests, "ignoreSetupInTests", true, "Ignore setup in tests")
 
 	// Set up a test database
@@ -188,7 +187,7 @@ func TestNewClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(tt.args.ctx, tt.args.googleProject, tt.args.spannerInstance, tt.args.databaseName)
+			got, err := NewClient(tt.args.ctx, tt.args.googleProject, tt.args.spannerInstance, tt.args.databaseName, "")
 			defer got.Close()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
