@@ -116,6 +116,11 @@ func (c *Client) CreateOperation(ctx *context.Context, opts *CreateOptions) (*lo
 	}
 	op.Name = "operations/" + opts.Id
 
+	// set metadata
+	if opts.Metadata != nil {
+		op.Metadata = opts.Metadata
+	}
+
 	// set column name
 	colName := ParentlessOpColumn
 
