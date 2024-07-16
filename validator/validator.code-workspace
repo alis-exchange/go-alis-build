@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": "."
+    },
+    {
+      "path": "../../alis.build/alis/define/alis/open/validation/v1"
+    },
+    {
+      "path": "../authz"
+    }
+  ],
+  "settings": {}
+}

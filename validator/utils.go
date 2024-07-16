@@ -8,34 +8,57 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func getMsgType(msg protoreflect.ProtoMessage) string {
+func GetMsgType(msg protoreflect.ProtoMessage) string {
 	return string(msg.ProtoReflect().Descriptor().FullName())
 }
 
-func getStringField(msg protoreflect.ProtoMessage, fieldName string) (string, error) {
-	parentMsg, fieldName, err := getFieldParentMessage(msg, fieldName)
+func GetIntField(data interface{}, fieldName string) (int64, error) {
+	msg := data.(protoreflect.ProtoMessage)
+	parentMsg, fieldName, err := GetFieldParentMessage(msg, fieldName)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	md := parentMsg.ProtoReflect().Descriptor()
-	var value string
 
 	for i := 0; i < md.Fields().Len(); i++ {
 		fd := md.Fields().Get(i)
 		if fd.TextName() == fieldName {
-			if fd.Kind() == protoreflect.StringKind {
-				value = parentMsg.ProtoReflect().Get(fd).String()
+			if fd.Kind() == protoreflect.Int32Kind || fd.Kind() == protoreflect.Int64Kind {
+				value := parentMsg.ProtoReflect().Get(fd).Int()
 				return value, nil
 			} else {
-				return "", status.Errorf(codes.InvalidArgument, "%s is not a string field", fieldName)
+				return 0, status.Errorf(codes.InvalidArgument, "%s is not an integer field", fieldName)
 			}
 		}
 	}
 
-	return "", status.Errorf(codes.Internal, "%s not found", fieldName)
+	return 0, status.Errorf(codes.Internal, "%s not found", fieldName)
 }
 
-func getFieldParentMessage(msg protoreflect.ProtoMessage, path string) (protoreflect.ProtoMessage, string, error) {
+func GetFloatField(data interface{}, fieldName string) (float64, error) {
+	msg := data.(protoreflect.ProtoMessage)
+	parentMsg, fieldName, err := GetFieldParentMessage(msg, fieldName)
+	if err != nil {
+		return 0, err
+	}
+	md := parentMsg.ProtoReflect().Descriptor()
+
+	for i := 0; i < md.Fields().Len(); i++ {
+		fd := md.Fields().Get(i)
+		if fd.TextName() == fieldName {
+			if fd.Kind() == protoreflect.FloatKind || fd.Kind() == protoreflect.DoubleKind {
+				value := parentMsg.ProtoReflect().Get(fd).Float()
+				return value, nil
+			} else {
+				return 0, status.Errorf(codes.InvalidArgument, "%s is not a float field", fieldName)
+			}
+		}
+	}
+
+	return 0, status.Errorf(codes.Internal, "%s not found", fieldName)
+}
+
+func GetFieldParentMessage(msg protoreflect.ProtoMessage, path string) (protoreflect.ProtoMessage, string, error) {
 	pathParts := strings.Split(path, ".")
 	if len(pathParts) == 1 {
 		return msg, path, nil
@@ -43,7 +66,7 @@ func getFieldParentMessage(msg protoreflect.ProtoMessage, path string) (protoref
 	// remove last part
 	for j, part := range pathParts {
 		// if part does not contain alphanumeric or underscore, return error
-		if !isAlphanumericOrUnderscore(part) {
+		if !IsAlphanumericOrUnderscore(part) {
 			return nil, "", status.Errorf(codes.InvalidArgument, "invalid field name: %s", part)
 		}
 		md := msg.ProtoReflect().Descriptor()
@@ -58,7 +81,7 @@ func getFieldParentMessage(msg protoreflect.ProtoMessage, path string) (protoref
 					m := msg.ProtoReflect().Get(fd).Message()
 					// Get field value from message
 					nestedPath := strings.Join(pathParts[j+1:], ".")
-					return getFieldParentMessage(m.Interface(), nestedPath)
+					return GetFieldParentMessage(m.Interface(), nestedPath)
 				}
 			}
 		}
@@ -66,7 +89,7 @@ func getFieldParentMessage(msg protoreflect.ProtoMessage, path string) (protoref
 	return nil, "", status.Errorf(codes.Internal, "field not found")
 }
 
-func isAlphanumericOrUnderscore(s string) bool {
+func IsAlphanumericOrUnderscore(s string) bool {
 	for _, r := range s {
 		if !((r >= 'a' && r <= 'z') ||
 			(r >= 'A' && r <= 'Z') ||
