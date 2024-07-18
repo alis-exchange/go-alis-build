@@ -8,7 +8,7 @@ import (
 )
 
 // This should always be the first rule in a validator and evaluates if the required fields are populated.
-func (v *Validator) AddRequiredFieldsRule(fieldPaths []string, conditions ...Condition) {
+func (v *Validator) AddRequiredFieldsRule(fieldPaths []string) *Validation {
 	// validate
 	v.validateFieldPaths(fieldPaths)
 	validatorFunc := func(data interface{}, fieldInfos map[string]*FieldInfo) ([]*pbOpen.Violation, error) {
@@ -26,7 +26,7 @@ func (v *Validator) AddRequiredFieldsRule(fieldPaths []string, conditions ...Con
 		}
 		return violations, nil
 	}
-	v.addRule("required-fields", fmt.Sprintf("%s are required fields", strings.Join(fieldPaths, ",")), fieldPaths, validatorFunc, nil, []string{}, conditions...)
+	return v.addRule("required-fields", fmt.Sprintf("%s are required fields", strings.Join(fieldPaths, ",")), fieldPaths, validatorFunc, nil, []string{})
 }
 
 func (v *Validator) AddListLengthRule(fieldPath string, min int, max int, conditions ...Condition) {

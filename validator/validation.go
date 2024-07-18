@@ -9,7 +9,7 @@ import (
 type (
 	Validation struct {
 		rule               *pbOpen.Rule
-		conditions         []Condition
+		conditions         []*Condition
 		function           Func
 		authorizedFunction AuthorizedFunc
 		repeatedPaths      []string
@@ -27,8 +27,9 @@ type (
 	}
 )
 
-func (v *Validation) ShouldRunRule(data interface{}) (bool, error) {
+func (v *Validation) shouldRunRule(data interface{}, fieldInfoCache map[string]*FieldInfo) (bool, error) {
 	for _, cond := range v.conditions {
+
 		run, err := cond.ShouldRunRule(data)
 		if err != nil {
 			return false, err
@@ -40,7 +41,7 @@ func (v *Validation) ShouldRunRule(data interface{}) (bool, error) {
 	return true, nil
 }
 
-func (v *Validation) ShouldValidateField(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
+func (v *Validation) shouldValidateField(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
 	for _, cond := range v.conditions {
 		run, err := cond.ShouldValidateField(data, fieldPath, fieldInfo)
 		if err != nil {
@@ -53,10 +54,18 @@ func (v *Validation) ShouldValidateField(data interface{}, fieldPath string, fie
 	return true, nil
 }
 
-func (v *Validation) Run(data interface{}, fields map[string]*FieldInfo, authInfo *authz.AuthInfo) ([]*pbOpen.Violation, error) {
+func (v *Validation) run(data interface{}, fields map[string]*FieldInfo, authInfo *authz.AuthInfo) ([]*pbOpen.Violation, error) {
 	if authInfo != nil {
 		return v.authorizedFunction(data, fields, authInfo)
 	} else {
 		return v.function(data, fields)
 	}
+}
+
+func (v *Validation) ApplyIf(cond *Condition) {
+	v.conditions = append(v.conditions, cond)
+}
+
+func (v *Validation) IgnoreIf(cond *Condition) {
+	v.conditions = append(v.conditions, NOT(cond))
 }

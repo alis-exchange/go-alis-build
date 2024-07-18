@@ -10,7 +10,7 @@ import (
 	pbOpen "open.alis.services/protobuf/alis/open/validation/v1"
 )
 
-func (v *Validator) addRule(idPrefix string, ruleDescription string, fieldPaths []string, validationFunction Func, authorizedValidationFunction AuthorizedFunc, repeatedPaths []string, conditions ...Condition) {
+func (v *Validator) addRule(idPrefix string, ruleDescription string, fieldPaths []string, validationFunction Func, authorizedValidationFunction AuthorizedFunc, repeatedPaths []string, conditions ...Condition) *Validation {
 	if idPrefix == "" {
 		alog.Fatalf(context.Background(), "idPrefix is empty")
 	}
@@ -40,6 +40,7 @@ func (v *Validator) addRule(idPrefix string, ruleDescription string, fieldPaths 
 	} else {
 		v.validations = append(v.validations, validation)
 	}
+	return validation
 }
 
 func (v *Validator) runValidations(msg interface{}, alreadyViolatedFields map[string]bool, fieldInfoCache map[string]*FieldInfo, authInfo *authz.AuthInfo) ([]*pbOpen.Violation, error) {
@@ -49,7 +50,7 @@ func (v *Validator) runValidations(msg interface{}, alreadyViolatedFields map[st
 	}
 	allViolations := []*pbOpen.Violation{}
 	for _, val := range validations {
-		runRule, err := val.ShouldRunRule(msg)
+		runRule, err := val.shouldRunRule(msg)
 		if err != nil {
 			return nil, err
 		}
@@ -64,7 +65,7 @@ func (v *Validator) runValidations(msg interface{}, alreadyViolatedFields map[st
 				return nil, err
 			}
 			if !fieldInfo.Skip {
-				runRuleOnField, err := val.ShouldValidateField(msg, fieldPath, fieldInfo)
+				runRuleOnField, err := val.shouldValidateField(msg, fieldPath, fieldInfo)
 				if err != nil {
 					return nil, err
 				}
@@ -98,7 +99,7 @@ func (v *Validator) runValidations(msg interface{}, alreadyViolatedFields map[st
 		if !hasAtLeastOneNonSkippedField {
 			continue
 		}
-		violations, err := val.Run(msg, fieldInfoMap, authInfo)
+		violations, err := val.run(msg, fieldInfoMap, authInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -171,4 +172,14 @@ func (v *Validator) validateListField(fieldPath string, allowedTypes ...protoref
 			alog.Fatalf(context.Background(), "field path (%s) is not a valid %v field for %s", fieldPath, allowedTypes, v.msgType)
 		}
 	}
+}
+
+func locateValidator(data interface{}) (*Validator, bool) {
+	protoMsg := data.(protoreflect.ProtoMessage)
+	msgType := GetMsgType(protoMsg)
+	v, ok := validators[msgType]
+	if !ok {
+		return nil, false
+	}
+	return v, true
 }

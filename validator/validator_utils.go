@@ -52,6 +52,14 @@ func (v *Validator) GetFieldInfo(data interface{}, fieldPath string, fieldInfoCa
 	return &fieldInfo, nil
 }
 
+func GetFieldInfo(data interface{}, fieldPath string) (*FieldInfo, error) {
+	v, found := locateValidator(data)
+	if !found {
+		return nil, status.Errorf(codes.Internal, "validator not found")
+	}
+	return v.GetFieldInfo(data, fieldPath, nil)
+}
+
 func (v *Validator) GetStringField(data interface{}, fieldPath string) (string, error) {
 	fieldInfo, err := v.GetFieldInfo(data, fieldPath, nil)
 	if err != nil {

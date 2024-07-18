@@ -63,14 +63,14 @@ func NewValidatorWithAuthz(protoMsg proto.Message, rpcMethod string, az *authz.A
 	return v
 }
 
-func (v *Validator) AddRule(ruleDescription string, fieldPaths []string, validationFunction Func, conditions ...Condition) {
+func (v *Validator) AddRule(ruleDescription string, fieldPaths []string, validationFunction Func) *Validation {
 	v.validateFieldPaths(fieldPaths)
-	v.addRule("custom", ruleDescription, fieldPaths, validationFunction, nil, []string{}, conditions...)
+	return v.addRule("custom", ruleDescription, fieldPaths, validationFunction, nil, []string{})
 }
 
-func (v *Validator) AddAuthorizedRule(ruleDescription string, fieldPaths []string, validationFunction AuthorizedFunc, conditions ...Condition) {
+func (v *Validator) AddAuthorizedRule(ruleDescription string, fieldPaths []string, validationFunction AuthorizedFunc) *Validation {
 	v.validateFieldPaths(fieldPaths)
-	v.addRule("custom", ruleDescription, fieldPaths, nil, validationFunction, []string{}, conditions...)
+	return v.addRule("custom", ruleDescription, fieldPaths, nil, validationFunction, []string{})
 }
 
 func (v *Validator) GetViolations(msg interface{}, includeAuthorizedValidations bool) ([]*pbOpen.Violation, error) {
@@ -128,11 +128,9 @@ func (v *Validator) Validate(msg interface{}) error {
 }
 
 func Validate(msg interface{}) (error, bool) {
-	protoMsg := msg.(protoreflect.ProtoMessage)
-	msgType := GetMsgType(protoMsg)
-	v, ok := validators[msgType]
-	if !ok {
-		return nil, false
+	v, found := locateValidator(msg)
+	if !found {
+		return status.Errorf(codes.Internal, "validator not found"), false
 	}
 	return v.Validate(msg), true
 }
