@@ -104,7 +104,9 @@ func (s *Sproto) ReadProto(ctx context.Context, tableName string, rowKey spanner
 	row, err := s.client.Single().ReadRow(ctx, tableName, rowKey, []string{columnName})
 	if err != nil {
 		if spanner.ErrCode(err) == codes.NotFound {
-			return ErrNotFound{}
+			return ErrNotFound{
+				RowKey: rowKey.String(),
+			}
 		}
 
 		return err
