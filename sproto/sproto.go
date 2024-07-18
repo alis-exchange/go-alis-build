@@ -419,10 +419,10 @@ Opts can be used to specify sorting, limiting and offsetting conditions.
 
 The method returns a map of column names and their respective values where the key is the column name and the value is a slice of the proto messages.
 */
-func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) (map[string][]proto.Message, error) {
+func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) (map[string][]proto.Message, int64, error) {
 	// Ensure length of column names matches the length of messages
 	if len(columnNames) != len(messages) {
-		return nil, fmt.Errorf("column names length does not match the messages length")
+		return nil, 0, fmt.Errorf("column names length does not match the messages length")
 	}
 
 	// Construct the query
@@ -477,7 +477,7 @@ func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames 
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		for i, columnName := range row.ColumnNames() {
@@ -487,20 +487,22 @@ func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames 
 
 			var dataBytes []byte
 			if err := row.Column(i, &dataBytes); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			// Unmarshal the bytes into the provided proto message
 			newMessage := newEmptyMessage(columnToMessage[columnName])
 			if err := proto.Unmarshal(dataBytes, newMessage); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			res[columnName] = append(res[columnName], newMessage)
 		}
 	}
 
-	return res, nil
+	rowCount := it.RowCount
+
+	return res, rowCount, nil
 }
 
 /*
