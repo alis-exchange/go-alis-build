@@ -7,96 +7,71 @@ import (
 
 	"go.alis.build/alog"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	pbOpen "open.alis.services/protobuf/alis/open/validation/v1"
 )
 
 type Condition struct {
-	Description         string
-	shouldRunRule       func(data interface{}, conditionFieldInfos map[string]*FieldInfo) (bool, error)
-	shouldValidateField func(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error)
-	conditionFields     []string // if empty, the fields from the rule that the condition is applied on is used
-	allowedKinds        []protoreflect.Kind
-}
-
-func (c *Condition) ShouldRunRule(data interface{}, fieldInfos map[string]*FieldInfo) (bool, error) {
-	if c.shouldRunRule == nil {
-		return c.shouldRunRule(data, fieldInfos)
-	} else {
-		return true, nil
-	}
-}
-
-func (c *Condition) ShouldValidateField(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
-	if c.shouldValidateField == nil {
-		return c.shouldValidateField(data, fieldPath, fieldInfo)
-	} else {
-		return true, nil
-	}
+	Description     string
+	NotDescription string
+	getViolations   func(data interface{}, fieldInfos map[string]*FieldInfo) ([]*pbOpen.Violation, error)
+	conditionFields []string // if empty, the fields from the rule that the condition is applied on is used
+	allowedKinds    []protoreflect.Kind
 }
 
 func OR(conditions ...Condition) *Condition {
 	descriptions := make([]string, len(conditions))
+	notDescriptions := make([]string, len(conditions))
 	for i, cond := range conditions {
 		descriptions[i] = cond.Description
+		notDescriptions[i] = cond.NotDescription
 	}
 	descr := "(" + strings.Join(descriptions, " OR ") + ")"
+	notDescription := "(" + strings.Join(notDescriptions, " AND ") + ")"
 	return &Condition{
 		Description: descr,
-		shouldRunRule: func(data interface{}, fieldInfos map[string]*FieldInfo) (bool, error) {
+		NotDescription: notDescription,
+		getViolations: func(data interface{}, fieldInfos map[string]*FieldInfo) ([]*pbOpen.Violation, error) {
+			allViols := []*pbOpen.Violation{}
 			for _, cond := range conditions {
-				run, err := cond.ShouldRunRule(data, fieldInfos)
+				violations, err := cond.getViolations(data, fieldInfos)
 				if err != nil {
-					return false, err
+					return violations, err
 				}
-				if run {
-					return true, nil
+				if len(violations) == 0 {
+					return violations, nil
 				}
+				allViols = append(allViols, violations...)
 			}
-			return false, nil
-		}, shouldValidateField: func(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
-			for _, cond := range conditions {
-				run, err := cond.ShouldValidateField(data, fieldPath, fieldInfo)
-				if err != nil {
-					return false, err
-				}
-				if run {
-					return true, nil
-				}
-			}
-			return false, nil
+			return allViols, nil
 		},
 	}
 }
 
 func AND(conditions ...Condition) *Condition {
 	descriptions := make([]string, len(conditions))
+	notDescriptions := make([]string, len(conditions))
 	for i, cond := range conditions {
 		descriptions[i] = cond.Description
+		notDescriptions[i] = cond.NotDescription
 	}
 	descr := "(" + strings.Join(descriptions, " AND ") + ")"
+	notDescription := "(" + strings.Join(notDescriptions, " OR ") + ")"
 	return &Condition{
 		Description: descr,
-		shouldRunRule: func(data interface{}, fieldInfos map[string]*FieldInfo) (bool, error) {
+		NotDescription: notDescription,
+		getViolations: func(data interface{}, fieldInfos map[string]*FieldInfo) ([]*pbOpen.Violation, error) {
+			allViols := []*pbOpen.Violation{}
 			for _, cond := range conditions {
-				run, err := cond.ShouldRunRule(data, fieldInfos)
+				violations, err := cond.getViolations(data, fieldInfos)
 				if err != nil {
-					return false, err
+					return violations, err
 				}
-				if !run {
-					return false, nil
+				if len(violations) > 0 {
+					return violations, nil
 				}
+				allViols = append(allViols, violations...)
 			}
-			return true, nil
-		}, shouldValidateField: func(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
-			for _, cond := range conditions {
-				run, err := cond.ShouldValidateField(data, fieldPath, fieldInfo)
-				if err != nil {
-					return false, err
-				}
-				if !run {
-					return false, nil
-				}
-			}
-			return true, nil
+			return allViols, nil
 		},
 	}
 }
@@ -104,21 +79,24 @@ func AND(conditions ...Condition) *Condition {
 // NewNotCondition creates a condition that the rule should only be run if some other condition is false
 func NOT(condition Condition) *Condition {
 	return &Condition{
-		Description: "NOT (" + condition.Description + ")",
-		shouldRunRule: func(data interface{}, fieldInfos map[string]*FieldInfo) (bool, error) {
-			run, err := condition.ShouldRunRule(data, fieldInfos)
+		Description: condition.NotDescription,
+		NotDescription: condition.Description,
+		getViolations: func(data interface{}, fieldInfos map[string]*FieldInfo) ([]*pbOpen.Violation, error) {
+			violations, err := condition.getViolations(data, fieldInfos)
 			if err != nil {
-				return false, err
+				return violations, err
 			}
-			return !run, nil
-		},
-		shouldValidateField: func(data interface{}, fieldPath string, fieldInfo *FieldInfo) (bool, error) {
-			run, err := condition.ShouldValidateField(data, fieldPath, fieldInfo)
-			if err != nil {
-				return false, err
+			if len(violations) == 0 {
+				for fieldPath,_ := range fieldInfos {
+					violations = append(violations, &pbOpen.Violation{
+						FieldPath: fieldPath,
+						Message: fmt.Sprintf(),
+					}
+				}
 			}
-			return !run, nil
-		},
+			return nil, nil
+		
+		}
 	}
 }
 
