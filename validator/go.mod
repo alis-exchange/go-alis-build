@@ -7,7 +7,7 @@ require (
 	go.alis.build/authz v0.7.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2
-	open.alis.services/protobuf v1.27.0
+	open.alis.services/protobuf v1.28.0
 )
 
 require (

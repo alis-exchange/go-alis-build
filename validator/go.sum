@@ -1,3 +1,4 @@
+cloud.google.com/go v0.115.0 h1:CnFSK6Xo3lDYRoBKEcAtia6VSC837/ZkJuRduSFnr14=
 cloud.google.com/go/iam v1.1.11 h1:0mQ8UKSfdHLut6pH9FM3bI55KWR46ketn0PuXleDyxw=
 cloud.google.com/go/iam v1.1.11/go.mod h1:biXoiLWYIKntto2joP+62sd9uW5EpkZmKIvfNcTWlnQ=
 cloud.google.com/go/longrunning v0.5.10 h1:eB/BniENNRKhjz/xgiillrdcH3G74TGSl3BXinGlI7E=
@@ -30,3 +31,5 @@ google.golang.org/protobuf v1.34.2 h1:6xV6lTsCfpGD21XK49h7MhtcApnLqkfYgPcdHftf6h
 google.golang.org/protobuf v1.34.2/go.mod h1:qYOHts0dSfpeUzUFpOMr/WGzszTmLH+DiWniOlNbLDw=
 open.alis.services/protobuf v1.27.0 h1:6u9V+sa7zoHxgHzMDi7bVPggHxQ6Vqmhm1AuM97HD/E=
 open.alis.services/protobuf v1.27.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
+open.alis.services/protobuf v1.28.0 h1:ubFaEnaG7SyllZ8e86/WeZAZjzw+N8/urrb24oDeIvc=
+open.alis.services/protobuf v1.28.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=

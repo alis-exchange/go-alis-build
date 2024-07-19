@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"go.alis.build/alog"
-	"go.alis.build/authz"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -19,107 +18,84 @@ type (
 		msgType  string
 		protoMsg proto.Message
 
-		validations           []*Validation
-		authorizedValidations []*Validation
-		FieldIndex            map[string]int
+		rules      []*Rule
+		fieldIndex map[string]int
 
-		az                   *authz.Authz
-		rpcMethod            string
-		iamResourceFieldPath string
+		StringGetter     func(msg protoreflect.ProtoMessage, path string) (string, error)
+		IntGetter        func(msg protoreflect.ProtoMessage, path string) (int64, error)
+		FloatGetter      func(msg protoreflect.ProtoMessage, path string) (float64, error)
+		BoolGetter       func(msg protoreflect.ProtoMessage, path string) (bool, error)
+		SubMessageGetter func(msg protoreflect.ProtoMessage, path string) (protoreflect.ProtoMessage, error)
+
+		StringListGetter     func(msg protoreflect.ProtoMessage, path string) ([]string, error)
+		IntListGetter        func(msg protoreflect.ProtoMessage, path string) ([]int64, error)
+		FloatListGetter      func(msg protoreflect.ProtoMessage, path string) ([]float64, error)
+		BoolListGetter       func(msg protoreflect.ProtoMessage, path string) ([]bool, error)
+		SubMessageListGetter func(msg protoreflect.ProtoMessage, path string) ([]protoreflect.ProtoMessage, error)
+
+		options *ValidatorOptions
+	}
+
+	ValidatorOptions struct {
+		IgnoreWarnings bool
 	}
 )
 
-var validators = make(map[string]*Validator)
-
-func NewValidator(protoMsg proto.Message) *Validator {
-	msgType := GetMsgType(protoMsg)
+func NewValidator(protoMsg proto.Message, options *ValidatorOptions) *Validator {
+	msgType := getMsgType(protoMsg)
 	if protoMsg == nil {
 		alog.Fatalf(context.Background(), "protoMsg is nil")
 	}
+	if options == nil {
+		options = &ValidatorOptions{}
+	}
 	v := &Validator{
 		msgType:    msgType,
-		FieldIndex: make(map[string]int),
+		fieldIndex: make(map[string]int),
 		protoMsg:   protoMsg,
+		options:    options,
 	}
 	validators[msgType] = v
 	return v
 }
 
-func NewValidatorWithAuthz(protoMsg proto.Message, rpcMethod string, az *authz.Authz, iamResourceFieldPath string) *Validator {
-	if rpcMethod == "" {
-		alog.Fatalf(context.Background(), "rpcMethod is empty for %s", GetMsgType(protoMsg))
+func (v *Validator) AddRule(rule *Rule) {
+	for _, arg := range rule.arguments {
+		arg.setValidator(v)
 	}
-	if az == nil {
-		alog.Fatalf(context.Background(), "az is nil")
+	if rule.condition != nil {
+		for _, arg := range rule.condition.arguments {
+			arg.setValidator(v)
+		}
 	}
-	if iamResourceFieldPath == "" {
-		alog.Fatalf(context.Background(), "iamResourceFieldPath is empty for %s", GetMsgType(protoMsg))
-	}
-
-	v := NewValidator(protoMsg)
-	v.validateFieldPaths([]string{iamResourceFieldPath}, protoreflect.StringKind)
-	v.az = az
-	v.iamResourceFieldPath = iamResourceFieldPath
-	return v
+	v.rules = append(v.rules, rule)
 }
 
-func (v *Validator) AddRule(ruleDescription string, fieldPaths []string, validationFunction Func) *Validation {
-	v.validateFieldPaths(fieldPaths)
-	return v.addRule("custom", ruleDescription, fieldPaths, validationFunction, nil, []string{})
-}
-
-func (v *Validator) AddAuthorizedRule(ruleDescription string, fieldPaths []string, validationFunction AuthorizedFunc) *Validation {
-	v.validateFieldPaths(fieldPaths)
-	return v.addRule("custom", ruleDescription, fieldPaths, nil, validationFunction, []string{})
-}
-
-func (v *Validator) GetViolations(msg interface{}, includeAuthorizedValidations bool) ([]*pbOpen.Violation, error) {
-	msgType := GetMsgType(msg.(protoreflect.ProtoMessage))
-	if msgType != v.msgType {
-		return nil, status.Errorf(codes.Internal, "msgType mismatch")
-	}
-	alreadyViolatedFields := make(map[string]bool)
-	fieldInfoCache := make(map[string]*FieldInfo)
-	allViolations, err := v.runValidations(msg, alreadyViolatedFields, fieldInfoCache, nil)
+func (v *Validator) GetViolations(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
+	allViolations, err := runRules(v, msg)
 	if err != nil {
 		return nil, err
-	}
-
-	// do not proceed with authorized validations if there are already violations
-	if len(allViolations) > 0 {
-		return allViolations, nil
-	}
-
-	if v.az != nil && includeAuthorizedValidations {
-		// extract iam resource from the message and ensure the field is a string
-		iamResource, err := v.GetStringField(msg, v.iamResourceFieldPath)
-		if err != nil {
-			return nil, err
-		}
-
-		authInfo, err := v.az.AuthorizeFromResources(context.Background(), v.rpcMethod, []string{iamResource}, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		authorizedViolations, err := v.runValidations(msg, alreadyViolatedFields, fieldInfoCache, authInfo)
-		if err != nil {
-			return nil, err
-		}
-		allViolations = append(allViolations, authorizedViolations...)
 	}
 	return allViolations, nil
 }
 
-func (v *Validator) Validate(msg interface{}) error {
-	violations, err := v.GetViolations(msg, true)
+func (v *Validator) GetRules() []*pbOpen.Rule {
+	rules := make([]*pbOpen.Rule, len(v.rules))
+	for i, r := range v.rules {
+		rules[i] = r.OpenRule()
+	}
+	return rules
+}
+
+func (v *Validator) Validate(msg protoreflect.ProtoMessage) error {
+	violations, err := v.GetViolations(msg)
 	if err != nil {
 		return err
 	}
 	if len(violations) > 0 {
 		errorStrings := make([]string, len(violations))
 		for i, v := range violations {
-			errorStrings[i] = fmt.Sprintf("%s (rule: %s,field: %s)", v.Message, v.RuleId, v.FieldPath)
+			errorStrings[i] = fmt.Sprintf("%s (fields: %s)", v.Description, strings.Join(v.FieldPaths, ","))
 		}
 
 		return status.Errorf(codes.InvalidArgument, "%s", strings.Join(errorStrings, "; "))
@@ -127,10 +103,8 @@ func (v *Validator) Validate(msg interface{}) error {
 	return nil
 }
 
-func Validate(msg interface{}) (error, bool) {
-	v, found := locateValidator(msg)
-	if !found {
-		return status.Errorf(codes.Internal, "validator not found"), false
+func (v *Validator) issueWarning(format string, a ...any) {
+	if !v.options.IgnoreWarnings {
+		alog.Warnf(context.Background(), fmt.Sprintf(format, a...))
 	}
-	return v.Validate(msg), true
 }
