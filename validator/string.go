@@ -1,16 +1,19 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"go.alis.build/alog"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type str struct {
+	repeated    bool
 	paths       []string
-	getValue    func(v *Validator, msg protoreflect.ProtoMessage) string
+	getValues   func(v *Validator, msg protoreflect.ProtoMessage) []string
 	description string
 	v           *Validator
 }
@@ -28,22 +31,29 @@ func (s *str) getValidator() *Validator {
 }
 
 func (s *str) setValidator(v *Validator) {
-	s.getValue(v, v.protoMsg)
+	s.getValues(v, v.protoMsg)
 	s.v = v
 }
 
 func String(val string) *str {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) string {
-		return val
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
+		return []string{val}
 	}
-	return &str{description: fmt.Sprintf("'%s'", val), getValue: getValueFunc}
+	return &str{description: fmt.Sprintf("'%s'", val), getValues: getValuesFunc}
 }
 
 func StringField(path string) *str {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) string {
-		return v.getString(msg, path)
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
+		return []string{v.getString(msg, path)}
 	}
-	return &str{description: path, getValue: getValueFunc, paths: []string{path}}
+	return &str{description: path, getValues: getValuesFunc, paths: []string{path}}
+}
+
+func EachStringIn(path string) *str {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
+		return v.getStringList(msg, path)
+	}
+	return &str{description: fmt.Sprintf("each string in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
 }
 
 func (s *str) Equals(str *str) *Rule {
@@ -56,9 +66,14 @@ func (s *str) Equals(str *str) *Rule {
 	}
 	args := []argI{s, str}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := s.getValue(s.v, msg)
-		val2 := str.getValue(str.v, msg)
-		return val1 != val2, nil
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if val1 != val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -73,9 +88,14 @@ func (s *str) StartsWith(str *str) *Rule {
 	}
 	args := []argI{s, str}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := s.getValue(s.v, msg)
-		val2 := str.getValue(str.v, msg)
-		return !strings.HasPrefix(val1, val2), nil
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if !strings.HasPrefix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -91,9 +111,14 @@ func (s *str) EndsWith(str *str) *Rule {
 
 	args := []argI{s, str}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := s.getValue(s.v, msg)
-		val2 := str.getValue(str.v, msg)
-		return !strings.HasSuffix(val1, val2), nil
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if !strings.HasSuffix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -108,9 +133,14 @@ func (s *str) Contains(str *str) *Rule {
 	}
 	args := []argI{s, str}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := s.getValue(s.v, msg)
-		val2 := str.getValue(str.v, msg)
-		return !strings.Contains(val1, val2), nil
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if !strings.Contains(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -125,31 +155,42 @@ func (s *str) MatchesRegex(str *str) *Rule {
 	}
 	args := []argI{s, str}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := s.getValue(s.v, msg)
-		val2 := str.getValue(str.v, msg)
-		matched, err := regexp.MatchString(val2, val1)
-		if err != nil {
-			return false, err
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				matched, err := regexp.MatchString(val2, val1)
+				if err != nil {
+					return false, err
+				}
+				if !matched {
+					return true, nil
+				}
+			}
 		}
-		return !matched, nil
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
 func (s *str) Length() *integer {
+	if s.repeated {
+		alog.Fatalf(context.Background(), "Length() is not supported for EachStringIn fields")
+	}
 	description := fmt.Sprintf("length of %s", s.getDescription())
 	newI := &integer{description: description, paths: s.paths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return int64(len(s.getValue(v, msg)))
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{int64(len(s.getValues(v, msg)[0]))}
 	}
 	return newI
 }
 
 func (s *str) LengthAsFloat() *float {
+	if s.repeated {
+		alog.Fatalf(context.Background(), "LengthAsFloat() is not supported for EachStringIn fields")
+	}
 	description := fmt.Sprintf("length of %s", s.getDescription())
 	newF := &float{description: description, paths: s.paths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return float64(len(s.getValue(v, msg)))
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{float64(len(s.getValues(v, msg)[0]))}
 	}
 	return newF
 }

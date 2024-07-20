@@ -1,15 +1,18 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"go.alis.build/alog"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type integer struct {
+	repeated    bool
 	paths       []string
-	getValue    func(v *Validator, msg protoreflect.ProtoMessage) int64
+	getValues   func(v *Validator, msg protoreflect.ProtoMessage) []int64
 	description string
 	v           *Validator
 }
@@ -27,23 +30,31 @@ func (i *integer) getValidator() *Validator {
 }
 
 func (i *integer) setValidator(v *Validator) {
-	i.getValue(v, v.protoMsg)
+	i.getValues(v, v.protoMsg)
 	i.v = v
 }
 
 func Int(value int64) *integer {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return value
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{value}
 	}
-	i := &integer{description: fmt.Sprintf("%d", value), getValue: getValueFunc}
+	i := &integer{description: fmt.Sprintf("%d", value), getValues: getValuesFunc}
 	return i
 }
 
 func IntField(path string) *integer {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return v.getInt(msg, path)
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{v.getInt(msg, path)}
 	}
-	i := &integer{description: path, getValue: getValueFunc, paths: []string{path}}
+	i := &integer{description: path, getValues: getValuesFunc, paths: []string{path}}
+	return i
+}
+
+func EachIntIn(path string) *integer {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return v.getIntList(msg, path)
+	}
+	i := &integer{description: fmt.Sprintf("each int in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
 	return i
 }
 
@@ -57,9 +68,14 @@ func (i *integer) Equals(i2 *integer) *Rule {
 	}
 	args := []argI{i, i2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := i.getValue(i.v, msg)
-		val2 := i2.getValue(i2.v, msg)
-		return val1 != val2, nil
+		for _, val1 := range i.getValues(i.v, msg) {
+			for _, val2 := range i2.getValues(i2.v, msg) {
+				if val1 != val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -74,9 +90,14 @@ func (i *integer) GT(i2 *integer) *Rule {
 	}
 	args := []argI{i, i2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := i.getValue(i.v, msg)
-		val2 := i2.getValue(i2.v, msg)
-		return val1 <= val2, nil
+		for _, val1 := range i.getValues(i.v, msg) {
+			for _, val2 := range i2.getValues(i2.v, msg) {
+				if val1 <= val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -91,9 +112,14 @@ func (i *integer) GTE(i2 *integer) *Rule {
 	}
 	args := []argI{i, i2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := i.getValue(i.v, msg)
-		val2 := i2.getValue(i2.v, msg)
-		return val1 < val2, nil
+		for _, val1 := range i.getValues(i.v, msg) {
+			for _, val2 := range i2.getValues(i2.v, msg) {
+				if val1 < val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -108,9 +134,14 @@ func (i *integer) LT(i2 *integer) *Rule {
 	}
 	args := []argI{i, i2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := i.getValue(i.v, msg)
-		val2 := i2.getValue(i2.v, msg)
-		return val1 >= val2, nil
+		for _, val1 := range i.getValues(i.v, msg) {
+			for _, val2 := range i2.getValues(i2.v, msg) {
+				if val1 >= val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -125,14 +156,22 @@ func (i *integer) LTE(i2 *integer) *Rule {
 	}
 	args := []argI{i, i2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := i.getValue(i.v, msg)
-		val2 := i2.getValue(i2.v, msg)
-		return val1 > val2, nil
+		for _, val1 := range i.getValues(i.v, msg) {
+			for _, val2 := range i2.getValues(i2.v, msg) {
+				if val1 > val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
 func (i *integer) InRange(min *integer, max *integer) *Rule {
+	if min.repeated || max.repeated {
+		alog.Fatalf(context.Background(), "min and max values for InRange must be single values")
+	}
 	id := fmt.Sprintf("i-ir(%s,%s,%s)", i.getDescription(), min.getDescription(), max.getDescription())
 	descr := &Descriptions{
 		rule:         fmt.Sprintf("%s must be in range %s to %s", i.getDescription(), min.getDescription(), max.getDescription()),
@@ -142,65 +181,87 @@ func (i *integer) InRange(min *integer, max *integer) *Rule {
 	}
 	args := []argI{i, min, max}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val := i.getValue(i.v, msg)
-		minVal := min.getValue(min.v, msg)
-		maxVal := max.getValue(max.v, msg)
-		return val < minVal || val > maxVal, nil
+		for _, val := range i.getValues(i.v, msg) {
+			if val < min.getValues(min.v, msg)[0] || val > max.getValues(max.v, msg)[0] {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
 func (i *integer) Plus(i2 *integer) *integer {
+	if i.repeated || i2.repeated {
+		alog.Fatalf(context.Background(), "Plus() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s + %s)", i.getDescription(), i2.getDescription())
 	newPaths := append(i.paths, i2.paths...)
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return i.getValue(v, msg) + i2.getValue(v, msg)
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{i.getValues(v, msg)[0] + i2.getValues(v, msg)[0]}
 	}
 	return newI
 }
 
 func (i *integer) Minus(i2 *integer) *integer {
+	if i.repeated || i2.repeated {
+		alog.Fatalf(context.Background(), "Minus() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s - %s)", i.getDescription(), i2.getDescription())
 	newPaths := append(i.paths, i2.paths...)
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return i.getValue(v, msg) - i2.getValue(v, msg)
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{i.getValues(v, msg)[0] - i2.getValues(v, msg)[0]}
 	}
 	return newI
 }
 
 func (i *integer) Times(i2 *integer) *integer {
+	if i.repeated || i2.repeated {
+		alog.Fatalf(context.Background(), "Times() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s * %s)", i.getDescription(), i2.getDescription())
 	newPaths := append(i.paths, i2.paths...)
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return i.getValue(v, msg) * i2.getValue(v, msg)
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{i.getValues(v, msg)[0] * i2.getValues(v, msg)[0]}
 	}
 	return newI
 }
 
 func (i *integer) DividedBy(i2 *integer) *integer {
+	if i.repeated || i2.repeated {
+		alog.Fatalf(context.Background(), "DividedBy() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s / %s)", i.getDescription(), i2.getDescription())
 	newPaths := append(i.paths, i2.paths...)
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return i.getValue(v, msg) / i2.getValue(v, msg)
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{i.getValues(v, msg)[0] / i2.getValues(v, msg)[0]}
 	}
 	return newI
 }
 
 func (i *integer) Mod(i2 *integer) *integer {
+	if i.repeated || i2.repeated {
+		alog.Fatalf(context.Background(), "Mod() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s %% %s)", i.getDescription(), i2.getDescription())
 	newPaths := append(i.paths, i2.paths...)
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
-		return i.getValue(v, msg) % i2.getValue(v, msg)
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		return []int64{i.getValues(v, msg)[0] % i2.getValues(v, msg)[0]}
 	}
 	return newI
 }
 
 func IntSum(integers ...*integer) *integer {
+	for _, i := range integers {
+		if i.repeated {
+			alog.Fatalf(context.Background(), "IntSum() is not supported for repeated fields")
+		}
+	}
 	descriptions := make([]string, len(integers))
 	for i, intgr := range integers {
 		descriptions[i] = intgr.getDescription()
@@ -211,12 +272,12 @@ func IntSum(integers ...*integer) *integer {
 		newPaths = append(newPaths, i.paths...)
 	}
 	newI := &integer{description: description, paths: newPaths}
-	newI.getValue = func(v *Validator, msg protoreflect.ProtoMessage) int64 {
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
 		sum := int64(0)
 		for _, i := range integers {
-			sum += i.getValue(v, msg)
+			sum += i.getValues(v, msg)[0]
 		}
-		return sum
+		return []int64{sum}
 	}
 	return newI
 }

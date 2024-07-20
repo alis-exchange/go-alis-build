@@ -1,14 +1,17 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 
+	"go.alis.build/alog"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type float struct {
+	repeated    bool
 	paths       []string
-	getValue    func(v *Validator, msg protoreflect.ProtoMessage) float64
+	getValues   func(v *Validator, msg protoreflect.ProtoMessage) []float64
 	description string
 	v           *Validator
 }
@@ -26,31 +29,52 @@ func (f *float) getValidator() *Validator {
 }
 
 func (f *float) setValidator(v *Validator) {
-	f.getValue(v, v.protoMsg)
+	f.getValues(v, v.protoMsg)
 	f.v = v
 }
 
 func Float(value float64) *float {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return value
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{value}
 	}
-	n := &float{description: fmt.Sprintf("%f", value), getValue: getValueFunc}
+	n := &float{description: fmt.Sprintf("%f", value), getValues: getValuesFunc}
 	return n
 }
 
 func IntFieldAsFloat(path string) *float {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return float64(v.getInt(msg, path))
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{float64(v.getInt(msg, path))}
 	}
-	f := &float{description: path, getValue: getValueFunc, paths: []string{path}}
+	f := &float{description: path, getValues: getValuesFunc, paths: []string{path}}
+	return f
+}
+
+func EachIntInAsFloat(path string) *float {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		ints := v.getIntList(msg, path)
+		floats := make([]float64, len(ints))
+		for i, val := range ints {
+			floats[i] = float64(val)
+		}
+		return floats
+	}
+	f := &float{description: fmt.Sprintf("each integer in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
+	return f
+}
+
+func EachFloatIn(path string) *float {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return v.getFloatList(msg, path)
+	}
+	f := &float{description: fmt.Sprintf("each float in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
 	return f
 }
 
 func FloatField(path string) *float {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return v.getFloat(msg, path)
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{v.getFloat(msg, path)}
 	}
-	f := &float{description: path, getValue: getValueFunc, paths: []string{path}}
+	f := &float{description: path, getValues: getValuesFunc, paths: []string{path}}
 	return f
 }
 
@@ -64,9 +88,14 @@ func (f *float) Equals(f2 *float) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := f.getValue(f.v, msg)
-		val2 := f2.getValue(f2.v, msg)
-		return val1 != val2, nil
+		for _, val1 := range f.getValues(f.v, msg) {
+			for _, val2 := range f2.getValues(f2.v, msg) {
+				if val1 != val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -81,9 +110,14 @@ func (f *float) GT(f2 *float) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := f.getValue(f.v, msg)
-		val2 := f2.getValue(f2.v, msg)
-		return val1 <= val2, nil
+		for _, val1 := range f.getValues(f.v, msg) {
+			for _, val2 := range f2.getValues(f2.v, msg) {
+				if val1 <= val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -98,9 +132,14 @@ func (f *float) GTE(f2 *float) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := f.getValue(f.v, msg)
-		val2 := f2.getValue(f2.v, msg)
-		return val1 < val2, nil
+		for _, val1 := range f.getValues(f.v, msg) {
+			for _, val2 := range f2.getValues(f2.v, msg) {
+				if val1 < val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -115,9 +154,14 @@ func (f *float) LT(f2 *float) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := f.getValue(f.v, msg)
-		val2 := f2.getValue(f2.v, msg)
-		return val1 >= val2, nil
+		for _, val1 := range f.getValues(f.v, msg) {
+			for _, val2 := range f2.getValues(f2.v, msg) {
+				if val1 >= val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -132,14 +176,22 @@ func (f *float) LTE(f2 *float) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := f.getValue(f.v, msg)
-		val2 := f2.getValue(f2.v, msg)
-		return val1 > val2, nil
+		for _, val1 := range f.getValues(f.v, msg) {
+			for _, val2 := range f2.getValues(f2.v, msg) {
+				if val1 > val2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
 func (f *float) InRange(min *float, max *float) *Rule {
+	if min.repeated || max.repeated {
+		alog.Fatalf(context.Background(), "min and max must not be repeated")
+	}
 	id := fmt.Sprintf("f-ir(%s,%s,%s)", f.getDescription(), min.getDescription(), max.getDescription())
 	descr := &Descriptions{
 		rule:         fmt.Sprintf("%s must be in range %s to %s", f.getDescription(), min.getDescription(), max.getDescription()),
@@ -149,20 +201,25 @@ func (f *float) InRange(min *float, max *float) *Rule {
 	}
 	args := []argI{f, min, max}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val := f.getValue(f.v, msg)
-		minVal := min.getValue(min.v, msg)
-		maxVal := max.getValue(max.v, msg)
-		return val < minVal || val > maxVal, nil
+		for _, val := range f.getValues(f.v, msg) {
+			if val < min.getValues(min.v, msg)[0] || val > max.getValues(max.v, msg)[0] {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
 func (f *float) Plus(f2 *float) *float {
+	if f.repeated || f2.repeated {
+		alog.Fatalf(context.Background(), "Plus() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s + %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return f.getValue(v, msg) + f2.getValue(v, msg)
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{f.getValues(v, msg)[0] + f2.getValues(v, msg)[0]}
 	}
 	return newF
 }
@@ -171,8 +228,8 @@ func (f *float) Minus(f2 *float) *float {
 	description := fmt.Sprintf("(%s - %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return f.getValue(v, msg) - f2.getValue(v, msg)
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{f.getValues(v, msg)[0] - f2.getValues(v, msg)[0]}
 	}
 	return newF
 }
@@ -181,8 +238,8 @@ func (f *float) Times(f2 *float) *float {
 	description := fmt.Sprintf("(%s * %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return f.getValue(v, msg) * f2.getValue(v, msg)
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{f.getValues(v, msg)[0] * f2.getValues(v, msg)[0]}
 	}
 	return newF
 }
@@ -191,8 +248,8 @@ func (f *float) DividedBy(f2 *float) *float {
 	description := fmt.Sprintf("(%s / %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return f.getValue(v, msg) / f2.getValue(v, msg)
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{f.getValues(v, msg)[0] / f2.getValues(v, msg)[0]}
 	}
 	return newF
 }
@@ -201,8 +258,8 @@ func (f *float) Mod(f2 *float) *float {
 	description := fmt.Sprintf("(%s %% %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
-		return float64(int64(f.getValue(v, msg)) % int64(f2.getValue(v, msg)))
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{float64(int(f.getValues(v, msg)[0]) % int(f2.getValues(v, msg)[0]))}
 	}
 	return newF
 }
@@ -210,12 +267,12 @@ func (f *float) Mod(f2 *float) *float {
 func Sum(floats ...*float) *float {
 	description := fmt.Sprintf("sum of %v", floats)
 	newF := &float{description: description}
-	newF.getValue = func(v *Validator, msg protoreflect.ProtoMessage) float64 {
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
 		sum := 0.0
 		for _, f := range floats {
-			sum += f.getValue(v, msg)
+			sum += f.getValues(v, msg)[0]
 		}
-		return sum
+		return []float64{sum}
 	}
 	return newF
 }

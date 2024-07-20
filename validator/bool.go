@@ -8,7 +8,7 @@ import (
 
 type boolean struct {
 	paths       []string
-	getValue    func(v *Validator, msg protoreflect.ProtoMessage) bool
+	getValues   func(v *Validator, msg protoreflect.ProtoMessage) []bool
 	description string
 	v           *Validator
 }
@@ -26,22 +26,29 @@ func (b *boolean) getValidator() *Validator {
 }
 
 func (b *boolean) setValidator(v *Validator) {
-	b.getValue(v, v.protoMsg)
+	b.getValues(v, v.protoMsg)
 	b.v = v
 }
 
 func Bool(value bool) *boolean {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) bool {
-		return value
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
+		return []bool{value}
 	}
-	return &boolean{description: fmt.Sprintf("%t", value), getValue: getValueFunc}
+	return &boolean{description: fmt.Sprintf("%t", value), getValues: getValuesFunc}
 }
 
 func BoolField(path string) *boolean {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) bool {
-		return v.getBool(msg, path)
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
+		return []bool{v.getBool(msg, path)}
 	}
-	return &boolean{description: path, getValue: getValueFunc, paths: []string{path}}
+	return &boolean{description: path, getValues: getValuesFunc, paths: []string{path}}
+}
+
+func EachBoolIn(path string) *boolean {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
+		return v.getBoolList(msg, path)
+	}
+	return &boolean{description: fmt.Sprintf("each bool in %s", path), getValues: getValuesFunc, paths: []string{path}}
 }
 
 func (b *boolean) Equals(b2 *boolean) *Rule {
@@ -54,9 +61,14 @@ func (b *boolean) Equals(b2 *boolean) *Rule {
 	}
 	args := []argI{b, b2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		val1 := b.getValue(b.v, msg)
-		val2 := b2.getValue(b2.v, msg)
-		return val1 != val2, nil
+		for _, bEl := range b.getValues(b.v, msg) {
+			for _, b2El := range b2.getValues(b2.v, msg) {
+				if bEl != b2El {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
