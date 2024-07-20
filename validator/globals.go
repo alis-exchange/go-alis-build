@@ -13,7 +13,7 @@ func Validate(request interface{}) (error, bool) {
 	if err != nil {
 		return err, false
 	}
-	return v.Validate(msg), true
+	return v.Validate(msg, []string{}), true
 }
 
 func locateValidator(request interface{}) (*Validator, protoreflect.ProtoMessage, error) {
@@ -25,7 +25,7 @@ func locateValidator(request interface{}) (*Validator, protoreflect.ProtoMessage
 	if !ok {
 		return nil, nil, status.Errorf(codes.NotFound, "validator not found")
 	}
-	return v, nil, nil
+	return v, protoMsg, nil
 }
 
 func getMsgType(msg protoreflect.ProtoMessage) string {

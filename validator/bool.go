@@ -7,55 +7,56 @@ import (
 )
 
 type boolean struct {
-	val  bool
-	path string
-	v    *Validator
-}
-
-func BoolValue(value bool) *boolean {
-	return &boolean{val: value}
-}
-
-func BoolField(path string) *boolean {
-	return &boolean{path: path}
-}
-
-func (b *boolean) Boolean() bool {
-	if b.path != "" {
-		return b.v.getBool(b.v.protoMsg, b.path)
-	} else {
-		return b.val
-	}
+	paths       []string
+	getValue    func(v *Validator, msg protoreflect.ProtoMessage) bool
+	description string
+	v           *Validator
 }
 
 func (b *boolean) fieldPaths() []string {
-	return []string{b.path}
-}
-
-func (b *boolean) setValidator(v *Validator) {
-	b.v = v
+	return b.paths
 }
 
 func (b *boolean) getDescription() string {
-	if b.path != "" {
-		return b.path
-	} else {
-		return fmt.Sprintf("'%t'", b.val)
+	return b.description
+}
+
+func (b *boolean) getValidator() *Validator {
+	return b.v
+}
+
+func (b *boolean) setValidator(v *Validator) {
+	b.getValue(v, v.protoMsg)
+	b.v = v
+}
+
+func Bool(value bool) *boolean {
+	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) bool {
+		return value
 	}
+	return &boolean{description: fmt.Sprintf("%t", value), getValue: getValueFunc}
+}
+
+func BoolField(path string) *boolean {
+	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) bool {
+		return v.getBool(msg, path)
+	}
+	return &boolean{description: path, getValue: getValueFunc, paths: []string{path}}
 }
 
 func (b *boolean) Equals(b2 *boolean) *Rule {
-	description := fmt.Sprintf("%s must be equal to %s", b.getDescription(), b2.getDescription())
-	notDescription := fmt.Sprintf("%s must not be equal to %s", b.getDescription(), b2.getDescription())
-	return NewRule(&Rule{
-		Id:             fmt.Sprintf("b-eq(%s,%s)", b.getDescription(), b2.getDescription()),
-		Description:    description,
-		NotDescription: notDescription,
-		isViolated: func(msg protoreflect.ProtoMessage) (bool, error) {
-			val1 := b.Boolean()
-			val2 := b2.Boolean()
-			return val1 != val2, nil
-		},
-		arguments: []argI{b, b2},
-	})
+	id := fmt.Sprintf("b-eq(%s,%s)", b.getDescription(), b2.getDescription())
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be equal to %s", b.getDescription(), b2.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be equal to %s", b.getDescription(), b2.getDescription()),
+		condition:    fmt.Sprintf("%s equals %s", b.getDescription(), b2.getDescription()),
+		notCondition: fmt.Sprintf("%s does not equal %s", b.getDescription(), b2.getDescription()),
+	}
+	args := []argI{b, b2}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		val1 := b.getValue(b.v, msg)
+		val2 := b2.getValue(b2.v, msg)
+		return val1 != val2, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }

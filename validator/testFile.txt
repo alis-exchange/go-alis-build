@@ -1,4 +1,0 @@
-val := NewValidator(&pbOpen.Test{})
-regexCond := AND(validator.Regex(F("name"), S("^[a-zA-Z0-9]*$")), validator.Regex(F("display_name"), S("^[0-9]*$")))
-otherCond := OR(validator.EnumIs(F("test_enum"), E(pbOpen.TestEnum_TEST_ENUM_ONE)), validator.EnumIs(F("test_enum"), E(pbOpen.TestEnum_TEST_ENUM_TWO)))
-val.AddRule(regexCond).ApplyIf(otherCond)

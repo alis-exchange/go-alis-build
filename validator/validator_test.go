@@ -1,9 +1,11 @@
 package validator
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"go.alis.build/alog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -17,6 +19,17 @@ func init() {
 	// SV := StringValue
 	// IF := IntField
 	// IV := IntValue
+
+	subMVal := NewValidator(&pbOpen.Test_SubMessage{}, nil)
+	subMVal.StringGetter = func(data protoreflect.ProtoMessage, path string) (string, error) {
+		msg := data.(*pbOpen.Test_SubMessage)
+		switch path {
+		case "string":
+			return msg.String_, nil
+		}
+		return "", status.Error(codes.Internal, "invalid path")
+	}
+	subMVal.AddRule(StringField("string").Length().Equals(Int(2)))
 
 	val = NewValidator(&pbOpen.Test{}, &ValidatorOptions{})
 
@@ -41,32 +54,50 @@ func init() {
 		}
 		return 0, status.Error(codes.Internal, "invalid path")
 	}
-
-	rule := StringField("display_name").Length().Equals(IntValue(4))
-	// rule := NewRule(&Rule{
-	// 	fieldPaths:     []string{"name"},
-	// 	isViolated:     isViolated,
-	// 	Description:    "name must be test",
-	// 	NotDescription: "name must not be test",
-	// })
-	val.AddRule(OR(rule, StringField("display_name").Equals(StringValue("test"))))
-	// val.AddRule(IntField("int32").Plus(IntField("int64")).Equals(IntValue(2)))
-}
-
-func isViolated(data protoreflect.ProtoMessage) (bool, error) {
-	msg := data.(*pbOpen.Test)
-	if msg.Name == "test" {
-		return false, nil
+	val.FloatGetter = func(data protoreflect.ProtoMessage, path string) (float64, error) {
+		msg := data.(*pbOpen.Test)
+		switch path {
+		case "float":
+			return float64(msg.Float), nil
+		}
+		return 0, status.Error(codes.Internal, "invalid path")
+	}
+	val.SubMessageGetter = func(data protoreflect.ProtoMessage, path string) (protoreflect.ProtoMessage, error) {
+		msg := data.(*pbOpen.Test)
+		switch path {
+		case "sub_message":
+			return msg.SubMessage, nil
+		}
+		return nil, status.Error(codes.Internal, "invalid path")
+	}
+	val.EnumGetter = func(data protoreflect.ProtoMessage, path string) (protoreflect.EnumNumber, error) {
+		msg := data.(*pbOpen.Test)
+		switch path {
+		case "test_enum":
+			return protoreflect.EnumNumber(msg.TestEnum), nil
+		}
+		return 0, status.Error(codes.Internal, "invalid path")
 	}
 
-	return true, nil
+	// rule := StringField("display_name").Length().Equals(Int(2))
+	// val.AddRule(rule.ApplyIf(AND(StringField("name").Equals(String("test")), IntField("int32").Equals(Int(1)))))
+	// val.AddRule(FloatField("float").Equals(IntFieldAsFloat("int64")))
+	eRule := EnumField("test_enum").Equals(Enum(pbOpen.TestEnum_TEST_ENUM_ONE))
+	val.AddRule(eRule).ApplyIf(StringField("display_name").Equals(String("test")))
+	val.AddSubMessageValidator("sub_message", subMVal, &SubMsgOptions{OnlyValidateFieldsSpecifiedIn: "repeated_string"})
 }
 
-func Test_Validate(t *testing.T) {
-	msg := &pbOpen.Test{Name: "test", Int32: 1, Int64: 1}
+func TestValidate(t *testing.T) {
 	startT := time.Now()
-	err := val.Validate(msg)
-	t.Logf("time: %v", time.Since(startT))
+	m := &pbOpen.Test{
+		DisplayName:    "ab",
+		RepeatedString: []string{"string"},
+		SubMessage: &pbOpen.Test_SubMessage{
+			String_: "abc",
+		},
+	}
+	err, _ := Validate(m)
+	alog.Infof(context.Background(), "time: %v", time.Since(startT))
 	t.Logf("err: %v", err)
 }
 

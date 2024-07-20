@@ -36,27 +36,27 @@ func (v *Validator) getFieldDescriptor(msg protoreflect.ProtoMessage, path strin
 func (v *Validator) getValueWithReflection(msg protoreflect.ProtoMessage, path string, allowedKinds []protoreflect.Kind) protoreflect.Value {
 	// not supporting reflection for nested fields
 	if strings.Contains(path, ".") {
-		alog.Fatalf(context.Background(), "nested fields not supported for reflection. Please setup the appropriate getter function for %s", path)
+		alog.Fatalf(context.Background(), "nested fields not supported for reflection. Please setup the appropriate getter function for %s or create a nested rule with NewNestedRule", path)
 	}
 	v.issueWarning("using reflection is very slow. Please setup the appropriate getter function for %s", path)
 
 	fd, err := v.getFieldDescriptor(msg, path)
 	if err != nil {
-		alog.Fatalf(context.Background(), "error getting field descriptor for %s: %s", path, err)
+		alog.Fatalf(context.Background(), "%s does not exist in %s", path, v.msgType)
 	}
 
 	if len(allowedKinds) != 0 {
 		foundKind := false
 		kindStrings := make([]string, len(allowedKinds))
-		for _, kind := range allowedKinds {
+		for i, kind := range allowedKinds {
 			if fd.Kind() == kind {
 				foundKind = true
 				break
 			}
-			kindStrings = append(kindStrings, kind.String())
+			kindStrings[i] = kind.String()
 		}
 		if !foundKind {
-			alog.Fatalf(context.Background(), "%s is not a valid %s", path, strings.Join(kindStrings, " or "))
+			alog.Fatalf(context.Background(), "%s exists in %s, but is not a %s", path, v.msgType, strings.Join(kindStrings, " or "))
 		}
 	}
 
@@ -118,6 +118,20 @@ func (v *Validator) getBool(msg protoreflect.ProtoMessage, path string) bool {
 		v.issueWarning("no bool getter function defined")
 	}
 	return v.getValueWithReflection(msg, path, []protoreflect.Kind{protoreflect.BoolKind}).Bool()
+}
+
+func (v *Validator) getEnum(msg protoreflect.ProtoMessage, path string) protoreflect.EnumNumber {
+	if v.EnumGetter != nil {
+		val, err := v.EnumGetter(msg, path)
+		if err != nil {
+			v.issueWarning("error getting enum value from %s: %v", path, err)
+		} else {
+			return val
+		}
+	} else {
+		v.issueWarning("no enum getter function defined")
+	}
+	return v.getValueWithReflection(msg, path, []protoreflect.Kind{protoreflect.EnumKind}).Enum()
 }
 
 func (v *Validator) getSubMessage(msg protoreflect.ProtoMessage, path string) protoreflect.ProtoMessage {
@@ -224,6 +238,29 @@ func (v *Validator) getBoolListWithReflection(msg protoreflect.ProtoMessage, pat
 		boolList[i] = values.Get(i).Bool()
 	}
 	return boolList
+}
+
+func (v *Validator) getEnumList(msg protoreflect.ProtoMessage, path string) []protoreflect.EnumNumber {
+	if v.EnumListGetter != nil {
+		val, err := v.EnumListGetter(msg, path)
+		if err != nil {
+			v.issueWarning("error getting enum list value from %s: %v", path, err)
+		} else {
+			return val
+		}
+	} else {
+		v.issueWarning("no enum list getter function defined")
+	}
+	return v.getEnumListWithReflection(msg, path)
+}
+
+func (v *Validator) getEnumListWithReflection(msg protoreflect.ProtoMessage, path string) []protoreflect.EnumNumber {
+	values := v.getValueWithReflection(msg, path, []protoreflect.Kind{protoreflect.EnumKind}).List()
+	enumList := make([]protoreflect.EnumNumber, values.Len())
+	for i := 0; i < values.Len(); i++ {
+		enumList[i] = values.Get(i).Enum()
+	}
+	return enumList
 }
 
 func (v *Validator) getSubMessageList(msg protoreflect.ProtoMessage, path string) []protoreflect.ProtoMessage {

@@ -13,6 +13,8 @@ go.alis.build/authz v0.7.0 h1:Qma8ymAexQmp95mHA6tSp+8hIfb3TeI+72a3xAC/Vg8=
 go.alis.build/authz v0.7.0/go.mod h1:uMsiy2NKpHokLxda/51/UdajoSkZcD0KzUMRce0O7I4=
 golang.org/x/exp v0.0.0-20240716175740-e3f259677ff7 h1:wDLEX9a7YQoKdKNQt88rtydkqDxeGaBUTnIYc3iG/mA=
 golang.org/x/exp v0.0.0-20240716175740-e3f259677ff7/go.mod h1:M4RDyNAINzryxdtnbRXRL/OHtkFuWGRjvuhBJpk2IlY=
+golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 h1:2dVuKD2vS7b0QIHQbpyTISPd0LeHDbnYEryqj5Q1ug8=
+golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56/go.mod h1:M4RDyNAINzryxdtnbRXRL/OHtkFuWGRjvuhBJpk2IlY=
 golang.org/x/net v0.27.0 h1:5K3Njcw06/l2y9vpGCSdcxWOYHOUk3dVNGDXN+FvAys=
 golang.org/x/net v0.27.0/go.mod h1:dDi0PyhWNoiUOrAS8uXv/vnScO4wnHQO4mj9fn/RytE=
 golang.org/x/sys v0.22.0 h1:RI27ohtqKCnwULzJLqkv897zojh5/DwS/ENaMzUOaWI=
@@ -33,3 +35,7 @@ open.alis.services/protobuf v1.27.0 h1:6u9V+sa7zoHxgHzMDi7bVPggHxQ6Vqmhm1AuM97HD
 open.alis.services/protobuf v1.27.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
 open.alis.services/protobuf v1.28.0 h1:ubFaEnaG7SyllZ8e86/WeZAZjzw+N8/urrb24oDeIvc=
 open.alis.services/protobuf v1.28.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
+open.alis.services/protobuf v1.29.0 h1:nbnHJR3ZTuoWw66ScpgfpLOuzIZnxvtS1f8oMlP2sN8=
+open.alis.services/protobuf v1.29.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
+open.alis.services/protobuf v1.30.0 h1:eKjVqIrCtgQhlqPR02Gf+JqvqSb7pzbPYkuARrDOHu4=
+open.alis.services/protobuf v1.30.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
