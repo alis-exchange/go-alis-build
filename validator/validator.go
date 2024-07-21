@@ -47,6 +47,7 @@ type (
 	SubMsgOptions struct {
 		PathsToValidate               []string
 		OnlyValidateFieldsSpecifiedIn string
+		IsRepeated                    bool
 	}
 )
 
@@ -96,15 +97,31 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 	}
 
 	// validate path and ensure the type of the msg returned is the same as the subMsgValidator
-	subM := v.getSubMessage(v.protoMsg, path)
-	if getMsgType(subM) != subMsgValidator.msgType {
-		alog.Fatalf(context.Background(), "subMsgValidator must be for the same type as the sub message at path %s", path)
+	if options.IsRepeated {
+		_ = v.getSubMessageList(v.protoMsg, path)
+	} else {
+		subM := v.getSubMessage(v.protoMsg, path)
+		if getMsgType(subM) != subMsgValidator.msgType {
+			alog.Fatalf(context.Background(), "subMsgValidator must be for the same type as the sub message at path %s", path)
+		}
+
+	}
+
+	description := fmt.Sprintf("%s must be a valid %s", path, subMsgValidator.msgType)
+	notDescription := fmt.Sprintf("%s must not be a valid %s", path, subMsgValidator.msgType)
+	condDescr := fmt.Sprintf("%s is a valid %s", path, subMsgValidator.msgType)
+	condNotDescr := fmt.Sprintf("%s is not a valid %s", path, subMsgValidator.msgType)
+	if options.IsRepeated {
+		description = fmt.Sprintf("each %s in %s must be valid", subMsgValidator.msgType, path)
+		notDescription = fmt.Sprintf("each %s in %s must not be valid", subMsgValidator.msgType, path)
+		condDescr = fmt.Sprintf("each %s in %s is valid", subMsgValidator.msgType, path)
+		condNotDescr = fmt.Sprintf("each %s in %s is not valid", subMsgValidator.msgType, path)
 	}
 
 	// create open rule
 	openRule := &pbOpen.Rule{
 		Id:          path,
-		Description: fmt.Sprintf("%s must be a valid %s", path, subMsgValidator.msgType),
+		Description: description,
 		FieldPaths:  []string{path},
 	}
 
@@ -123,47 +140,79 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 	// create rule
 	rule := &Rule{
 		openRule:         openRule,
-		notDescription:   fmt.Sprintf("%s must not be a valid %s", path, subMsgValidator.msgType),
-		conditionDesc:    fmt.Sprintf("%s is a valid %s", path, subMsgValidator.msgType),
-		conditionNotDesc: fmt.Sprintf("%s is not a valid %s", path, subMsgValidator.msgType),
+		notDescription:   notDescription,
+		conditionDesc:    condDescr,
+		conditionNotDesc: condNotDescr,
 	}
 
 	// set getViolations function
-	rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
-		// get sub message
-		subM := rule.v.getSubMessage(msg, path)
-		if subM == nil {
-			return []*pbOpen.Rule{rule.openRule}, nil
-		}
-
-		// get paths to validate if not all
-		pathsToValidate := []string{}
-		if options.OnlyValidateFieldsSpecifiedIn != "" {
-			pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
-		} else if options.PathsToValidate != nil {
-			pathsToValidate = options.PathsToValidate
-		}
-
-		// get violations
-		viols, err := subMsgValidator.GetViolations(subM, pathsToValidate)
-		if err != nil {
-			return nil, err
-		}
-
-		// return violations with path added as prefix to all fields
-		allViols := []*pbOpen.Rule{}
-		for _, viol := range viols {
-			fieldPaths := []string{}
-			for _, fieldPath := range viol.FieldPaths {
-				fieldPaths = append(fieldPaths, path+"."+fieldPath)
+	if options.IsRepeated {
+		rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
+			subMsgs := v.getSubMessageList(msg, path)
+			// get paths to validate if not all
+			pathsToValidate := []string{}
+			if options.OnlyValidateFieldsSpecifiedIn != "" {
+				pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
+			} else if options.PathsToValidate != nil {
+				pathsToValidate = options.PathsToValidate
 			}
-			allViols = append(allViols, &pbOpen.Rule{
-				Id:          viol.Id,
-				Description: fmt.Sprintf("invalid %s: %s", path, viol.Description),
-				FieldPaths:  fieldPaths,
-			})
+			allViols := []*pbOpen.Rule{}
+			for i, subM := range subMsgs {
+				viols, err := subMsgValidator.GetViolations(subM, pathsToValidate)
+				if err != nil {
+					return nil, err
+				}
+				for _, viol := range viols {
+					fieldPaths := []string{}
+					for _, fieldPath := range viol.FieldPaths {
+						fieldPaths = append(fieldPaths, path+"."+fieldPath)
+					}
+					allViols = append(allViols, &pbOpen.Rule{
+						Id:          viol.Id,
+						Description: fmt.Sprintf("invalid %s at index %d: %s", path, i, viol.Description),
+						FieldPaths:  fieldPaths,
+					})
+				}
+			}
+			return allViols, nil
 		}
-		return allViols, nil
+	} else {
+		rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
+			// get sub message
+			subM := rule.v.getSubMessage(msg, path)
+			if subM == nil {
+				return []*pbOpen.Rule{rule.openRule}, nil
+			}
+
+			// get paths to validate if not all
+			pathsToValidate := []string{}
+			if options.OnlyValidateFieldsSpecifiedIn != "" {
+				pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
+			} else if options.PathsToValidate != nil {
+				pathsToValidate = options.PathsToValidate
+			}
+
+			// get violations
+			viols, err := subMsgValidator.GetViolations(subM, pathsToValidate)
+			if err != nil {
+				return nil, err
+			}
+
+			// return violations with path added as prefix to all fields
+			allViols := []*pbOpen.Rule{}
+			for _, viol := range viols {
+				fieldPaths := []string{}
+				for _, fieldPath := range viol.FieldPaths {
+					fieldPaths = append(fieldPaths, path+"."+fieldPath)
+				}
+				allViols = append(allViols, &pbOpen.Rule{
+					Id:          viol.Id,
+					Description: fmt.Sprintf("invalid %s: %s", path, viol.Description),
+					FieldPaths:  fieldPaths,
+				})
+			}
+			return allViols, nil
+		}
 	}
 
 	// add rule

@@ -87,13 +87,9 @@ func init() {
 		return nil, status.Error(codes.Internal, "invalid path")
 	}
 
-	rule := StringField("display_name").Length().Equals(Int(2))
+	rule := SubMsgListLength("repeated_sub_message").Equals(Int(1))
 	val.AddRule(rule)
-	// val.AddRule(rule.ApplyIf(AND(StringField("name").Equals(String("test")), IntField("int32").Equals(Int(1)))))
-	// val.AddRule(FloatField("float").Equals(IntFieldAsFloat("int64")))
-	// eRule := EnumField("test_enum").Equals(Enum(pbOpen.TestEnum_TEST_ENUM_ONE))
-	// val.AddRule(eRule).ApplyIf(StringField("display_name").Equals(String("test")))
-	// val.AddSubMessageValidator("sub_message", subMVal, &SubMsgOptions{OnlyValidateFieldsSpecifiedIn: "repeated_string"})
+	val.AddSubMessageValidator("repeated_sub_message", subMVal, &SubMsgOptions{IsRepeated: true})
 }
 
 func TestValidate(t *testing.T) {
@@ -103,6 +99,16 @@ func TestValidate(t *testing.T) {
 		RepeatedString: []string{"string"},
 		SubMessage: &pbOpen.Test_SubMessage{
 			String_: "ab",
+		},
+		RepeatedBool:   []bool{true},
+		RepeatedDouble: []float64{1},
+		RepeatedSubMessage: []*pbOpen.Test_SubMessage{
+			{
+				String_: "abd",
+			},
+			{
+				String_: "abc",
+			},
 		},
 	}
 	err := val.Validate(m, []string{})
