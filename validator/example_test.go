@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	ExampleValidator()
+	// ExampleValidator()
 }
 
 func ExampleValidator() {

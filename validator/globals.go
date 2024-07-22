@@ -12,6 +12,10 @@ var validators = make(map[string]*Validator)
 func Validate(request interface{}) (error, bool) {
 	v, msg, err := locateValidator(request)
 	if err != nil {
+		// if not found error, do not return error to client
+		if status.Code(err) == codes.NotFound {
+			return nil, false
+		}
 		return err, false
 	}
 	return v.Validate(msg, []string{}), true
