@@ -3,7 +3,6 @@ package validator_test
 import (
 	"context"
 	"fmt"
-	"testing"
 
 	"go.alis.build/alog"
 	"go.alis.build/validator"
@@ -71,33 +70,18 @@ func init() {
 	updateBookVal.AddSubMessageValidator("book", bookVal, &validator.SubMsgOptions{OnlyValidateFieldsSpecifiedIn: "update_mask"})
 }
 
-func exampleServerInterceptor(request interface{}) error {
-	err, found := validator.Validate(request)
+func ExampleValidate() {
+	err, found := validator.Validate(updateBookRequest)
 	if err != nil {
-		return err
+		fmt.Printf("Update book validator errors: %v\n", err)
 	}
 	if !found {
 		alog.Warn(context.Background(), "No validator found for request")
 	}
-	return nil
-}
-
-func Test_CreateBook(t *testing.T) {
-	err := exampleServerInterceptor(createBookRequest)
-	if err != nil {
-		fmt.Printf("Create book validator errors: %v\n", err)
-	}
-}
-
-func Test_UpdateBook(t *testing.T) {
-	err := exampleServerInterceptor(updateBookRequest)
-	if err != nil {
-		fmt.Printf("Update book validator errors: %v\n", err)
-	}
 }
 
 // get create book rules
-func Test_RetrieveRulesForCreateBook(t *testing.T) {
+func ExampleRetrieveRulesRpc() {
 	retrieveCreateBookRulesReq := &pbOpen.RetrieveRulesRequest{
 		MsgType: "alis.open.validation.v1.CreateBookRequest",
 	}
@@ -106,16 +90,4 @@ func Test_RetrieveRulesForCreateBook(t *testing.T) {
 		fmt.Printf("Retrieve create book rules errors: %v\n", err)
 	}
 	fmt.Printf("Retrieve create book rules response: %v\n", resp)
-}
-
-// get update book rules
-func Test_RetrieveRulesForUpdateBook(t *testing.T) {
-	retrieveUpdateBookRulesReq := &pbOpen.RetrieveRulesRequest{
-		MsgType: "alis.open.validation.v1.UpdateBookRequest",
-	}
-	resp, err := validator.RetrieveRulesRpc(retrieveUpdateBookRulesReq)
-	if err != nil {
-		fmt.Printf("Retrieve update book rules errors: %v\n", err)
-	}
-	fmt.Printf("Retrieve update book rules response: %v\n", resp)
 }
