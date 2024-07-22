@@ -8,6 +8,7 @@ import (
 
 var validators = make(map[string]*Validator)
 
+// Validate the proto message. Use this function in your server interceptor.
 func Validate(request interface{}) (error, bool) {
 	v, msg, err := locateValidator(request)
 	if err != nil {

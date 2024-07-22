@@ -7,6 +7,7 @@ import (
 	pbOpen "open.alis.services/protobuf/alis/open/validation/v1"
 )
 
+// Helper function to implement your Validate rpc
 func HandleValidateRpc(req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMessageResponse, error) {
 	v, ok := validators[req.MsgType]
 	if !ok {
@@ -28,6 +29,7 @@ func HandleValidateRpc(req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMess
 	}, nil
 }
 
+// Helper function to implement your RetrieveRules rpc
 func RetrieveRulesRpc(req *pbOpen.RetrieveRulesRequest) (*pbOpen.RetrieveRulesResponse, error) {
 	v, ok := validators[req.MsgType]
 	if !ok {

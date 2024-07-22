@@ -34,6 +34,7 @@ func (i *integer) setValidator(v *Validator) {
 	i.v = v
 }
 
+// Fixed integer value
 func Int(value int64) *integer {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
 		return []int64{value}
@@ -42,6 +43,7 @@ func Int(value int64) *integer {
 	return i
 }
 
+// Integer field
 func IntField(path string) *integer {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
 		return []int64{v.getInt(msg, path)}
@@ -50,6 +52,7 @@ func IntField(path string) *integer {
 	return i
 }
 
+// Integer list field
 func EachIntIn(path string) *integer {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
 		return v.getIntList(msg, path)
@@ -58,6 +61,28 @@ func EachIntIn(path string) *integer {
 	return i
 }
 
+// Rule that ensures i is populated
+func (i *integer) Populated() *Rule {
+	id := fmt.Sprintf("i-pop(%s)", i.getDescription())
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be populated", i.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be populated", i.getDescription()),
+		condition:    fmt.Sprintf("%s is populated", i.getDescription()),
+		notCondition: fmt.Sprintf("%s is not populated", i.getDescription()),
+	}
+	args := []argI{i}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range i.getValues(i.v, msg) {
+			if val == 0 {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures i is equal to i2
 func (i *integer) Equals(i2 *integer) *Rule {
 	id := fmt.Sprintf("i-eq(%s,%s)", i.getDescription(), i2.getDescription())
 	descr := &Descriptions{
@@ -80,6 +105,7 @@ func (i *integer) Equals(i2 *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures i is greater than i2
 func (i *integer) GT(i2 *integer) *Rule {
 	id := fmt.Sprintf("i-gt(%s,%s)", i.getDescription(), i2.getDescription())
 	descr := &Descriptions{
@@ -102,6 +128,7 @@ func (i *integer) GT(i2 *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures i is greater than or equal to i2
 func (i *integer) GTE(i2 *integer) *Rule {
 	id := fmt.Sprintf("i-gte(%s,%s)", i.getDescription(), i2.getDescription())
 	descr := &Descriptions{
@@ -124,6 +151,7 @@ func (i *integer) GTE(i2 *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures i is less than i2
 func (i *integer) LT(i2 *integer) *Rule {
 	id := fmt.Sprintf("i-lt(%s,%s)", i.getDescription(), i2.getDescription())
 	descr := &Descriptions{
@@ -146,6 +174,7 @@ func (i *integer) LT(i2 *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures i is less than or equal to i2
 func (i *integer) LTE(i2 *integer) *Rule {
 	id := fmt.Sprintf("i-lte(%s,%s)", i.getDescription(), i2.getDescription())
 	descr := &Descriptions{
@@ -168,6 +197,7 @@ func (i *integer) LTE(i2 *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures i is in the range of min to max
 func (i *integer) InRange(min *integer, max *integer) *Rule {
 	if min.repeated || max.repeated {
 		alog.Fatalf(context.Background(), "min and max values for InRange must be single values")
@@ -191,6 +221,7 @@ func (i *integer) InRange(min *integer, max *integer) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Returns the value of i + i2
 func (i *integer) Plus(i2 *integer) *integer {
 	if i.repeated || i2.repeated {
 		alog.Fatalf(context.Background(), "Plus() is not supported for repeated fields")
@@ -204,6 +235,7 @@ func (i *integer) Plus(i2 *integer) *integer {
 	return newI
 }
 
+// Returns the value of i - i2
 func (i *integer) Minus(i2 *integer) *integer {
 	if i.repeated || i2.repeated {
 		alog.Fatalf(context.Background(), "Minus() is not supported for repeated fields")
@@ -217,6 +249,7 @@ func (i *integer) Minus(i2 *integer) *integer {
 	return newI
 }
 
+// Returns the value of i * i2
 func (i *integer) Times(i2 *integer) *integer {
 	if i.repeated || i2.repeated {
 		alog.Fatalf(context.Background(), "Times() is not supported for repeated fields")
@@ -230,6 +263,7 @@ func (i *integer) Times(i2 *integer) *integer {
 	return newI
 }
 
+// Returns the value of i / i2
 func (i *integer) DividedBy(i2 *integer) *integer {
 	if i.repeated || i2.repeated {
 		alog.Fatalf(context.Background(), "DividedBy() is not supported for repeated fields")
@@ -243,6 +277,7 @@ func (i *integer) DividedBy(i2 *integer) *integer {
 	return newI
 }
 
+// Returns the remainder of i / i2
 func (i *integer) Mod(i2 *integer) *integer {
 	if i.repeated || i2.repeated {
 		alog.Fatalf(context.Background(), "Mod() is not supported for repeated fields")
@@ -256,6 +291,7 @@ func (i *integer) Mod(i2 *integer) *integer {
 	return newI
 }
 
+// Returns the sum of all integers
 func IntSum(integers ...*integer) *integer {
 	for _, i := range integers {
 		if i.repeated {
@@ -278,6 +314,23 @@ func IntSum(integers ...*integer) *integer {
 			sum += i.getValues(v, msg)[0]
 		}
 		return []int64{sum}
+	}
+	return newI
+}
+
+// Returns the absolute value of i
+func (i *integer) Abs() *integer {
+	if i.repeated {
+		alog.Fatalf(context.Background(), "Abs() is not supported for repeated fields")
+	}
+	description := fmt.Sprintf("abs(%s)", i.getDescription())
+	newI := &integer{description: description, paths: i.paths}
+	newI.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []int64 {
+		val := i.getValues(v, msg)[0]
+		if val < 0 {
+			return []int64{-val}
+		}
+		return []int64{val}
 	}
 	return newI
 }

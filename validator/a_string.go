@@ -35,6 +35,7 @@ func (s *str) setValidator(v *Validator) {
 	s.v = v
 }
 
+// Fixed string value
 func String(val string) *str {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
 		return []string{val}
@@ -42,6 +43,7 @@ func String(val string) *str {
 	return &str{description: fmt.Sprintf("'%s'", val), getValues: getValuesFunc}
 }
 
+// String field
 func StringField(path string) *str {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
 		return []string{v.getString(msg, path)}
@@ -49,6 +51,7 @@ func StringField(path string) *str {
 	return &str{description: path, getValues: getValuesFunc, paths: []string{path}}
 }
 
+// String list field
 func EachStringIn(path string) *str {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []string {
 		return v.getStringList(msg, path)
@@ -56,6 +59,28 @@ func EachStringIn(path string) *str {
 	return &str{description: fmt.Sprintf("each string in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
 }
 
+// Rule that ensures s is populated
+func (s *str) Populated() *Rule {
+	id := fmt.Sprintf("s-pop(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be populated", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be populated", s.getDescription()),
+		condition:    fmt.Sprintf("%s is populated", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not populated", s.getDescription()),
+	}
+	args := []argI{s}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			if val == "" {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures s is equal to s2
 func (s *str) Equals(str *str) *Rule {
 	id := fmt.Sprintf("s-eq(%s,%s)", s.description, str.description)
 	descr := &Descriptions{
@@ -78,6 +103,7 @@ func (s *str) Equals(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s starts with s2
 func (s *str) StartsWith(str *str) *Rule {
 	id := fmt.Sprintf("s-sw(%s,%s)", s.description, str.description)
 	descr := &Descriptions{
@@ -100,6 +126,7 @@ func (s *str) StartsWith(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s ends with s2
 func (s *str) EndsWith(str *str) *Rule {
 	id := fmt.Sprintf("s-ew(%s,%s)", s.description, str.description)
 	descr := &Descriptions{
@@ -123,6 +150,7 @@ func (s *str) EndsWith(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s contains s2
 func (s *str) Contains(str *str) *Rule {
 	id := fmt.Sprintf("s-c(%s,%s)", s.description, str.description)
 	descr := &Descriptions{
@@ -145,6 +173,7 @@ func (s *str) Contains(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s matches regex str
 func (s *str) MatchesRegex(str *str) *Rule {
 	id := fmt.Sprintf("s-mr(%s,%s)", s.description, str.description)
 	descr := &Descriptions{
@@ -171,6 +200,7 @@ func (s *str) MatchesRegex(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Returns the length of s
 func (s *str) Length() *integer {
 	if s.repeated {
 		alog.Fatalf(context.Background(), "Length() is not supported for EachStringIn fields")
@@ -183,6 +213,7 @@ func (s *str) Length() *integer {
 	return newI
 }
 
+// Returns the length of s as a float
 func (s *str) LengthAsFloat() *float {
 	if s.repeated {
 		alog.Fatalf(context.Background(), "LengthAsFloat() is not supported for EachStringIn fields")

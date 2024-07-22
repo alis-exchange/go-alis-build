@@ -39,3 +39,7 @@ open.alis.services/protobuf v1.29.0 h1:nbnHJR3ZTuoWw66ScpgfpLOuzIZnxvtS1f8oMlP2s
 open.alis.services/protobuf v1.29.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
 open.alis.services/protobuf v1.30.0 h1:eKjVqIrCtgQhlqPR02Gf+JqvqSb7pzbPYkuARrDOHu4=
 open.alis.services/protobuf v1.30.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
+open.alis.services/protobuf v1.31.0 h1:znmHugjN29m7EZ4KBIL6P4MGDdqSBYWplFf07NrYuu0=
+open.alis.services/protobuf v1.31.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=
+open.alis.services/protobuf v1.32.0 h1:XAk2cMnSF7vwlRaRC1SewSdgM+ZTtBd3wvqzVJRLe0g=
+open.alis.services/protobuf v1.32.0/go.mod h1:Jprb/ZapMOIah2wRAVTSe2KGLa8tyV+NWZVkchTfrjM=

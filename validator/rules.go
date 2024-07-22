@@ -89,89 +89,7 @@ func newPrimitiveRule(id string, descriptions *Descriptions, args []argI, isViol
 	return rule
 }
 
-// Either PathsToValidate or OnlyValidateFieldsSpecifiedIn can be set, but not both. None are required.
-type NestedRuleOptions struct {
-	PathsToValidate               []string
-	OnlyValidateFieldsSpecifiedIn string
-}
-
-func NewNestedRuleForSameTypeAsParent(path string, options *NestedRuleOptions) *Rule {
-	return NewNestedRule(path, nil, options)
-}
-
-func NewNestedRule(path string, nestedValidator *Validator, options *NestedRuleOptions) *Rule {
-	if options == nil {
-		options = &NestedRuleOptions{}
-	} else {
-		if options.PathsToValidate != nil && options.OnlyValidateFieldsSpecifiedIn != "" {
-			alog.Fatalf(context.Background(), "Either PathsToValidate or OnlyValidateFieldsSpecifiedIn can be set, but not both")
-		}
-	}
-
-	// create open rule
-	description := fmt.Sprintf("%s must be valid", path)
-	if nestedValidator != nil {
-		description = fmt.Sprintf("%s must be a valid %s", path, nestedValidator.msgType)
-	}
-	openRule := &pbOpen.Rule{
-		Id:          path,
-		Description: description,
-		FieldPaths:  []string{path},
-	}
-
-	// only set nested rules if the type of the nested validator is different from the parent
-	if nestedValidator != nil {
-		openRule.NestedRules = nestedValidator.GetRules()
-	}
-
-	// create rule
-	rule := &Rule{
-		openRule:         openRule,
-		notDescription:   fmt.Sprintf("%s must not be a valid %s", path, nestedValidator.msgType),
-		conditionDesc:    fmt.Sprintf("%s is a valid %s", path, nestedValidator.msgType),
-		conditionNotDesc: fmt.Sprintf("%s is not a valid %s", path, nestedValidator.msgType),
-	}
-
-	// set getViolations function
-	rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
-		// get sub message
-		subM := rule.v.getSubMessage(msg, path)
-		if subM == nil {
-			return []*pbOpen.Rule{rule.openRule}, nil
-		}
-
-		// get paths to validate if not all
-		pathsToValidate := []string{}
-		if options.OnlyValidateFieldsSpecifiedIn != "" {
-			pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
-		} else if options.PathsToValidate != nil {
-			pathsToValidate = options.PathsToValidate
-		}
-
-		// get violations
-		viols, err := nestedValidator.GetViolations(subM, pathsToValidate)
-		if err != nil {
-			return nil, err
-		}
-
-		// return violations with path added as prefix to all fields
-		allViols := []*pbOpen.Rule{}
-		for _, viol := range viols {
-			fieldPaths := []string{}
-			for _, fieldPath := range viol.FieldPaths {
-				fieldPaths = append(fieldPaths, path+"."+fieldPath)
-			}
-			allViols = append(allViols, &pbOpen.Rule{
-				Id:          viol.Id,
-				Description: fmt.Sprintf("invalid %s: %s", path, viol.Description),
-				FieldPaths:  fieldPaths,
-			})
-		}
-		return allViols, nil
-	}
-	return rule
-}
-
+// Only apply the rule if the condition is met
 func (r *Rule) ApplyIf(condition *Rule) *Rule {
 	if condition.condition != nil {
 		alog.Fatalf(context.Background(), "a condition to a rule cannot have a condition")
@@ -238,6 +156,7 @@ func (r *Rule) shouldRun(msg protoreflect.ProtoMessage) (bool, error) {
 	return len(viols) == 0, nil
 }
 
+// NOT creates a new rule that is violated if the given rule is not violated
 func NOT(rule *Rule) *Rule {
 	if rule.condition != nil {
 		alog.Fatalf(context.Background(), "cannot NOT a rule with a condition")
@@ -275,6 +194,7 @@ func NOT(rule *Rule) *Rule {
 	return notRule
 }
 
+// AND creates a new rule that is violated if any of the rules are violated
 func AND(rules ...*Rule) *Rule {
 	// extract data from rules to use in new rule
 	ids := make([]string, len(rules))
@@ -342,6 +262,7 @@ func AND(rules ...*Rule) *Rule {
 	return rule
 }
 
+// OR creates a new rule that is only violated if all of the rules are violated
 func OR(rules ...*Rule) *Rule {
 	// extract data from rules to use in new rule
 	ids := make([]string, len(rules))

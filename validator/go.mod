@@ -8,7 +8,7 @@ require (
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2
-	open.alis.services/protobuf v1.30.0
+	open.alis.services/protobuf v1.32.0
 )
 
 require (

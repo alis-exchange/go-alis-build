@@ -33,6 +33,7 @@ func (f *float) setValidator(v *Validator) {
 	f.v = v
 }
 
+// Fixed float value
 func Float(value float64) *float {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
 		return []float64{value}
@@ -41,6 +42,25 @@ func Float(value float64) *float {
 	return n
 }
 
+// Float field
+func FloatField(path string) *float {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return []float64{v.getFloat(msg, path)}
+	}
+	f := &float{description: path, getValues: getValuesFunc, paths: []string{path}}
+	return f
+}
+
+// Float list field
+func EachFloatIn(path string) *float {
+	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		return v.getFloatList(msg, path)
+	}
+	f := &float{description: fmt.Sprintf("each float in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
+	return f
+}
+
+// Integer field as float to allow calculations and comparisons with floats
 func IntFieldAsFloat(path string) *float {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
 		return []float64{float64(v.getInt(msg, path))}
@@ -49,6 +69,7 @@ func IntFieldAsFloat(path string) *float {
 	return f
 }
 
+// Integer list field as float list to allow calculations and comparisons with floats
 func EachIntInAsFloat(path string) *float {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
 		ints := v.getIntList(msg, path)
@@ -62,22 +83,28 @@ func EachIntInAsFloat(path string) *float {
 	return f
 }
 
-func EachFloatIn(path string) *float {
-	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
-		return v.getFloatList(msg, path)
+// Rule that checks if the float is populated
+func (f *float) Populated() *Rule {
+	id := fmt.Sprintf("f-pop(%s)", f.getDescription())
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be populated", f.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be populated", f.getDescription()),
+		condition:    fmt.Sprintf("%s is populated", f.getDescription()),
+		notCondition: fmt.Sprintf("%s is not populated", f.getDescription()),
 	}
-	f := &float{description: fmt.Sprintf("each float in %s", path), getValues: getValuesFunc, paths: []string{path}, repeated: true}
-	return f
+	args := []argI{f}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range f.getValues(f.v, msg) {
+			if val == 0 {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
-func FloatField(path string) *float {
-	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
-		return []float64{v.getFloat(msg, path)}
-	}
-	f := &float{description: path, getValues: getValuesFunc, paths: []string{path}}
-	return f
-}
-
+// Rule that ensures f is equal to f2
 func (f *float) Equals(f2 *float) *Rule {
 	id := fmt.Sprintf("f-eq(%s,%s)", f.getDescription(), f2.getDescription())
 	descr := &Descriptions{
@@ -100,6 +127,7 @@ func (f *float) Equals(f2 *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures f is greater than f2
 func (f *float) GT(f2 *float) *Rule {
 	id := fmt.Sprintf("f-gt(%s,%s)", f.getDescription(), f2.getDescription())
 	descr := &Descriptions{
@@ -122,6 +150,7 @@ func (f *float) GT(f2 *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures f is greater than or equal to f2
 func (f *float) GTE(f2 *float) *Rule {
 	id := fmt.Sprintf("f-gte(%s,%s)", f.getDescription(), f2.getDescription())
 	descr := &Descriptions{
@@ -144,6 +173,7 @@ func (f *float) GTE(f2 *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures f is less than f2
 func (f *float) LT(f2 *float) *Rule {
 	id := fmt.Sprintf("f-lt(%s,%s)", f.getDescription(), f2.getDescription())
 	descr := &Descriptions{
@@ -166,6 +196,7 @@ func (f *float) LT(f2 *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures f is less than or equal to f2
 func (f *float) LTE(f2 *float) *Rule {
 	id := fmt.Sprintf("f-lte(%s,%s)", f.getDescription(), f2.getDescription())
 	descr := &Descriptions{
@@ -188,6 +219,7 @@ func (f *float) LTE(f2 *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures f is positive
 func (f *float) InRange(min *float, max *float) *Rule {
 	if min.repeated || max.repeated {
 		alog.Fatalf(context.Background(), "min and max must not be repeated")
@@ -211,6 +243,7 @@ func (f *float) InRange(min *float, max *float) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Returns the value of f + f2
 func (f *float) Plus(f2 *float) *float {
 	if f.repeated || f2.repeated {
 		alog.Fatalf(context.Background(), "Plus() is not supported for repeated fields")
@@ -224,7 +257,11 @@ func (f *float) Plus(f2 *float) *float {
 	return newF
 }
 
+// Returns the value of f - f2
 func (f *float) Minus(f2 *float) *float {
+	if f.repeated || f2.repeated {
+		alog.Fatalf(context.Background(), "Minus() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s - %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
@@ -234,7 +271,11 @@ func (f *float) Minus(f2 *float) *float {
 	return newF
 }
 
+// Returns the value of f * f2
 func (f *float) Times(f2 *float) *float {
+	if f.repeated || f2.repeated {
+		alog.Fatalf(context.Background(), "Times() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s * %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
@@ -244,7 +285,11 @@ func (f *float) Times(f2 *float) *float {
 	return newF
 }
 
+// Returns the value of f / f2
 func (f *float) DividedBy(f2 *float) *float {
+	if f.repeated || f2.repeated {
+		alog.Fatalf(context.Background(), "DividedBy() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s / %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
@@ -254,7 +299,11 @@ func (f *float) DividedBy(f2 *float) *float {
 	return newF
 }
 
+// Returns the remainder of f / f2
 func (f *float) Mod(f2 *float) *float {
+	if f.repeated || f2.repeated {
+		alog.Fatalf(context.Background(), "Mod() is not supported for repeated fields")
+	}
 	description := fmt.Sprintf("(%s %% %s)", f.getDescription(), f2.getDescription())
 	newPaths := append(f.paths, f2.paths...)
 	newF := &float{description: description, paths: newPaths}
@@ -264,7 +313,13 @@ func (f *float) Mod(f2 *float) *float {
 	return newF
 }
 
+// Returns the sum of all floats
 func Sum(floats ...*float) *float {
+	for _, f := range floats {
+		if f.repeated {
+			alog.Fatalf(context.Background(), "Sum() is not supported for repeated fields")
+		}
+	}
 	description := fmt.Sprintf("sum of %v", floats)
 	newF := &float{description: description}
 	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
@@ -273,6 +328,23 @@ func Sum(floats ...*float) *float {
 			sum += f.getValues(v, msg)[0]
 		}
 		return []float64{sum}
+	}
+	return newF
+}
+
+// Returns the absolute value of f
+func Abs(f *float) *float {
+	if f.repeated {
+		alog.Fatalf(context.Background(), "Abs() is not supported for repeated fields")
+	}
+	description := fmt.Sprintf("abs(%s)", f.getDescription())
+	newF := &float{description: description}
+	newF.getValues = func(v *Validator, msg protoreflect.ProtoMessage) []float64 {
+		val := f.getValues(v, msg)[0]
+		if val < 0 {
+			return []float64{-val}
+		}
+		return []float64{val}
 	}
 	return newF
 }

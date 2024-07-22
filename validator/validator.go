@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	pbOpen "open.alis.services/protobuf/alis/open/validation/v1"
 )
 
@@ -39,6 +40,7 @@ type (
 		options *ValidatorOptions
 	}
 
+	// set IgnoreWarnings to true to suppress warnings about missing getters
 	ValidatorOptions struct {
 		IgnoreWarnings bool
 	}
@@ -48,9 +50,11 @@ type (
 		PathsToValidate               []string
 		OnlyValidateFieldsSpecifiedIn string
 		IsRepeated                    bool
+		MayBeEmpty                    bool
 	}
 )
 
+// Create a new validator for a proto message. The type is inferred from the proto message.
 func NewValidator(protoMsg proto.Message, options *ValidatorOptions) *Validator {
 	msgType := getMsgType(protoMsg)
 	if protoMsg == nil {
@@ -69,6 +73,7 @@ func NewValidator(protoMsg proto.Message, options *ValidatorOptions) *Validator 
 	return v
 }
 
+// Add a top-level field rule to the validator. The rule will be run when Validate is called on the validator.
 func (v *Validator) AddRule(rule *Rule) *Rule {
 	if rule.v != nil {
 		if rule.v != v {
@@ -84,7 +89,11 @@ func (v *Validator) AddRule(rule *Rule) *Rule {
 	return rule
 }
 
+// Add another validator as a sub-message validator. The sub-message validator will be run when Validate is called on the parent validator.
 func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validator, options *SubMsgOptions) *Rule {
+	fieldPathsGetter := func(v *Validator, msg protoreflect.ProtoMessage) []string {
+		return []string{}
+	}
 	if options == nil {
 		options = &SubMsgOptions{}
 	} else {
@@ -92,7 +101,32 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 			alog.Fatalf(context.Background(), "Either PathsToValidate or OnlyValidateFieldsSpecifiedIn can be set, but not both")
 		}
 		if options.OnlyValidateFieldsSpecifiedIn != "" {
-			v.getStringList(v.protoMsg, options.OnlyValidateFieldsSpecifiedIn)
+			fd, err := v.getFieldDescriptor(v.protoMsg, options.OnlyValidateFieldsSpecifiedIn)
+			if err != nil {
+				alog.Fatalf(context.Background(), "field descriptor not found for %s", options.OnlyValidateFieldsSpecifiedIn)
+			}
+			if fd.Kind() == protoreflect.StringKind && fd.Cardinality() == protoreflect.Repeated {
+				fieldPathsGetter = func(v *Validator, msg protoreflect.ProtoMessage) []string {
+					return v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
+				}
+			} else if fd.Kind() == protoreflect.MessageKind && fd.Cardinality() != protoreflect.Repeated {
+				// ensure type of msg is google.protobuf.FieldMask
+				if getMsgType(v.getSubMessage(v.protoMsg, options.OnlyValidateFieldsSpecifiedIn)) != "google.protobuf.FieldMask" {
+					alog.Fatalf(context.Background(), "OnlyValidateFieldsSpecifiedIn must be a repeated string or field_mask")
+				}
+				fieldPathsGetter = func(v *Validator, msg protoreflect.ProtoMessage) []string {
+					subM := v.getSubMessage(msg, options.OnlyValidateFieldsSpecifiedIn)
+					// cast to field_mask
+					fieldMask := (subM).(*fieldmaskpb.FieldMask)
+					return fieldMask.GetPaths()
+				}
+			} else {
+				alog.Fatalf(context.Background(), "OnlyValidateFieldsSpecifiedIn must be a repeated string or field_mask")
+			}
+		} else {
+			fieldPathsGetter = func(_ *Validator, _ protoreflect.ProtoMessage) []string {
+				return options.PathsToValidate
+			}
 		}
 	}
 
@@ -149,16 +183,19 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 	if options.IsRepeated {
 		rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
 			subMsgs := v.getSubMessageList(msg, path)
-			// get paths to validate if not all
-			pathsToValidate := []string{}
-			if options.OnlyValidateFieldsSpecifiedIn != "" {
-				pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
-			} else if options.PathsToValidate != nil {
-				pathsToValidate = options.PathsToValidate
-			}
 			allViols := []*pbOpen.Rule{}
 			for i, subM := range subMsgs {
-				viols, err := subMsgValidator.GetViolations(subM, pathsToValidate)
+				if subM == nil {
+					if !options.MayBeEmpty {
+						allViols = append(allViols, &pbOpen.Rule{
+							Id:          path,
+							Description: fmt.Sprintf("invalid %s at index %d: must not be empty", path, i),
+							FieldPaths:  []string{path},
+						})
+					}
+					continue
+				}
+				viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg))
 				if err != nil {
 					return nil, err
 				}
@@ -181,19 +218,18 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 			// get sub message
 			subM := rule.v.getSubMessage(msg, path)
 			if subM == nil {
-				return []*pbOpen.Rule{rule.openRule}, nil
-			}
-
-			// get paths to validate if not all
-			pathsToValidate := []string{}
-			if options.OnlyValidateFieldsSpecifiedIn != "" {
-				pathsToValidate = rule.v.getStringList(msg, options.OnlyValidateFieldsSpecifiedIn)
-			} else if options.PathsToValidate != nil {
-				pathsToValidate = options.PathsToValidate
+				if !options.MayBeEmpty {
+					return []*pbOpen.Rule{{
+						Id:          path,
+						Description: fmt.Sprintf("invalid %s: may not be empty", path),
+						FieldPaths:  []string{path},
+					}}, nil
+				}
+				return nil, nil
 			}
 
 			// get violations
-			viols, err := subMsgValidator.GetViolations(subM, pathsToValidate)
+			viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg))
 			if err != nil {
 				return nil, err
 			}
@@ -221,6 +257,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 	return rule
 }
 
+// Get violations for a proto message. If fieldPaths are provided, only rules with fieldPaths that are in the list will be run.
 func (v *Validator) GetViolations(msg protoreflect.ProtoMessage, fieldPaths []string) ([]*pbOpen.Rule, error) {
 	if msg == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "message cannot be nil")

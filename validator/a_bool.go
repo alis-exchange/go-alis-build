@@ -30,6 +30,7 @@ func (b *boolean) setValidator(v *Validator) {
 	b.v = v
 }
 
+// Fixed boolean value
 func Bool(value bool) *boolean {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
 		return []bool{value}
@@ -37,6 +38,7 @@ func Bool(value bool) *boolean {
 	return &boolean{description: fmt.Sprintf("%t", value), getValues: getValuesFunc}
 }
 
+// Boolean field
 func BoolField(path string) *boolean {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
 		return []bool{v.getBool(msg, path)}
@@ -44,6 +46,7 @@ func BoolField(path string) *boolean {
 	return &boolean{description: path, getValues: getValuesFunc, paths: []string{path}}
 }
 
+// Boolean list field
 func EachBoolIn(path string) *boolean {
 	getValuesFunc := func(v *Validator, msg protoreflect.ProtoMessage) []bool {
 		return v.getBoolList(msg, path)
@@ -51,6 +54,7 @@ func EachBoolIn(path string) *boolean {
 	return &boolean{description: fmt.Sprintf("each bool in %s", path), getValues: getValuesFunc, paths: []string{path}}
 }
 
+// Rule that ensures b is equal to b2
 func (b *boolean) Equals(b2 *boolean) *Rule {
 	id := fmt.Sprintf("b-eq(%s,%s)", b.getDescription(), b2.getDescription())
 	descr := &Descriptions{

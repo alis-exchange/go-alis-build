@@ -33,13 +33,16 @@ func (f *enum) setValidator(v *Validator) {
 		if err != nil {
 			alog.Fatalf(context.Background(), "field descriptor not found for %s", f.paths[0])
 		}
-		if string(fd.Enum().FullName()) != f.expectedEnumType {
-			alog.Fatalf(context.Background(), "expected enum type %s but got %s", f.expectedEnumType, fd.FullName())
+		if f.expectedEnumType != "" && string(fd.Enum().FullName()) != "" {
+			if string(fd.Enum().FullName()) != f.expectedEnumType {
+				alog.Fatalf(context.Background(), "expected enum type %s but got %s", f.expectedEnumType, fd.FullName())
+			}
 		}
 	}
 	f.v = v
 }
 
+// Fixed enum value
 func Enum(value protoreflect.Enum) *enum {
 	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) protoreflect.EnumNumber {
 		return value.Number()
@@ -48,6 +51,7 @@ func Enum(value protoreflect.Enum) *enum {
 	return n
 }
 
+// Enum field
 func EnumField(path string) *enum {
 	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) protoreflect.EnumNumber {
 		return v.getEnum(msg, path)
@@ -56,6 +60,23 @@ func EnumField(path string) *enum {
 	return f
 }
 
+// Rule that ensures f is set
+func (f *enum) Populated() *Rule {
+	id := "e-pop(" + f.getDescription() + ")"
+	descr := &Descriptions{
+		rule:         f.getDescription() + " must be set",
+		notRule:      f.getDescription() + " must not be set",
+		condition:    f.getDescription() + " is set",
+		notCondition: f.getDescription() + " is not set",
+	}
+	args := []argI{f}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		return f.getValue(f.v, msg) == 0, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures f is equal to f2
 func (f *enum) Equals(f2 *enum) *Rule {
 	id := "e-eq(" + f.getDescription() + "," + f2.getDescription() + ")"
 	descr := &Descriptions{
