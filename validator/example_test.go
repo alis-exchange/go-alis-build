@@ -11,67 +11,67 @@ import (
 	pbOpen "open.alis.services/protobuf/alis/open/validation/v1"
 )
 
-var (
-	StringField      = validator.StringField
-	String           = validator.String
-	EachStringIn     = validator.EachStringIn
-	IntField         = validator.IntField
-	Int              = validator.Int
-	FloatField       = validator.FloatField
-	Float            = validator.Float
-	EnumField        = validator.EnumField
-	Enum             = validator.Enum
-	SubMsgListLength = validator.SubMsgListLength
-	Now              = validator.Now
-	TimestampField   = validator.TimestampField
-	DateField        = validator.DateField
-	FieldMaskField   = validator.FieldMaskField
-	AND              = validator.AND
-	OR               = validator.OR
-	NOT              = validator.NOT
-)
-
-var testBook = &pbOpen.Book{
-	DisplayName:     "The Book",
-	Type:            pbOpen.Type_ANONYMOUS,
-	PublicationDate: &date.Date{Year: 2021, Month: 1, Day: 1},
-	// UpdateTime:      timestamppb.Now(),
-}
-
-var createBook = &pbOpen.CreateBookRequest{
-	Book: testBook,
-}
-var createBookRequest = createBook.ProtoReflect().Interface()
-
-var updateBook = &pbOpen.UpdateBookRequest{
-	Book:       testBook,
-	UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"display_name", "name"}},
-}
-var updateBookRequest = updateBook.ProtoReflect().Interface()
-
 func init() {
+	ExampleValidator()
+}
+
+func ExampleValidator() {
+	var (
+		StringField    = validator.StringField
+		String         = validator.String
+		Int            = validator.Int
+		EnumField      = validator.EnumField
+		Enum           = validator.Enum
+		Now            = validator.Now
+		TimestampField = validator.TimestampField
+		DateField      = validator.DateField
+		FieldMaskField = validator.FieldMaskField
+		AND            = validator.AND
+		NOT            = validator.NOT
+	)
+
 	bookVal := validator.NewValidator(&pbOpen.Book{}, &validator.ValidatorOptions{IgnoreWarnings: true})
+	// length of display_name should be between 3 and 63
 	bookVal.AddRule(StringField("display_name").Length().InRange(Int(3), Int(63)))
+	// type should be populated
 	bookVal.AddRule(EnumField("type").Populated())
+	// if type is not ANONYMOUS, author should match regex and length should be between 3 and 63
 	bookVal.AddRule(AND(
 		StringField("author").MatchesRegex(String("^[a-zA-Z0-9_]*$")),
 		StringField("author").Length().InRange(Int(3), Int(63)),
 	)).ApplyIf(NOT(
 		EnumField("type").Equals(Enum(pbOpen.Type_ANONYMOUS)),
 	))
+	// publication_date should be in the past
 	bookVal.AddRule(Now().After(DateField("publication_date")))
+	// update_time should not be populated
 	bookVal.AddRule(NOT(TimestampField("update_time").Populated()))
 
 	createBookVal := validator.NewValidator(&pbOpen.CreateBookRequest{}, &validator.ValidatorOptions{IgnoreWarnings: true})
 	createBookVal.AddSubMessageValidator("book", bookVal, &validator.SubMsgOptions{})
 
 	updateBookVal := validator.NewValidator(&pbOpen.UpdateBookRequest{}, &validator.ValidatorOptions{IgnoreWarnings: true})
+	// update_mask should only contain display_name
 	updateBookVal.AddRule(FieldMaskField("update_mask").OnlyContains([]string{"display_name"}))
+	// fields specified in update_mask should be valid according to the book validator
 	updateBookVal.AddSubMessageValidator("book", bookVal, &validator.SubMsgOptions{OnlyValidateFieldsSpecifiedIn: "update_mask"})
 }
 
 func ExampleValidate() {
-	err, found := validator.Validate(updateBookRequest)
+	// setup example request interface{}
+	testBook := &pbOpen.Book{
+		DisplayName:     "The Book",
+		Type:            pbOpen.Type_ANONYMOUS,
+		PublicationDate: &date.Date{Year: 2021, Month: 1, Day: 1},
+	}
+	updateBook := &pbOpen.UpdateBookRequest{
+		Book:       testBook,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"display_name"}},
+	}
+	request := updateBook.ProtoReflect().Interface()
+
+	// normally the following would be called in the server interceptor of your grpc server
+	err, found := validator.Validate(request)
 	if err != nil {
 		fmt.Printf("Update book validator errors: %v\n", err)
 	}
