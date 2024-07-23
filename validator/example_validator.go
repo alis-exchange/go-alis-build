@@ -1,4 +1,0 @@
-package validator
-
-func ExampleNew() {
-}
