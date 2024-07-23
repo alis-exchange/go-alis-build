@@ -2,8 +2,10 @@ package sproto
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/spanner"
@@ -36,33 +38,36 @@ type ReadOptions struct {
 	SortColumns map[string]SortOrder
 	// Limit is the maximum number of rows to read.
 	Limit int32
-	// Offset is the number of rows to skip before reading.
-	Offset int32
+	// PageToken is the token to get the next page of results.
+	//
+	// This is typically retrieved from a previous response's next page token.
+	// It's a base64 encoded string(base64.StdEncoding.EncodeToString(offset)) of the offset of the last row(s) read.
+	PageToken string
 }
 
 /*
-Sproto provides methods to easily read and write proto messages with Google Cloud Spanner(https://cloud.google.com/spanner/docs/).
+Client provides methods to easily read and write proto messages with Google Cloud Spanner(https://cloud.google.com/spanner/docs/).
 
 It also provides methods to easily perform CRUD operations on tables in Google Cloud Spanner.
 */
-type Sproto struct {
+type Client struct {
 	client *spanner.Client
 }
 
 /*
-New creates a new Sproto instance with the provided spanner.Client instance.
+New creates a new Client instance with the provided spanner.Client instance.
 */
-func New(client *spanner.Client) *Sproto {
-	return &Sproto{
+func New(client *spanner.Client) *Client {
+	return &Client{
 		client: client,
 	}
 }
 
 /*
-NewClient creates a new Sproto instance with the provided Google Cloud Spanner configuration.
+NewClient creates a new Client instance with the provided Google Cloud Spanner configuration.
 Leave databaseRole empty if you are not using fine grained roles on the database.
 */
-func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName, databaseRole string) (*Sproto, error) {
+func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName, databaseRole string) (*Client, error) {
 	clientConfig := spanner.ClientConfig{}
 	if databaseRole != "" {
 		clientConfig.DatabaseRole = databaseRole
@@ -78,15 +83,15 @@ func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName
 /*
 Close closes the underlying spanner.Client instance.
 */
-func (s *Sproto) Close() {
+func (s *Client) Close() {
 	s.client.Close()
 }
 
 /*
 Client returns the underlying spanner.Client instance.
-This client can be used to perform custom queries and mutations
+This client can be used to perform custom queries and mutations.
 */
-func (s *Sproto) Client() *spanner.Client {
+func (s *Client) Client() *spanner.Client {
 	return s.client
 }
 
@@ -99,12 +104,14 @@ For example if the primary key is (id, name), the row key must be spanner.Key{{i
 
 The column name is used to specify the column where the proto message is stored.
 */
-func (s *Sproto) ReadProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
+func (s *Client) ReadProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message, readMask *fieldmaskpb.FieldMask) error {
 	// Read the proto message from the specified table
 	row, err := s.client.Single().ReadRow(ctx, tableName, rowKey, []string{columnName})
 	if err != nil {
 		if spanner.ErrCode(err) == codes.NotFound {
-			return ErrNotFound{}
+			return ErrNotFound{
+				RowKey: rowKey.String(),
+			}
 		}
 
 		return err
@@ -149,7 +156,7 @@ The column must be of type PROTO.
 
 The method returns a slice of proto messages.
 */
-func (s *Sproto) BatchReadProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnName string, message proto.Message, readMask *fieldmaskpb.FieldMask) ([]proto.Message, error) {
+func (s *Client) BatchReadProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnName string, message proto.Message, readMask *fieldmaskpb.FieldMask) ([]proto.Message, error) {
 	// Get the primary key columns
 	primaryKeyColumns, err := getPrimaryKeyColumns(ctx, s.client, tableName)
 	if err != nil {
@@ -163,7 +170,10 @@ func (s *Sproto) BatchReadProtos(ctx context.Context, tableName string, rowKeys 
 
 		// Ensure the length of the row key matches the length of the primary key columns
 		if len(primaryKeyColumns) != len(primaryKeyValues) {
-			return nil, fmt.Errorf("row key length at rowKeys[%d] does not match the primary key columns length", i)
+			return nil, ErrInvalidArguments{
+				err:    fmt.Errorf("row key length at rowKeys[%d] does not match the primary key columns length", i),
+				fields: []string{"rowKeys"},
+			}
 		}
 	}
 
@@ -254,7 +264,7 @@ The proto message will be stored as is in the specified column.
 The column's type must match the full message name including the proto package.
 See https://cloud.google.com/spanner/docs/reference/standard-sql/protocol-buffers
 */
-func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message) error {
+func (s *Client) WriteProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message) error {
 	// Get the primary key columns
 	primaryKeyColumns, err := getPrimaryKeyColumns(ctx, s.client, tableName)
 	if err != nil {
@@ -267,7 +277,10 @@ func (s *Sproto) WriteProto(ctx context.Context, tableName string, rowKey spanne
 
 	// Ensure the length of the row key matches the length of the primary key columns
 	if len(primaryKeyColumns) != len(primaryKeyValues) {
-		return fmt.Errorf("row key length does not match the primary key columns length")
+		return ErrInvalidArguments{
+			err:    fmt.Errorf("row key length does not match the primary key columns length"),
+			fields: []string{"rowKey"},
+		}
 	}
 
 	// Construct a map of column names and values
@@ -306,41 +319,109 @@ The column name is used to specify the column where the proto messages are store
 The column must be of type PROTO.
 
 The method returns a slice of proto messages.
+The second return value is the next page token which can be used to get the next page of results.
 */
-func (s *Sproto) ListProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) ([]proto.Message, error) {
-	// Read the proto message from the specified table
-	it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.AllKeys(), []string{columnName}, opts)
+func (s *Client) ListProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *ReadOptions) ([]proto.Message, string, error) {
+	// Read the proto messages from the specified table
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", columnName, tableName, columnName)
+	// Add sorting conditions if provided
+	if opts != nil && opts.SortColumns != nil && len(opts.SortColumns) > 0 {
+		query += " ORDER BY "
+
+		sortColumns := make([]string, 0, len(opts.SortColumns))
+		for column, order := range opts.SortColumns {
+			sortColumns = append(sortColumns, fmt.Sprintf("%s %s", column, order.String()))
+		}
+
+		query += strings.Join(sortColumns, ", ")
+	}
+	// Add limit if provided
+	if opts != nil && opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
+	}
+	// Add offset if next page token is provided
+	var initialOffset int64
+	if opts != nil && opts.PageToken != "" {
+		offsetBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+
+		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+		initialOffset = offset
+		query += fmt.Sprintf(" OFFSET %v", offset)
+	}
+	it := s.client.Single().Query(ctx, spanner.Statement{
+		SQL: query,
+	})
 	defer it.Stop()
 
 	// Iterate over the rows and construct the result
 	var res []proto.Message
 	for {
 		row, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		// Get the column value as bytes
 		var dataBytes []byte
 		err = row.Columns(&dataBytes)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		// Unmarshal the bytes into the provided proto message
 		newMessage := newEmptyMessage(message)
 		err = proto.Unmarshal(dataBytes, newMessage)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		res = append(res, newMessage)
 	}
 
-	return res, nil
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s IS NOT NULL", tableName, columnName)
+	itCount := s.client.Single().Query(ctx, spanner.Statement{
+		SQL: countQuery,
+	})
+	defer itCount.Stop()
+	var rowCount int64
+	for {
+		row, err := itCount.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, "", err
+		}
+
+		if err := row.Column(0, &rowCount); err != nil {
+			return nil, "", err
+		}
+
+		break
+	}
+
+	// Compare total row count and results + offset to determine if there are more results
+	// and if so, return the next page token
+	var nextPageToken string
+	if (initialOffset + int64(len(res))) != rowCount {
+		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
+		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
+	}
+
+	return res, nextPageToken, nil
 }
 
 /*
@@ -353,7 +434,7 @@ The method returns a StreamResponse[proto.Message] which can be used to iterate 
 Call Next() on the StreamResponse to get the next item from the stream.
 Remember to check for io.EOF to determine when the stream is closed.
 */
-func (s *Sproto) StreamProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) *StreamResponse[proto.Message] {
+func (s *Client) StreamProtos(ctx context.Context, tableName string, columnName string, message proto.Message, opts *spanner.ReadOptions) *StreamResponse[proto.Message] {
 	// Iterate over the rows and construct the result
 	res := NewStreamResponse[proto.Message]()
 
@@ -415,12 +496,16 @@ Keep in mind that GoogleSQL uses parameters(@) whereas PostgreSQL uses placehold
 
 Opts can be used to specify sorting, limiting and offsetting conditions.
 
-The method returns a map of column names and their respective values where the key is the column name and the value is a slice of the proto messages.
+The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
+The second return value is the next page token which can be used to get the next page of results.
 */
-func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) (map[string][]proto.Message, error) {
+func (s *Client) QueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) ([]map[string]proto.Message, string, error) {
 	// Ensure length of column names matches the length of messages
 	if len(columnNames) != len(messages) {
-		return nil, fmt.Errorf("column names length does not match the messages length")
+		return nil, "", ErrInvalidArguments{
+			err:    fmt.Errorf("column names length does not match the messages length"),
+			fields: []string{"columnNames", "messages"},
+		}
 	}
 
 	// Construct the query
@@ -448,9 +533,24 @@ func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames 
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
 	}
-	// Add offset if provided
-	if opts != nil && opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	// Add offset if page token is provided
+	var initialOffset int64
+	if opts != nil && opts.PageToken != "" {
+		offsetBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+
+		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+		initialOffset = offset
+		query += fmt.Sprintf(" OFFSET %v", offset)
 	}
 
 	// Create a map of column names and their respective proto messages
@@ -468,37 +568,75 @@ func (s *Sproto) QueryProtos(ctx context.Context, tableName string, columnNames 
 	defer it.Stop()
 
 	// Iterate over the rows and construct the result
-	res := make(map[string][]proto.Message)
+	res := make([]map[string]proto.Message, 0)
 	for {
 		row, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
+		rowMap := make(map[string]proto.Message)
 		for i, columnName := range row.ColumnNames() {
-			if _, ok := res[columnName]; !ok {
-				res[columnName] = []proto.Message{}
-			}
-
 			var dataBytes []byte
 			if err := row.Column(i, &dataBytes); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 
 			// Unmarshal the bytes into the provided proto message
 			newMessage := newEmptyMessage(columnToMessage[columnName])
 			if err := proto.Unmarshal(dataBytes, newMessage); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 
-			res[columnName] = append(res[columnName], newMessage)
+			rowMap[columnName] = newMessage
 		}
+
+		res = append(res, rowMap)
 	}
 
-	return res, nil
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	countQueryParams := map[string]interface{}{}
+	// Add filtering condition if provided
+	if filter != nil && filter.SQL != "" {
+		countQuery += " WHERE " + filter.SQL
+		if filter.Params != nil && len(filter.Params) > 0 {
+			countQueryParams = filter.Params
+		}
+	}
+	itCount := s.client.Single().Query(ctx, spanner.Statement{
+		SQL:    countQuery,
+		Params: countQueryParams,
+	})
+	defer itCount.Stop()
+	var rowCount int64
+	for {
+		row, err := itCount.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, "", err
+		}
+
+		if err := row.Column(0, &rowCount); err != nil {
+			return nil, "", err
+		}
+
+		break
+	}
+
+	// Compare total row count and results + offset to determine if there are more results
+	// and if so, return the next page token
+	var nextPageToken string
+	if (initialOffset + int64(len(res))) != rowCount {
+		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
+		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
+	}
+
+	return res, nextPageToken, nil
 }
 
 /*
@@ -517,14 +655,18 @@ Keep in mind that GoogleSQL uses parameters(@) whereas PostgreSQL uses placehold
 Opts can be used to specify sorting, limiting and offsetting conditions.
 
 The method returns a StreamResponse[map[string]proto.Message] which can be used to iterate over the proto messages.
+The keys of the map are the column names and the values are the proto messages.
 Call Next() on the StreamResponse to get the next item from the stream.
 Remember to check for io.EOF to determine when the stream is closed.
 */
-func (s *Sproto) StreamQueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) *StreamResponse[map[string]proto.Message] {
+func (s *Client) StreamQueryProtos(ctx context.Context, tableName string, columnNames []string, messages []proto.Message, filter *spanner.Statement, opts *ReadOptions) *StreamResponse[map[string]proto.Message] {
 	// Ensure length of column names matches the length of messages
 	if len(columnNames) != len(messages) {
 		res := NewStreamResponse[map[string]proto.Message]()
-		res.setError(fmt.Errorf("column names length does not match the messages length"))
+		res.setError(ErrInvalidArguments{
+			err:    fmt.Errorf("column names length does not match the messages length"),
+			fields: []string{"columnNames", "messages"},
+		})
 		return res
 	}
 
@@ -553,9 +695,26 @@ func (s *Sproto) StreamQueryProtos(ctx context.Context, tableName string, column
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
 	}
-	// Add offset if provided
-	if opts != nil && opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	// Add offset if page token is provided
+	if opts != nil && opts.PageToken != "" {
+		offsetBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
+		if err != nil {
+			res := NewStreamResponse[map[string]proto.Message]()
+			res.setError(ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			})
+			return res
+		}
+
+		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		if err != nil {
+			res := NewStreamResponse[map[string]proto.Message]()
+			res.setError(ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			})
+			return res
+		}
+		query += fmt.Sprintf(" OFFSET %v", offset)
 	}
 
 	// Create a map of column names and their respective proto messages
@@ -628,14 +787,20 @@ The column names must match the length of the messages and are a 1-to-1 mapping.
 The proto messages will be serialized to bytes and stored in the specified columns.
 The columns must be of type PROTO.
 */
-func (s *Sproto) BatchWriteProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnNames []string, messages []proto.Message) error {
+func (s *Client) BatchWriteProtos(ctx context.Context, tableName string, rowKeys []spanner.Key, columnNames []string, messages []proto.Message) error {
 	// Ensure the length of the row keys matches the length of the messages
 	if len(rowKeys) != len(messages) {
-		return fmt.Errorf("row keys length does not match the messages length")
+		return ErrInvalidArguments{
+			err:    fmt.Errorf("row keys length does not match the messages length"),
+			fields: []string{"rowKeys", "messages"},
+		}
 	}
 	// Ensure the length of the column names matches the length of the messages
 	if len(columnNames) != len(messages) {
-		return fmt.Errorf("column names length does not match the messages length")
+		return ErrInvalidArguments{
+			err:    fmt.Errorf("column names length does not match the messages length"),
+			fields: []string{"columnNames", "messages"},
+		}
 	}
 
 	// Get the primary key columns
@@ -652,7 +817,10 @@ func (s *Sproto) BatchWriteProtos(ctx context.Context, tableName string, rowKeys
 
 		// Ensure the length of the row key matches the length of the primary key columns
 		if len(primaryKeyColumns) != len(primaryKeyValues) {
-			return fmt.Errorf("row key length at index %v does not match the primary key columns length", i)
+			return ErrInvalidArguments{
+				err:    fmt.Errorf("row key length at index %v does not match the primary key columns length", i),
+				fields: []string{"rowKeys"},
+			}
 		}
 
 		row := make(map[string]interface{})
@@ -697,7 +865,7 @@ For example if the primary key is (id, name), the row key must be spanner.Key{{i
 The column name is used to specify the column where the proto message will be stored.
 This is still required even if it is included in the row key.
 */
-func (s *Sproto) UpdateProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
+func (s *Client) UpdateProto(ctx context.Context, tableName string, rowKey spanner.Key, columnName string, message proto.Message, updateMask *fieldmaskpb.FieldMask) error {
 	// Retrieve the current resource from the database
 	currentMessage := newEmptyMessage(message)
 	err := s.ReadProto(ctx, tableName, rowKey, columnName, currentMessage, nil)
@@ -724,7 +892,7 @@ func (s *Sproto) UpdateProto(ctx context.Context, tableName string, rowKey spann
 BatchWriteMutations writes the provided mutations to the database.
 This method provides a convenient way to write custom mutations to the database.
 */
-func (s *Sproto) BatchWriteMutations(ctx context.Context, mutations []*spanner.Mutation) error {
+func (s *Client) BatchWriteMutations(ctx context.Context, mutations []*spanner.Mutation) error {
 	_, err := s.client.Apply(ctx, mutations)
 	if err != nil {
 		return err
@@ -744,11 +912,13 @@ The column names are used to specify which columns to read. The order of the col
 
 The method returns a map of column names and their respective values.
 */
-func (s *Sproto) ReadRow(ctx context.Context, tableName string, rowKey spanner.Key, columns []string, opts *spanner.ReadOptions) (map[string]interface{}, error) {
+func (s *Client) ReadRow(ctx context.Context, tableName string, rowKey spanner.Key, columns []string, opts *spanner.ReadOptions) (map[string]interface{}, error) {
 	row, err := s.client.Single().ReadRowWithOptions(ctx, tableName, rowKey, columns, opts)
 	if err != nil {
 		if spanner.ErrCode(err) == codes.NotFound {
-			return nil, ErrNotFound{}
+			return nil, ErrNotFound{
+				RowKey: rowKey.String(),
+			}
 		}
 
 		return nil, err
@@ -776,8 +946,9 @@ Keep in mind that GoogleSQL uses parameters(@) whereas PostgreSQL uses placehold
 Opts can be used to specify sorting, limiting and offsetting conditions.
 
 The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
+The second return value is the next page token which can be used to get the next page of results.
 */
-func (s *Sproto) QueryRows(ctx context.Context, tableName string, columns []string, filter *spanner.Statement, opts *ReadOptions) ([]map[string]interface{}, error) {
+func (s *Client) QueryRows(ctx context.Context, tableName string, columns []string, filter *spanner.Statement, opts *ReadOptions) ([]map[string]interface{}, string, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(columns, ", "), tableName)
 	params := map[string]interface{}{}
 	// Add filtering condition if provided
@@ -802,9 +973,24 @@ func (s *Sproto) QueryRows(ctx context.Context, tableName string, columns []stri
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
 	}
-	// Add offset if provided
-	if opts != nil && opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	// Add offset if page token is provided
+	var initialOffset int64
+	if opts != nil && opts.PageToken != "" {
+		offsetBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+
+		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		if err != nil {
+			return nil, "", ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+		initialOffset = offset
+		query += fmt.Sprintf(" OFFSET %v", offset)
 	}
 
 	stmt := spanner.Statement{
@@ -813,6 +999,91 @@ func (s *Sproto) QueryRows(ctx context.Context, tableName string, columns []stri
 	}
 
 	it := s.client.Single().Query(ctx, stmt)
+	defer it.Stop()
+
+	// Iterate over the rows and construct the result
+	var res []map[string]interface{}
+	for {
+		row, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, "", err
+		}
+
+		rowMap := make(map[string]interface{})
+		for i, columnName := range row.ColumnNames() {
+			columnValue := row.ColumnValue(i)
+			rowMap[columnName] = parseStructPbValue(columnValue)
+		}
+
+		res = append(res, rowMap)
+	}
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	countQueryParams := map[string]interface{}{}
+	// Add filtering condition if provided
+	if filter != nil && filter.SQL != "" {
+		countQuery += " WHERE " + filter.SQL
+		if filter.Params != nil && len(filter.Params) > 0 {
+			countQueryParams = filter.Params
+		}
+	}
+	itCount := s.client.Single().Query(ctx, spanner.Statement{
+		SQL:    countQuery,
+		Params: countQueryParams,
+	})
+	defer itCount.Stop()
+	var rowCount int64
+	for {
+		row, err := itCount.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, "", err
+		}
+
+		if err := row.Column(0, &rowCount); err != nil {
+			return nil, "", err
+		}
+
+		break
+	}
+
+	// Compare total row count and results + offset to determine if there are more results
+	// and if so, return the next page token
+	var nextPageToken string
+	if (initialOffset + int64(len(res))) != rowCount {
+		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
+		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
+	}
+
+	return res, nextPageToken, nil
+}
+
+/*
+BatchReadRows reads multiple rows from the specified table using the provided row keys and column names.
+
+The row keys are tuples of the row's primary keys values and are used to identify the rows to read.
+If the primary key is composite, the order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+The column names are used to specify which columns to read. The order of the columns does not matter.
+
+The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
+Note that the order of the rows in the result is not guaranteed to match the order of the row keys provided.
+*/
+func (s *Client) BatchReadRows(ctx context.Context, tableName string, rowKeys []spanner.Key, columns []string, opts *spanner.ReadOptions) ([]map[string]interface{}, error) {
+	// Construct spanner key sets
+	keySets := make([]spanner.KeySet, len(rowKeys))
+	for i, key := range rowKeys {
+		keySets[i] = key
+	}
+
+	// Read the rows from the specified table
+	it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.KeySets(keySets...), columns, opts)
 	defer it.Stop()
 
 	// Iterate over the rows and construct the result
@@ -839,59 +1110,13 @@ func (s *Sproto) QueryRows(ctx context.Context, tableName string, columns []stri
 }
 
 /*
-BatchReadRows reads multiple rows from the specified table using the provided row keys and column names.
-
-The row keys are tuples of the row's primary keys values and are used to identify the rows to read.
-If the primary key is composite, the order of the keys must match the order of the primary key columns in the table schema.
-For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
-
-The column names are used to specify which columns to read. The order of the columns does not matter.
-
-The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
-Note that the order of the rows in the result is not guaranteed to match the order of the row keys provided.
-*/
-func (s *Sproto) BatchReadRows(ctx context.Context, tableName string, rowKeys []spanner.Key, columns []string, opts *spanner.ReadOptions) ([]map[string]interface{}, error) {
-	// Construct spanner key sets
-	keySets := make([]spanner.KeySet, len(rowKeys))
-	for i, key := range rowKeys {
-		keySets[i] = key
-	}
-
-	// Read the rows from the specified table
-	it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.KeySets(keySets...), columns, opts)
-	defer it.Stop()
-
-	// Iterate over the rows and construct the result
-	var res []map[string]interface{}
-	for {
-		row, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		rowMap := make(map[string]interface{})
-		for i, columnName := range row.ColumnNames() {
-			columnValue := row.ColumnValue(i)
-			rowMap[columnName] = parseStructPbValue(columnValue)
-		}
-
-		res = append(res, rowMap)
-	}
-
-	return res, nil
-}
-
-/*
 ListRows reads all rows from the specified table using the provided column names.
 
 The column names are used to specify which columns to read. The order of the columns does not matter.
 
 The method returns a slice of maps where each map represents a row. The maps contain column names and their respective values.
 */
-func (s *Sproto) ListRows(ctx context.Context, tableName string, columns []string, opts *spanner.ReadOptions) ([]map[string]interface{}, error) {
+func (s *Client) ListRows(ctx context.Context, tableName string, columns []string, opts *spanner.ReadOptions) ([]map[string]interface{}, error) {
 	// Read the rows from the specified table
 	it := s.client.Single().ReadWithOptions(ctx, tableName, spanner.AllKeys(), columns, opts)
 	defer it.Stop()
@@ -900,7 +1125,7 @@ func (s *Sproto) ListRows(ctx context.Context, tableName string, columns []strin
 	var res []map[string]interface{}
 	for {
 		row, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
@@ -927,7 +1152,7 @@ The primary key value(s) must be included in the row.
 The row is represented as a map where the key is the column name and the value is the column value.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) InsertRow(ctx context.Context, tableName string, row map[string]interface{}) error {
+func (s *Client) InsertRow(ctx context.Context, tableName string, row map[string]interface{}) error {
 	// Construct columns and values from the provided row
 	columns := make([]string, 0, len(row))
 	values := make([]interface{}, 0, len(row))
@@ -955,7 +1180,7 @@ The rows are represented as a slice of maps where each map represents a row.
 Each map contains column names and their respective values.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) BatchInsertRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
+func (s *Client) BatchInsertRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
 	// Construct mutations for each row
 	var mutations []*spanner.Mutation
 	for _, row := range rows {
@@ -988,7 +1213,7 @@ The primary key value(s) must be included in the row.
 The row is represented as a map where the key is the column name and the value is the column value.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) UpsertRow(ctx context.Context, tableName string, row map[string]interface{}) error {
+func (s *Client) UpsertRow(ctx context.Context, tableName string, row map[string]interface{}) error {
 	// Construct columns and values
 	columns := make([]string, 0, len(row))
 	values := make([]interface{}, 0, len(row))
@@ -1019,7 +1244,7 @@ The rows are represented as a slice of maps where each map represents a row.
 Each map contains column names and their respective values.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) BatchUpsertRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
+func (s *Client) BatchUpsertRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
 	// Construct mutations
 	var mutations []*spanner.Mutation
 	for _, row := range rows {
@@ -1052,7 +1277,7 @@ The primary key value(s) must be included in the row.
 The row is represented as a map where the key is the column name and the value is the column value.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) UpdateRow(ctx context.Context, tableName string, row map[string]interface{}) error {
+func (s *Client) UpdateRow(ctx context.Context, tableName string, row map[string]interface{}) error {
 	// Construct columns and values
 	columns := make([]string, 0, len(row))
 	values := make([]interface{}, 0, len(row))
@@ -1082,7 +1307,7 @@ The rows are represented as a slice of maps where each map represents a row.
 Each map contains column names and their respective values.
 The value types must match the column types in the table schema.
 */
-func (s *Sproto) BatchUpdateRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
+func (s *Client) BatchUpdateRows(ctx context.Context, tableName string, rows []map[string]interface{}) error {
 	var mutations []*spanner.Mutation
 	for _, row := range rows {
 		// Construct columns and values
@@ -1121,7 +1346,7 @@ The method returns a StreamResponse that can be used to get the items from the s
 Call Next() on the StreamResponse to get the next item from the stream.
 Remember to check for io.EOF to determine when the stream is closed.
 */
-func (s *Sproto) StreamRows(ctx context.Context, tableName string, columns []string, filter *spanner.Statement, opts *ReadOptions) (*StreamResponse[map[string]interface{}], error) {
+func (s *Client) StreamRows(ctx context.Context, tableName string, columns []string, filter *spanner.Statement, opts *ReadOptions) (*StreamResponse[map[string]interface{}], error) {
 	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(columns, ", "), tableName)
 	params := map[string]interface{}{}
 	// Add filtering condition if provided
@@ -1146,9 +1371,22 @@ func (s *Sproto) StreamRows(ctx context.Context, tableName string, columns []str
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %v", opts.Limit)
 	}
-	// Add offset if provided
-	if opts != nil && opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET %v", opts.Offset)
+	// Add offset if page token is provided
+	if opts != nil && opts.PageToken != "" {
+		offsetBytes, err := base64.StdEncoding.DecodeString(opts.PageToken)
+		if err != nil {
+			return nil, ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+
+		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		if err != nil {
+			return nil, ErrInvalidPageToken{
+				pageToken: opts.PageToken,
+			}
+		}
+		query += fmt.Sprintf(" OFFSET %v", offset)
 	}
 
 	stmt := spanner.Statement{
@@ -1196,7 +1434,7 @@ func (s *Sproto) StreamRows(ctx context.Context, tableName string, columns []str
 /*
 DeleteRow deletes a row from the specified table using the provided row key.
 */
-func (s *Sproto) DeleteRow(ctx context.Context, tableName string, rowKey spanner.Key) error {
+func (s *Client) DeleteRow(ctx context.Context, tableName string, rowKey spanner.Key) error {
 	_, err := s.client.Apply(ctx, []*spanner.Mutation{
 		spanner.Delete(tableName, rowKey),
 	})
@@ -1210,7 +1448,7 @@ func (s *Sproto) DeleteRow(ctx context.Context, tableName string, rowKey spanner
 /*
 BatchDeleteRows deletes multiple rows from the specified table using the provided row keys.
 */
-func (s *Sproto) BatchDeleteRows(ctx context.Context, tableName string, rowKeys []spanner.Key) error {
+func (s *Client) BatchDeleteRows(ctx context.Context, tableName string, rowKeys []spanner.Key) error {
 	var mutations []*spanner.Mutation
 	for _, rowKey := range rowKeys {
 		mutations = append(mutations, spanner.Delete(tableName, rowKey))
@@ -1227,7 +1465,7 @@ func (s *Sproto) BatchDeleteRows(ctx context.Context, tableName string, rowKeys 
 /*
 PurgeRows deletes all rows from the specified table.
 */
-func (s *Sproto) PurgeRows(ctx context.Context, tableName string) error {
+func (s *Client) PurgeRows(ctx context.Context, tableName string) error {
 	_, err := s.client.Apply(ctx, []*spanner.Mutation{
 		spanner.Delete(tableName, spanner.AllKeys()),
 	})

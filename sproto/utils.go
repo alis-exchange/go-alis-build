@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 
 	"cloud.google.com/go/spanner"
@@ -99,18 +100,27 @@ func (e ErrMismatchedTypes) Error() string {
 	return fmt.Sprintf("expected %s, got %s", e.Expected, e.Actual)
 }
 
-type ErrInvalidNextToken struct {
-	nextToken string
+type ErrInvalidPageToken struct {
+	pageToken string
 }
 
-func (e ErrInvalidNextToken) Error() string {
-	return fmt.Sprintf("invalid nextToken (%s)", e.nextToken)
+func (e ErrInvalidPageToken) Error() string {
+	return fmt.Sprintf("invalid pageToken (%s)", e.pageToken)
 }
 
 type ErrNegativePageSize struct{}
 
 func (e ErrNegativePageSize) Error() string {
 	return "page size cannot be less than 0"
+}
+
+type ErrInvalidArguments struct {
+	err    error
+	fields []string
+}
+
+func (e ErrInvalidArguments) Error() string {
+	return fmt.Sprintf("invalid arguments(%s): %v", strings.Join(e.fields, ", "), e.err)
 }
 
 // newEmptyMessage returns a new instance of the same type as the provided proto.Message
