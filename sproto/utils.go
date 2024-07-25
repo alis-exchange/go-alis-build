@@ -3,10 +3,8 @@ package sproto
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
-	"strings"
 	"sync"
 
 	"cloud.google.com/go/spanner"
@@ -78,49 +76,6 @@ func (r *StreamResponse[T]) Next() (*T, error) {
 	r.wg.Done()
 	// Return the item
 	return item, nil
-}
-
-// ErrNotFound is returned when the desired resource is not found in Spanner.
-type ErrNotFound struct {
-	RowKey string // unavailable locations
-}
-
-func (e ErrNotFound) Error() string {
-	return fmt.Sprintf("%s not found", e.RowKey)
-}
-
-var ErrInvalidFieldMask = errors.New("invalid field mask")
-
-type ErrMismatchedTypes struct {
-	Expected reflect.Type
-	Actual   reflect.Type
-}
-
-func (e ErrMismatchedTypes) Error() string {
-	return fmt.Sprintf("expected %s, got %s", e.Expected, e.Actual)
-}
-
-type ErrInvalidPageToken struct {
-	pageToken string
-}
-
-func (e ErrInvalidPageToken) Error() string {
-	return fmt.Sprintf("invalid pageToken (%s)", e.pageToken)
-}
-
-type ErrNegativePageSize struct{}
-
-func (e ErrNegativePageSize) Error() string {
-	return "page size cannot be less than 0"
-}
-
-type ErrInvalidArguments struct {
-	err    error
-	fields []string
-}
-
-func (e ErrInvalidArguments) Error() string {
-	return fmt.Sprintf("invalid arguments(%s): %v", strings.Join(e.fields, ", "), e.err)
 }
 
 // newEmptyMessage returns a new instance of the same type as the provided proto.Message
@@ -220,17 +175,33 @@ func parseStructPbValue(value *structpb.Value) interface{} {
 	return res
 }
 
+type primaryKeyColumn struct {
+	// The name of the column
+	columnName string
+	// Whether the column is generated
+	isGenerated bool
+	// Whether the column is stored
+	isStored bool
+}
+
 /*
 getPrimaryKeyColumns returns the primary key columns for a given table in Spanner
 
 The order of the columns is the same as the order in the primary key
 */
-func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName string) ([]string, error) {
+func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName string) ([]*primaryKeyColumn, error) {
 	stmt := spanner.Statement{
-		SQL: `SELECT COLUMN_NAME
-              FROM INFORMATION_SCHEMA.INDEX_COLUMNS
-              WHERE TABLE_NAME = @tableName AND INDEX_NAME = 'PRIMARY_KEY'
-              ORDER BY ORDINAL_POSITION`,
+		SQL: `
+			SELECT INDEX_COLUMNS.COLUMN_NAME, COLUMNS.IS_GENERATED, COLUMNS.IS_STORED
+			FROM 
+  				INFORMATION_SCHEMA.INDEX_COLUMNS
+			INNER JOIN 
+  				INFORMATION_SCHEMA.COLUMNS 
+			ON
+  				INDEX_COLUMNS.COLUMN_NAME = COLUMNS.COLUMN_NAME
+				WHERE INDEX_COLUMNS.TABLE_NAME = @tableName AND INDEX_COLUMNS.INDEX_NAME = 'PRIMARY_KEY'
+				ORDER BY INDEX_COLUMNS.ORDINAL_POSITION
+			`,
 		Params: map[string]interface{}{
 			"tableName": tableName,
 		},
@@ -239,7 +210,7 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 	iter := client.Single().Query(ctx, stmt)
 	defer iter.Stop()
 
-	var columns []string
+	var columns []*primaryKeyColumn
 	for {
 		row, err := iter.Next()
 		if errors.Is(err, iterator.Done) {
@@ -248,11 +219,29 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 		if err != nil {
 			return nil, err
 		}
-		var columnName string
-		if err := row.Columns(&columnName); err != nil {
+		var columnName, isGenerated, isStored *string
+		if err := row.ColumnByName("COLUMN_NAME", &columnName); err != nil {
 			return nil, err
 		}
-		columns = append(columns, columnName)
+		if err := row.ColumnByName("IS_GENERATED", &isGenerated); err != nil {
+			return nil, err
+		}
+		if err := row.ColumnByName("IS_STORED", &isStored); err != nil {
+			return nil, err
+		}
+
+		col := &primaryKeyColumn{}
+		if columnName != nil {
+			col.columnName = *columnName
+		}
+		if isGenerated != nil {
+			col.isGenerated = *isGenerated != "NEVER"
+		}
+		if isStored != nil {
+			col.isStored = *isStored == "YES"
+		}
+
+		columns = append(columns, col)
 	}
 
 	return columns, nil

@@ -194,7 +194,9 @@ func (s *Client) BatchReadProtos(ctx context.Context, tableName string, rowKeys 
 	}
 
 	var columns []string
-	columns = append(columns, primaryKeyColumns...)
+	for _, column := range primaryKeyColumns {
+		columns = append(columns, column.columnName)
+	}
 	columns = append(columns, columnName)
 
 	// Read the rows from the specified table
@@ -286,7 +288,10 @@ func (s *Client) WriteProto(ctx context.Context, tableName string, rowKey spanne
 	// Construct a map of column names and values
 	row := make(map[string]interface{})
 	for i, column := range primaryKeyColumns {
-		row[column] = primaryKeyValues[i]
+		if column.isGenerated || column.isStored {
+			continue
+		}
+		row[column.columnName] = primaryKeyValues[i]
 	}
 
 	// Add the message to the row
@@ -416,7 +421,7 @@ func (s *Client) ListProtos(ctx context.Context, tableName string, columnName st
 	// Compare total row count and results + offset to determine if there are more results
 	// and if so, return the next page token
 	var nextPageToken string
-	if (initialOffset + int64(len(res))) != rowCount {
+	if (initialOffset + int64(len(res))) < rowCount {
 		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
 	}
@@ -631,7 +636,7 @@ func (s *Client) QueryProtos(ctx context.Context, tableName string, columnNames 
 	// Compare total row count and results + offset to determine if there are more results
 	// and if so, return the next page token
 	var nextPageToken string
-	if (initialOffset + int64(len(res))) != rowCount {
+	if (initialOffset + int64(len(res))) < rowCount {
 		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
 	}
@@ -825,7 +830,10 @@ func (s *Client) BatchWriteProtos(ctx context.Context, tableName string, rowKeys
 
 		row := make(map[string]interface{})
 		for i, column := range primaryKeyColumns {
-			row[column] = primaryKeyValues[i]
+			if column.isGenerated || column.isStored {
+				continue
+			}
+			row[column.columnName] = primaryKeyValues[i]
 		}
 		// Marshal the proto message to bytes
 		message := messages[i]
@@ -1055,7 +1063,7 @@ func (s *Client) QueryRows(ctx context.Context, tableName string, columns []stri
 	// Compare total row count and results + offset to determine if there are more results
 	// and if so, return the next page token
 	var nextPageToken string
-	if (initialOffset + int64(len(res))) != rowCount {
+	if (initialOffset + int64(len(res))) < rowCount {
 		offsetStr := fmt.Sprintf("%v", initialOffset+int64(len(res)))
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
 	}
