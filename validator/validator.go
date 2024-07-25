@@ -188,7 +188,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 			subMsgs := v.getSubMessageList(msg, path)
 			allViols := []*pbOpen.Rule{}
 			for i, subM := range subMsgs {
-				if subM == nil {
+				if subM == nil || !subM.ProtoReflect().IsValid() {
 					if !options.MayBeEmpty {
 						allViols = append(allViols, &pbOpen.Rule{
 							Id:          path,
@@ -220,7 +220,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 		rule.getViolations = func(msg protoreflect.ProtoMessage) ([]*pbOpen.Rule, error) {
 			// get sub message
 			subM := rule.v.getSubMessage(msg, path)
-			if subM == nil {
+			if subM == nil || !subM.ProtoReflect().IsValid() {
 				if !options.MayBeEmpty {
 					return []*pbOpen.Rule{{
 						Id:          path,
