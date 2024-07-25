@@ -24,8 +24,25 @@ func HandleValidateRpc(req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMess
 	if err != nil {
 		return nil, err
 	}
+	violatedFieldsMap := map[string][]*pbOpen.Rule{}
+	for _, viol := range viols {
+		for _, path := range viol.FieldPaths {
+			if _, ok := violatedFieldsMap[path]; !ok {
+				violatedFieldsMap[path] = []*pbOpen.Rule{}
+			}
+			violatedFieldsMap[path] = append(violatedFieldsMap[path], viol)
+		}
+	}
+	violatedFields := []*pbOpen.FieldViolation{}
+	for k, v := range violatedFieldsMap {
+		violatedFields = append(violatedFields, &pbOpen.FieldViolation{
+			FieldPath:     k,
+			ViolatedRules: v,
+		})
+	}
 	return &pbOpen.ValidateMessageResponse{
-		Violations: viols,
+		ViolatedRules:  viols,
+		ViolatedFields: violatedFields,
 	}, nil
 }
 
