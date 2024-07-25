@@ -210,6 +210,7 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 	iter := client.Single().Query(ctx, stmt)
 	defer iter.Stop()
 
+	colNames := map[string]bool{}
 	var columns []*primaryKeyColumn
 	for {
 		row, err := iter.Next()
@@ -234,13 +235,16 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 		if columnName != nil {
 			col.columnName = *columnName
 		}
+		if _, ok := colNames[col.columnName]; ok {
+			continue
+		}
+		colNames[col.columnName] = true
 		if isGenerated != nil {
 			col.isGenerated = *isGenerated != "NEVER"
 		}
 		if isStored != nil {
 			col.isStored = *isStored == "YES"
 		}
-
 		columns = append(columns, col)
 	}
 
