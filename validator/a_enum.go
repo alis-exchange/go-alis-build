@@ -10,7 +10,7 @@ import (
 type enum struct {
 	expectedEnumType string
 	paths            []string
-	getValue         func(v *Validator, msg protoreflect.ProtoMessage) protoreflect.EnumNumber
+	getValues        func(v *Validator, msg protoreflect.ProtoMessage) []protoreflect.EnumNumber
 	description      string
 	v                *Validator
 }
@@ -44,19 +44,28 @@ func (f *enum) setValidator(v *Validator) {
 
 // Fixed enum value
 func Enum(value protoreflect.Enum) *enum {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) protoreflect.EnumNumber {
-		return value.Number()
+	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) []protoreflect.EnumNumber {
+		return []protoreflect.EnumNumber{value.Number()}
 	}
-	n := &enum{description: string(value.Descriptor().Values().ByNumber(value.Number()).Name()), getValue: getValueFunc, expectedEnumType: string(value.Descriptor().FullName())}
+	n := &enum{description: string(value.Descriptor().Values().ByNumber(value.Number()).Name()), getValues: getValueFunc, expectedEnumType: string(value.Descriptor().FullName())}
 	return n
 }
 
 // Enum field
 func EnumField(path string) *enum {
-	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) protoreflect.EnumNumber {
-		return v.getEnum(msg, path)
+	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) []protoreflect.EnumNumber {
+		return []protoreflect.EnumNumber{v.getEnum(msg, path)}
 	}
-	f := &enum{description: path, getValue: getValueFunc, paths: []string{path}}
+	f := &enum{description: path, getValues: getValueFunc, paths: []string{path}}
+	return f
+}
+
+// Enum list field
+func EachEnumIn(path string) *enum {
+	getValueFunc := func(v *Validator, msg protoreflect.ProtoMessage) []protoreflect.EnumNumber {
+		return v.getEnumList(msg, path)
+	}
+	f := &enum{description: "each enum in " + path, getValues: getValueFunc, paths: []string{path}}
 	return f
 }
 
@@ -71,7 +80,12 @@ func (f *enum) Populated() *Rule {
 	}
 	args := []argI{f}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		return f.getValue(f.v, msg) == 0, nil
+		for _, v := range f.getValues(f.v, msg) {
+			if v == 0 {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
@@ -93,7 +107,14 @@ func (f *enum) Equals(f2 *enum) *Rule {
 	}
 	args := []argI{f, f2}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
-		return f.getValue(f.v, msg) != f2.getValue(f2.v, msg), nil
+		for _, v := range f.getValues(f.v, msg) {
+			for _, v2 := range f2.getValues(f2.v, msg) {
+				if v != v2 {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
