@@ -198,7 +198,7 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 			INNER JOIN 
   				INFORMATION_SCHEMA.COLUMNS 
 			ON
-  				INDEX_COLUMNS.COLUMN_NAME = COLUMNS.COLUMN_NAME
+  				INDEX_COLUMNS.COLUMN_NAME = COLUMNS.COLUMN_NAME AND INDEX_COLUMNS.TABLE_NAME = COLUMNS.TABLE_NAME
 				WHERE INDEX_COLUMNS.TABLE_NAME = @tableName AND INDEX_COLUMNS.INDEX_NAME = 'PRIMARY_KEY'
 				ORDER BY INDEX_COLUMNS.ORDINAL_POSITION
 			`,
@@ -210,7 +210,9 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 	iter := client.Single().Query(ctx, stmt)
 	defer iter.Stop()
 
+	// Extra precaution to avoid duplicate columns
 	colNames := map[string]bool{}
+
 	var columns []*primaryKeyColumn
 	for {
 		row, err := iter.Next()
@@ -235,10 +237,15 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 		if columnName != nil {
 			col.columnName = *columnName
 		}
-		if _, ok := colNames[col.columnName]; ok {
-			continue
+
+		// Extra precaution to avoid duplicate columns
+		{
+			if _, ok := colNames[col.columnName]; ok {
+				continue
+			}
+			colNames[col.columnName] = true
 		}
-		colNames[col.columnName] = true
+
 		if isGenerated != nil {
 			col.isGenerated = *isGenerated != "NEVER"
 		}
