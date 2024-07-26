@@ -107,16 +107,17 @@ func (a *Authz) SkipAuthIfAuthJwtMissing() *Authz {
 }
 
 // Useful for removing the auth headers from the context after authz has been done so that other internal calls do not fail with authz.
-func StripAuthHeaders(ctx *context.Context) {
-	md, ok := metadata.FromIncomingContext(*ctx)
+func StripAuthHeaders(ctx context.Context) context.Context {
+	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return
+		return ctx
 	}
 	authHeaders := []string{ServerlessAuthHeader1, ServerlessAuthHeader2, AuthorizationHeader, AuthorizationHeader2, IAPJWTAssertionHeader, AuthForwardingHeader}
 	for _, header := range authHeaders {
 		md.Delete(header)
 	}
-	*ctx = metadata.NewIncomingContext(*ctx, md)
+	ctx = metadata.NewIncomingContext(ctx, md)
+	return ctx
 }
 
 // WithPolicyReader registers the function to read the IAM policy for a resource. This is required if you are planning on using the AuthorizeFromResources,GetRolesFromResources or GetPermissionsFromResources methods.
