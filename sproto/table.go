@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"cloud.google.com/go/spanner"
 	"github.com/mennanov/fmutils"
@@ -73,14 +74,29 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 // The defaultQueryRowLimit is used as the default limit for queries if not provided in the QueryOptions.
 func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *TableClient {
 	ctx := context.Background()
-	pkCols, err := getPrimaryKeyColumns(ctx, d.client, tableName)
-	if err != nil {
-		alog.Fatalf(ctx, "Error getting primary key columns for table %s: %v", tableName, err)
-	}
-	msgTypeToColumn, err := getProtoTypeToColumnMap(ctx, d.client, tableName)
-	if err != nil {
-		alog.Fatalf(ctx, "Error getting proto type to column map for table %s: %v", tableName, err)
-	}
+	// use go routines
+	var pkCols []*primaryKeyColumn
+	var msgTypeToColumn map[string]string
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		var err error
+		pkCols, err = getPrimaryKeyColumns(ctx, d.client, tableName)
+		if err != nil {
+			alog.Fatalf(ctx, "Error getting primary key columns for table %s: %v", tableName, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		msgTypeToColumn, err = getProtoTypeToColumnMap(ctx, d.client, tableName)
+		if err != nil {
+			alog.Fatalf(ctx, "Error getting proto type to column map for table %s: %v", tableName, err)
+		}
+	}()
+	wg.Wait()
+
 	return &TableClient{
 		db:                d,
 		tableName:         tableName,
@@ -174,13 +190,13 @@ func (t *TableClient) Read(ctx context.Context, rowKey spanner.Key, messages ...
 // Read one/more proto columns from a single row and apply the provided read masks
 func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) error {
 	// Get columns
-	columns, err := t.getColNames(messages)
+	colNames, err := t.getColNames(messages)
 	if err != nil {
 		return err
 	}
 
 	// Read the proto message from the specified table
-	row, err := t.db.client.Single().ReadRow(ctx, t.tableName, rowKey, columns)
+	row, err := t.db.client.Single().ReadRow(ctx, t.tableName, rowKey, colNames)
 	if err != nil {
 		if spanner.ErrCode(err) == codes.NotFound {
 			return ErrNotFound{
@@ -191,21 +207,14 @@ func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key,
 		return err
 	}
 
-	// Get the column value as bytes
-	byteObjs := [][]byte{}
-	for i := 0; i < len(columns); i++ {
-		var dataBytes []byte
-		byteObjs = append(byteObjs, dataBytes)
-	}
-	err = row.Columns(byteObjs)
-	if err != nil {
-		return err
-	}
-
 	// Unmarshal the bytes into the provided proto message
-	for i, dataBytes := range byteObjs {
-		message := messages[i]
-		err = proto.Unmarshal(dataBytes, message)
+	for i, message := range messages {
+		bytes := []byte{}
+		err = row.Column(i, &bytes)
+		if err != nil {
+			return err
+		}
+		err = proto.Unmarshal(bytes, message)
 		if err != nil {
 			return err
 		}
@@ -213,16 +222,15 @@ func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key,
 		// Apply Read Mask if provided
 		if readMasks != nil && i < len(readMasks) {
 			readMask := readMasks[i]
-			if readMask == nil {
-				continue
+			if readMask != nil {
+				readMask.Normalize()
+				// Ensure readMask is valid
+				if !readMask.IsValid(message) {
+					return ErrInvalidFieldMask
+				}
+				// Redact the request according to the provided field mask.
+				fmutils.Filter(message, readMask.GetPaths())
 			}
-			readMask.Normalize()
-			// Ensure readMask is valid
-			if !readMask.IsValid(message) {
-				return ErrInvalidFieldMask
-			}
-			// Redact the request according to the provided field mask.
-			fmutils.Filter(message, readMask.GetPaths())
 		}
 	}
 
@@ -306,13 +314,15 @@ func (t *TableClient) BatchReadWithFieldMask(ctx context.Context, rowKeys []span
 			// Apply Read Mask if provided
 			if readMasks != nil && i < len(readMasks) {
 				readMask := readMasks[i]
-				readMask.Normalize()
-				// Ensure readMask is valid
-				if !readMask.IsValid(newMessage) {
-					return nil, ErrInvalidFieldMask
+				if readMask != nil {
+					readMask.Normalize()
+					// Ensure readMask is valid
+					if !readMask.IsValid(newMessage) {
+						return nil, ErrInvalidFieldMask
+					}
+					// Redact the request according to the provided field mask.
+					fmutils.Filter(newMessage, readMask.GetPaths())
 				}
-				// Redact the request according to the provided field mask.
-				fmutils.Filter(newMessage, readMask.GetPaths())
 			}
 			res[index].Messages[i] = newMessage
 		}
@@ -424,7 +434,7 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 			return nil, "", err
 		}
 
-		r := &Row{}
+		r := &Row{Messages: make([]proto.Message, len(messages))}
 		for i, col := range colNames {
 			var dataBytes []byte
 			err = row.ColumnByName(col, &dataBytes)
@@ -442,16 +452,15 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 			// Apply Read Mask if provided
 			if opts != nil && opts.ReadMasks != nil && i < len(opts.ReadMasks) {
 				readMask := opts.ReadMasks[i]
-				if readMask == nil {
-					continue
+				if readMask != nil {
+					readMask.Normalize()
+					// Ensure readMask is valid
+					if !readMask.IsValid(newMessage) {
+						return nil, "", ErrInvalidFieldMask
+					}
+					// Redact the request according to the provided field mask.
+					fmutils.Filter(newMessage, readMask.GetPaths())
 				}
-				readMask.Normalize()
-				// Ensure readMask is valid
-				if !readMask.IsValid(newMessage) {
-					return nil, "", ErrInvalidFieldMask
-				}
-				// Redact the request according to the provided field mask.
-				fmutils.Filter(newMessage, readMask.GetPaths())
 			}
 			r.Messages[i] = newMessage
 		}
@@ -461,7 +470,7 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 
 	// If less than the limit is returned, there are more rows to read
 	var nextPageToken string
-	if len(res) < limit {
+	if len(res) == limit {
 		offsetStr := fmt.Sprintf("%v", offset+int64(len(res)))
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(offsetStr))
 	}
