@@ -53,7 +53,7 @@ type QueryOptions struct {
 NewClient creates a new Database Client instance with the provided Google Cloud Spanner configuration.
 Leave databaseRole empty if you are not using fine grained roles on the database.
 */
-func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) *Client {
+func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) *DbClient {
 	ctx := context.Background()
 	clientConfig := spanner.ClientConfig{}
 	if databaseRole != "" {
@@ -64,7 +64,9 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 		alog.Fatalf(ctx, "Error creating Spanner client: %v", err)
 	}
 
-	return New(spannerClient)
+	return &DbClient{
+		client: spannerClient,
+	}
 }
 
 // NewTableClient creates a new Table Client instance with the provided table name.
