@@ -26,6 +26,7 @@ type TableClient struct {
 	tableName         string
 	msgTypeToColumn   map[string]string
 	primaryKeyColumns []*primaryKeyColumn
+	defaultLimit      int
 }
 
 type Row struct {
@@ -38,8 +39,6 @@ type QueryOptions struct {
 	SortColumns map[string]SortOrder
 	// Limit is the maximum number of rows to read.
 	Limit int32
-	// DefaultLimit is the default limit to use if Limit is not provided. If not provided, 100 is used.
-	DefaultLimit int32
 	// PageToken is the token to get the next page of results.
 	// This is typically retrieved from a previous response's next page token.
 	// It's a base64 encoded string(base64.StdEncoding.EncodeToString(offset)) of the offset of the last row(s) read.
@@ -71,7 +70,8 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 
 // NewTableClient creates a new Table Client instance with the provided table name.
 // During setup, it queries the table to get the primary key columns and the mapping of proto message types to columns.
-func (d *DbClient) NewTableClient(tableName string) *TableClient {
+// The defaultQueryRowLimit is used as the default limit for queries if not provided in the QueryOptions.
+func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *TableClient {
 	ctx := context.Background()
 	pkCols, err := getPrimaryKeyColumns(ctx, d.client, tableName)
 	if err != nil {
@@ -86,6 +86,7 @@ func (d *DbClient) NewTableClient(tableName string) *TableClient {
 		tableName:         tableName,
 		primaryKeyColumns: pkCols,
 		msgTypeToColumn:   msgTypeToColumn,
+		defaultLimit:      defaultQueryRowLimit,
 	}
 }
 
@@ -363,8 +364,8 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 	if opts != nil && opts.Limit > 0 {
 		if opts.Limit > 0 {
 			limit = int(opts.Limit)
-		} else if opts.DefaultLimit > 0 {
-			limit = int(opts.DefaultLimit)
+		} else if t.defaultLimit > 0 {
+			limit = int(t.defaultLimit)
 		}
 	}
 	query += fmt.Sprintf(" LIMIT %v", limit)
