@@ -282,10 +282,10 @@ func getProtoTypeToColumnMap(ctx context.Context, client *spanner.Client, tableN
 			return nil, err
 		}
 		var columnName, spannerType *string
-		if err := row.ColumnByName("COLUMN_NAME", &columnName); err != nil {
+		if err := row.ColumnByName("column_name", &columnName); err != nil {
 			return nil, err
 		}
-		if err := row.ColumnByName("SPANNER_TYPE", &spannerType); err != nil {
+		if err := row.ColumnByName("spanner_type", &spannerType); err != nil {
 			return nil, err
 		}
 		if strings.HasPrefix(*spannerType, "PROTO<") {
