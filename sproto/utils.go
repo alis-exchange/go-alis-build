@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 
 	"cloud.google.com/go/spanner"
@@ -256,4 +257,41 @@ func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName
 	}
 
 	return columns, nil
+}
+
+func getProtoTypeToColumnMap(ctx context.Context, client *spanner.Client, tableName string) (map[string]string, error) {
+	stmt := spanner.Statement{
+		SQL: `
+			select column_name,spanner_type from information_schema.columns where table_name=@tableName
+			`,
+		Params: map[string]interface{}{
+			"tableName": tableName,
+		},
+	}
+
+	iter := client.Single().Query(ctx, stmt)
+	defer iter.Stop()
+
+	result := map[string]string{}
+	for {
+		row, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var columnName, spannerType *string
+		if err := row.ColumnByName("COLUMN_NAME", &columnName); err != nil {
+			return nil, err
+		}
+		if err := row.ColumnByName("SPANNER_TYPE", &spannerType); err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(*spannerType, "PROTO<") {
+			protoType := strings.TrimPrefix(strings.TrimSuffix(*spannerType, ">"), "PROTO<")
+			result[protoType] = *columnName
+		}
+	}
+	return result, nil
 }
