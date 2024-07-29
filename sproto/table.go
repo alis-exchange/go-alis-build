@@ -166,8 +166,13 @@ func (t *TableClient) BatchWrite(ctx context.Context, rows []*Row) error {
 	return nil
 }
 
+// Read one/more proto columns from a single row
+func (t *TableClient) Read(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
+	return t.ReadWithFieldMask(ctx, rowKey, messages, nil)
+}
+
 // Read one/more proto columns from a single row and apply the provided read masks
-func (t *TableClient) Read(ctx context.Context, rowKey spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) error {
+func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) error {
 	// Get columns
 	columns, err := t.getColNames(messages)
 	if err != nil {
@@ -224,8 +229,13 @@ func (t *TableClient) Read(ctx context.Context, rowKey spanner.Key, messages []p
 	return nil
 }
 
+// Read one/more proto columns from multiple rows
+func (t *TableClient) BatchRead(ctx context.Context, rowKeys []spanner.Key, messages ...proto.Message) ([]*Row, error) {
+	return t.BatchReadWithFieldMask(ctx, rowKeys, messages, nil)
+}
+
 // Read one/more proto columns from multiple rows and apply the provided read masks
-func (t *TableClient) BatchRead(ctx context.Context, rowKeys []spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) ([]*Row, error) {
+func (t *TableClient) BatchReadWithFieldMask(ctx context.Context, rowKeys []spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) ([]*Row, error) {
 	// Get columns
 	cols, err := t.getColNames(messages)
 	if err != nil {
