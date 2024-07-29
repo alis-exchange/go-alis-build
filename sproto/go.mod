@@ -7,6 +7,7 @@ require (
 	dario.cat/mergo v1.0.0
 	github.com/googleapis/go-sql-spanner v1.4.0
 	github.com/mennanov/fmutils v0.3.0
+	go.alis.build/alog v0.0.19
 	google.golang.org/api v0.184.0
 	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.34.2

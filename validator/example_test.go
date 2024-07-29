@@ -54,7 +54,7 @@ func ExampleValidator() {
 	// update_mask should only contain display_name
 	updateBookVal.AddRule(FieldMaskField("update_mask").OnlyContains([]string{"display_name"}))
 	// fields specified in update_mask should be valid according to the book validator
-	updateBookVal.AddSubMessageValidator("book", bookVal, &validator.SubMsgOptions{OnlyValidateFieldsSpecifiedIn: "update_mask"})
+	updateBookVal.AddSubMessageValidator("book", bookVal, &validator.SubMsgOptions{ValidateFieldPathsSpecifiedIn: "update_mask", PathsToValidate: []string{"name"}})
 }
 
 func ExampleValidate() {
