@@ -79,6 +79,44 @@ type Client struct {
 	rowKeyPrefix string
 }
 
+// ListImmediateChildrenOperationsOptions is an optional parameter that
+// can be provided to ListImmediateChildrenOperations
+type ListImmediateChildrenOperationsOptions struct {
+	// The maximum number of children operations to return.
+	// If not specified, the entire list is returned.
+	PageSize int
+	// A page token, received from a previous ListImmediateChildrenOperations call.
+	// If not specified, the first page of results is returned.
+	//
+	// When paginating, all other parameters provided to `ListBooks` must match
+	// the call that provided the page token.
+	PageToken string
+}
+
+// TraverseChildrenOperationsOptions is an optional parameter that
+// can be provided to TraverseChildrenOperations
+type TraverseChildrenOperationsOptions struct {
+	// The maximum depth of the tree to return. If not specified, the entire tree is returned.
+	MaxDepth int
+}
+
+// OperationNode provides a data structure to represent
+// the relationship between an operation and potential
+// children operations.
+type OperationNode struct {
+	// The name of the operation.
+	//
+	// In the case that ChildrenOperations
+	// exist, Operation represents a parent
+	// operation that can be further traversed.
+	// Else, the operation is the last node in
+	// the overall operation tree.
+	Operation string
+	// The set of children operations to
+	// the Operation.
+	ChildrenOperations []*OperationNode
+}
+
 // NewClient creates a new lro Client object. The function takes three arguments:
 //   - googleProject: The ID of the Google Cloud project that the LroClient object will use.
 //   - bigTableInstance: The name of the Bigtable instance that the LroClient object will use.
@@ -136,7 +174,7 @@ func (c *Client) CreateOperation(ctx *context.Context, opts *CreateOptions) (*lo
 		}
 	}
 
-	//write to bigtable
+	// write to bigtable
 	err := c.writeToBigtable(*ctx, c.rowKeyPrefix, colName, op)
 	if err != nil {
 		return nil, err
@@ -269,7 +307,6 @@ func (c *Client) WaitOperation(ctx context.Context, req *longrunningpb.WaitOpera
 
 // BatchWaitOperations is a batch version of the WaitOperation method.
 func (c *Client) BatchWaitOperations(ctx context.Context, operations []*longrunningpb.Operation, timeout *durationpb.Duration) ([]*longrunningpb.Operation, error) {
-
 	// iterate through the requests
 	errs, ctx := errgroup.WithContext(ctx)
 	results := make([]*longrunningpb.Operation, len(operations))
@@ -337,7 +374,6 @@ func (c *Client) SetSuccessful(ctx context.Context, operationName string, respon
 // SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
 // if metaOptions.Update is true
 func (c *Client) SetFailed(ctx context.Context, operationName string, error error, metadata proto.Message) (*longrunningpb.Operation, error) {
-
 	// get operation and column name
 	op, colName, err := c.getOpAndColumn(ctx, c.rowKeyPrefix, operationName)
 	if err != nil {
@@ -421,30 +457,6 @@ func (c *Client) GetParent(ctx context.Context, operation string) (string, error
 	return colName, nil
 }
 
-// TraverseChildrenOperationsOptions is an optional parameter that
-// can be provided to TraverseChildrenOperations
-type TraverseChildrenOperationsOptions struct {
-	// The maximum depth of the tree to return. If not specified, the entire tree is returned.
-	MaxDepth int
-}
-
-// OperationNode provides a data structure to represent
-// the relationship between an operation and potential
-// children operations.
-type OperationNode struct {
-	// The name of the operation.
-	//
-	// In the case that ChildrenOperations
-	// exist, Operation represents a parent
-	// operation that can be further traversed.
-	// Else, the operation is the last node in
-	// the overall operation tree.
-	Operation string
-	// The set of children operations to
-	// the Operation.
-	ChildrenOperations []*OperationNode
-}
-
 // TraverseChildrenOperations returns a tree of all children for a given parent operation
 func (c *Client) TraverseChildrenOperations(ctx context.Context, operation string, opts *TraverseChildrenOperationsOptions) ([]*OperationNode, error) {
 	immediateChildren, _, err := c.ListImmediateChildrenOperations(ctx, operation, nil)
@@ -490,23 +502,8 @@ func (c *Client) TraverseChildrenOperations(ctx context.Context, operation strin
 	return res, nil
 }
 
-// ListImmediateChildrenOperationsOptions is an optional parameter that
-// can be provided to ListImmediateChildrenOperations
-type ListImmediateChildrenOperationsOptions struct {
-	// The maximum number of children operations to return.
-	// If not specified, the entire list is returned.
-	PageSize int
-	// A page token, received from a previous ListImmediateChildrenOperations call.
-	// If not specified, the first page of results is returned.
-	//
-	// When paginating, all other parameters provided to `ListBooks` must match
-	// the call that provided the page token.
-	PageToken string
-}
-
 // ListImmediateChildrenOperations provides the list of immediate children for a given operation
 func (c *Client) ListImmediateChildrenOperations(ctx context.Context, parent string, opts *ListImmediateChildrenOperationsOptions) ([]*longrunningpb.Operation, string, error) {
-
 	// In the case that opts is not provided,
 	// create an empty opts object that will
 	// be used in the later aspects of the function
@@ -547,7 +544,6 @@ func (c *Client) ListImmediateChildrenOperations(ctx context.Context, parent str
 	var res []*longrunningpb.Operation
 	err := c.table.ReadRows(ctx, rowSet,
 		func(row bigtable.Row) bool {
-
 			// if the row is empty, append an empty value and continue
 			if row == nil {
 				res = append(res, nil)
@@ -616,7 +612,6 @@ func (c *Client) writeToBigtable(ctx context.Context, rowKeyPrefix string, colum
 }
 
 func (c *Client) getOpAndColumn(ctx context.Context, rowKeyPrefix, operation string) (*longrunningpb.Operation, string, error) {
-
 	// validate operation name and get row key
 	operationId, prefixFound := strings.CutPrefix(operation, "operations/")
 	if !prefixFound {
@@ -634,7 +629,7 @@ func (c *Client) getOpAndColumn(ctx context.Context, rowKeyPrefix, operation str
 		return nil, "", ErrNotFound{Operation: operation}
 	}
 
-	//get column (only the first one is used)
+	// get column (only the first one is used)
 	columns, ok := row[ColumnFamily]
 	if !ok {
 		return nil, "", ErrNotFound{Operation: operation}
