@@ -217,6 +217,7 @@ func (s *SpannerClient) GetOperation(ctx context.Context, operationName string) 
 	return op, nil
 }
 
+// DeleteOperation deletes the operation row, indexed by operationName, from the spanner table.
 func (s *SpannerClient) DeleteOperation(ctx context.Context, operationName string) (*emptypb.Empty, error) {
 	// validate operation name
 	err := validate.Argument("name", operationName, validate.OperationRegex)
@@ -572,6 +573,7 @@ func (s *SpannerClient) ListImmediateChildrenOperations(ctx context.Context, par
 	return ops, lastRowKey, nil
 }
 
+// getOperationAndParent reads and returns an operation and its parent
 func (s *SpannerClient) getOperationAndParent(ctx context.Context, operationName string) (*longrunningpb.Operation, string, error) {
 	// validate arguments
 	err := validate.Argument("name", operationName, validate.OperationRegex)
