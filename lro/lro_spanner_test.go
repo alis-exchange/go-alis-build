@@ -2,17 +2,20 @@ package lro
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"go.alis.build/sproto"
+	"google.golang.org/genproto/googleapis/type/date"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -38,9 +41,6 @@ func init() {
 
 	// generate table name from google project
 	testTableName = fmt.Sprintf("%s_%s", strings.ReplaceAll(testProductGoogleProject, "-", "_"), OperationTableSuffix)
-
-	// set ADC path
-	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/root/alis.build/go-alis-build/lro/key-play-ct-prod-3h7.json")
 
 	// create sproto client
 	client, err = sproto.NewClient(ctx, testInstanceGoogleProject, testInstanceName, testDatabaseName, testDatabaseRole)
@@ -267,7 +267,7 @@ func TestSpannerClient_DeleteOperation(t *testing.T) {
 			},
 			args: args{
 				ctx:           ctx,
-				operationName: "operations/715a0d92-383a-43f4-97da-bd634717da3d",
+				operationName: "operations/0",
 			},
 			want:    &emptypb.Empty{},
 			wantErr: false,
@@ -334,6 +334,173 @@ func TestSpannerClient_GetParent(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("SpannerClient.GetParent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpannerClient_UpdateMetadata(t *testing.T) {
+	type fields struct {
+		client      *sproto.Client
+		tableConfig *SpannerTableConfig
+	}
+	type args struct {
+		ctx           context.Context
+		operationName string
+		metadata      proto.Message
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *longrunningpb.Operation
+		wantErr bool
+	}{
+		{
+			name: "Basic",
+			fields: fields{
+				client:      client,
+				tableConfig: tableConfig,
+			},
+			args: args{
+				ctx:           ctx,
+				operationName: "operations/9d604a61-f54e-498b-8566-a8a811c599e5",
+				metadata: &timestamppb.Timestamp{
+					Seconds: 100,
+					Nanos:   100,
+				},
+			},
+			want:    &longrunningpb.Operation{},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SpannerClient{
+				client:      tt.fields.client,
+				tableConfig: tt.fields.tableConfig,
+			}
+			got, err := s.UpdateMetadata(tt.args.ctx, tt.args.operationName, tt.args.metadata)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SpannerClient.UpdateMetadata() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SpannerClient.UpdateMetadata() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpannerClient_SetSuccessful(t *testing.T) {
+	type fields struct {
+		client      *sproto.Client
+		tableConfig *SpannerTableConfig
+	}
+	type args struct {
+		ctx           context.Context
+		operationName string
+		response      proto.Message
+		metadata      proto.Message
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *longrunningpb.Operation
+		wantErr bool
+	}{
+		{
+			name: "Basic",
+			fields: fields{
+				client:      client,
+				tableConfig: tableConfig,
+			},
+			args: args{
+				ctx:           ctx,
+				operationName: "operations/9d604a61-f54e-498b-8566-a8a811c599e5",
+				response: &date.Date{
+					Year:  1999,
+					Month: 5,
+					Day:   10,
+				},
+				metadata: &timestamppb.Timestamp{
+					Seconds: 100,
+					Nanos:   100,
+				},
+			},
+			want:    &longrunningpb.Operation{},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SpannerClient{
+				client:      tt.fields.client,
+				tableConfig: tt.fields.tableConfig,
+			}
+			got, err := s.SetSuccessful(tt.args.ctx, tt.args.operationName, tt.args.response, tt.args.metadata)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SpannerClient.SetSuccessful() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SpannerClient.SetSuccessful() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpannerClient_SetFailed(t *testing.T) {
+	type fields struct {
+		client      *sproto.Client
+		tableConfig *SpannerTableConfig
+	}
+	type args struct {
+		ctx           context.Context
+		operationName string
+		error         error
+		metadata      proto.Message
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *longrunningpb.Operation
+		wantErr bool
+	}{
+		{
+			name: "Basic",
+			fields: fields{
+				client:      client,
+				tableConfig: tableConfig,
+			},
+			args: args{
+				ctx:           ctx,
+				operationName: "operations/9d604a61-f54e-498b-8566-a8a811c599e5",
+				error:         errors.New("test: operation failed with this error"),
+				metadata: &timestamppb.Timestamp{
+					Seconds: 100,
+					Nanos:   100,
+				},
+			},
+			want:    &longrunningpb.Operation{},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SpannerClient{
+				client:      tt.fields.client,
+				tableConfig: tt.fields.tableConfig,
+			}
+			got, err := s.SetFailed(tt.args.ctx, tt.args.operationName, tt.args.error, tt.args.metadata)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SpannerClient.SetFailed() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SpannerClient.SetFailed() = %v, want %v", got, tt.want)
 			}
 		})
 	}

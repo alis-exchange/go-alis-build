@@ -583,20 +583,20 @@ func (s *SpannerClient) getOperationAndParent(ctx context.Context, operationName
 
 	// read operation row from spanner
 	op := &longrunningpb.Operation{}
-	rowMap, err := s.client.ReadRow(ctx, s.tableConfig.tableName, spanner.Key{operationName}, []string{s.tableConfig.operationColumnName, s.tableConfig.parentColumnName}, nil)
+	rowMap, err := s.client.ReadRow(ctx, s.tableConfig.tableName, spanner.Key{operationName}, []string{s.tableConfig.parentColumnName}, nil)
 	if err != nil {
 		return nil, "", err
 	}
 
-	// extract op from row
-	opString, ok := rowMap[s.tableConfig.operationColumnName]
-	if !ok {
-		return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation resource from row (%s)", operationName))
-	}
-	err = proto.Unmarshal([]byte(opString.(string)), op)
-	if err != nil {
-		return nil, "", err
-	}
+	// // extract op from row (BUG - can't unmarshal string into []byte into proto)
+	// opString, ok := rowMap[s.tableConfig.operationColumnName]
+	// if !ok {
+	// 	return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation resource from row (%s)", operationName))
+	// }
+	// err = proto.Unmarshal([]byte(opString.(string)), op)
+	// if err != nil {
+	// 	return nil, "", err
+	// }
 
 	// extract parent from row
 	opParent, ok := rowMap[s.tableConfig.parentColumnName]
@@ -604,6 +604,12 @@ func (s *SpannerClient) getOperationAndParent(ctx context.Context, operationName
 		return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation parent from row (%s)", operationName))
 	}
 	opParentString := opParent.(string)
+
+	// temp fix, use ReadProto to get
+	err = s.client.ReadProto(ctx, s.tableConfig.tableName, spanner.Key{operationName}, s.tableConfig.operationColumnName, op, nil)
+	if err != nil {
+		return nil, "", err
+	}
 
 	// return operation and column name
 	return op, opParentString, nil
