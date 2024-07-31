@@ -33,7 +33,7 @@ SpannerClient support
 const (
 	OperationColumnName  = "Operation"
 	ParentColumnName     = "operation_parent"
-	OperationTableSuffix = "LROs"
+	OperationTableSuffix = "Operations"
 )
 
 type SpannerClient struct {
@@ -589,11 +589,11 @@ func (s *SpannerClient) getOperationAndParent(ctx context.Context, operationName
 	}
 
 	// extract op from row
-	opBytes, ok := rowMap[s.tableConfig.operationColumnName]
+	opString, ok := rowMap[s.tableConfig.operationColumnName]
 	if !ok {
 		return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation resource from row (%s)", operationName))
 	}
-	err = proto.Unmarshal(opBytes.([]byte), op)
+	err = proto.Unmarshal([]byte(opString.(string)), op)
 	if err != nil {
 		return nil, "", err
 	}
