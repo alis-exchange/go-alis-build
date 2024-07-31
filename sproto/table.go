@@ -11,7 +11,6 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/mennanov/fmutils"
-	"go.alis.build/alog"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
@@ -53,7 +52,7 @@ type QueryOptions struct {
 NewClient creates a new Database Client instance with the provided Google Cloud Spanner configuration.
 Leave databaseRole empty if you are not using fine grained roles on the database.
 */
-func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) *DbClient {
+func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) (*DbClient, error) {
 	ctx := context.Background()
 	clientConfig := spanner.ClientConfig{}
 	if databaseRole != "" {
@@ -61,30 +60,31 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 	}
 	spannerClient, err := spanner.NewClientWithConfig(ctx, fmt.Sprintf("projects/%s/instances/%s/databases/%s", googleProject, spannerInstance, databaseName), clientConfig)
 	if err != nil {
-		alog.Fatalf(ctx, "Error creating Spanner client: %v", err)
+		return nil, err
 	}
 
 	return &DbClient{
 		client: spannerClient,
-	}
+	}, nil
 }
 
 // NewTableClient creates a new Table Client instance with the provided table name.
 // During setup, it queries the table to get the primary key columns and the mapping of proto message types to columns.
 // The defaultQueryRowLimit is used as the default limit for queries if not provided in the QueryOptions.
-func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *TableClient {
+func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) (*TableClient, error) {
 	ctx := context.Background()
 	// use go routines
 	var pkCols []*primaryKeyColumn
 	var msgTypeToColumn map[string]string
 	wg := sync.WaitGroup{}
+	errChannel := make(chan error, 2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		var err error
 		pkCols, err = getPrimaryKeyColumns(ctx, d.client, tableName)
 		if err != nil {
-			alog.Fatalf(ctx, "Error getting primary key columns for table %s: %v", tableName, err)
+			errChannel <- fmt.Errorf("Error getting primary key columns for table %s: %v", tableName, err)
 		}
 	}()
 	go func() {
@@ -92,10 +92,14 @@ func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *T
 		var err error
 		msgTypeToColumn, err = getProtoTypeToColumnMap(ctx, d.client, tableName)
 		if err != nil {
-			alog.Fatalf(ctx, "Error getting proto type to column map for table %s: %v", tableName, err)
+			errChannel <- fmt.Errorf("Error getting proto type to column map for table %s: %v", tableName, err)
 		}
 	}()
 	wg.Wait()
+	close(errChannel)
+	for err := range errChannel {
+		return nil, err
+	}
 
 	return &TableClient{
 		db:                d,
@@ -103,7 +107,7 @@ func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *T
 		primaryKeyColumns: pkCols,
 		msgTypeToColumn:   msgTypeToColumn,
 		defaultLimit:      defaultQueryRowLimit,
-	}
+	}, nil
 }
 
 func (t *TableClient) getColNames(messages []proto.Message) ([]string, error) {
