@@ -16,7 +16,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	grpcStatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -149,8 +148,11 @@ func (s *SpannerClient) CreateOperation(ctx *context.Context, opts *CreateOption
 		return nil, err
 	}
 
+	// TODO: figure out
+	// {
 	// add opName to outgoing context metadata
-	*ctx = metadata.AppendToOutgoingContext(*ctx, MetaKeyAlisLroParent, op.GetName())
+	// *ctx = metadata.AppendToOutgoingContext(*ctx, MetaKeyAlisLroParent, op.GetName())
+	// }
 
 	return op, nil
 }
@@ -197,7 +199,6 @@ func (s *SpannerClient) GetOperation(ctx context.Context, operationName string) 
 												}
 												return nil, status.Error(codes.Internal, err.Error())
 											}
-											return nil, status.Error(codes.Internal, err.Error())
 										}
 										return nil, status.Error(codes.Internal, err.Error())
 									}
@@ -266,7 +267,7 @@ func (s *SpannerClient) WaitOperation(ctx context.Context, req *longrunningpb.Wa
 			metadataCallback(op.GetMetadata())
 		}
 
-		timePassed := time.Now().Sub(startTime)
+		timePassed := time.Since(startTime)
 		if timeout != nil && timePassed > duration {
 			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
 		}
@@ -583,34 +584,22 @@ func (s *SpannerClient) getOperationAndParent(ctx context.Context, operationName
 
 	// read operation row from spanner
 	op := &longrunningpb.Operation{}
-	rowMap, err := s.client.ReadRow(ctx, s.tableConfig.tableName, spanner.Key{operationName}, []string{s.tableConfig.parentColumnName}, nil)
+	parent := ""
+	row, err := s.client.Client().Single().ReadRow(ctx, s.tableConfig.tableName, spanner.Key{operationName}, []string{s.tableConfig.operationColumnName, s.tableConfig.parentColumnName})
 	if err != nil {
 		return nil, "", err
 	}
 
-	// // extract op from row (BUG - can't unmarshal string into []byte into proto)
-	// opString, ok := rowMap[s.tableConfig.operationColumnName]
-	// if !ok {
-	// 	return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation resource from row (%s)", operationName))
-	// }
-	// err = proto.Unmarshal([]byte(opString.(string)), op)
-	// if err != nil {
-	// 	return nil, "", err
-	// }
-
-	// extract parent from row
-	opParent, ok := rowMap[s.tableConfig.parentColumnName]
-	if !ok {
-		return nil, "", status.Error(codes.Internal, fmt.Sprintf("get operation parent from row (%s)", operationName))
+	// unmarshal values to op and parent
+	err = row.ColumnByName(s.tableConfig.operationColumnName, op)
+	if err != nil {
+		return nil, "", err
 	}
-	opParentString := opParent.(string)
-
-	// temp fix, use ReadProto to get
-	err = s.client.ReadProto(ctx, s.tableConfig.tableName, spanner.Key{operationName}, s.tableConfig.operationColumnName, op, nil)
+	err = row.ColumnByName(s.tableConfig.parentColumnName, &parent)
 	if err != nil {
 		return nil, "", err
 	}
 
 	// return operation and column name
-	return op, opParentString, nil
+	return op, parent, nil
 }
