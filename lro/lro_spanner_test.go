@@ -8,12 +8,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"go.alis.build/sproto"
 	"google.golang.org/genproto/googleapis/type/date"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -38,6 +40,9 @@ var (
 func init() {
 	ctx = context.Background()
 	var err error
+
+	// set ADC path
+	// os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/root/alis.build/go-alis-build/lro/key-play-ct-prod-3h7.json")
 
 	// generate table name from google project
 	testTableName = fmt.Sprintf("%s_%s", strings.ReplaceAll(testProductGoogleProject, "-", "_"), OperationTableSuffix)
@@ -501,6 +506,124 @@ func TestSpannerClient_SetFailed(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("SpannerClient.SetFailed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpannerClient_WaitOperation(t *testing.T) {
+	sleepTime := 3 * time.Second
+
+	s := &SpannerClient{
+		client:      client,
+		tableConfig: tableConfig,
+	}
+
+	type args struct {
+		ctx           context.Context
+		operationName string
+		timeout       int64
+	}
+
+	type testcase struct {
+		name    string
+		args    args
+		want    *longrunningpb.Operation
+		wantErr bool
+	}
+
+	deleteFunc := func(ops []testcase) {
+		ctx := context.Background()
+		for _, o := range ops {
+			_, deleteErr := s.DeleteOperation(ctx, o.args.operationName)
+			if deleteErr != nil {
+				log.Printf("DeleteOperation() error = %v", deleteErr)
+			} else {
+				log.Printf("Deleted %s", o.args.operationName)
+			}
+		}
+	}
+
+	createTestOperations := func() []testcase {
+		ctx := context.Background()
+
+		ops := []testcase{}
+		for i := 0; i < 5; i++ {
+			op, err := s.CreateOperation(&ctx, nil)
+			if err != nil {
+				t.Errorf("CreateOperation() error = %v", err)
+				return ops
+			}
+
+			log.Printf("Created %s", op.GetName())
+			t := testcase{
+				name: op.GetName(),
+				args: args{
+					ctx:           context.Background(),
+					operationName: op.GetName(),
+					timeout:       2,
+				},
+				want: &longrunningpb.Operation{
+					Name:     op.GetName(),
+					Metadata: nil,
+					Result:   nil,
+				},
+				wantErr: true,
+			}
+
+			// set even numbers as successful
+			if i%2 == 0 {
+				// extend timeout to allow for successful wait
+				t.name = t.name + " (done within timeout)"
+				t.args.timeout = 10
+				t.want.Done = true
+				t.wantErr = false
+			}
+			ops = append(ops, t)
+		}
+
+		return ops
+	}
+
+	sleepAndSetSuccessful := func(tt testcase) {
+		time.Sleep(sleepTime)
+
+		_, err := s.SetSuccessful(tt.args.ctx, tt.args.operationName, nil, nil)
+		if err != nil {
+			log.Printf("SetSuccessful() error = %v", err)
+		}
+		log.Printf("Set successful %s", tt.args.operationName)
+	}
+
+	// create operations in main thread
+	ops := createTestOperations()
+	// clean up
+	defer deleteFunc(ops)
+
+	for _, tt := range ops {
+		// sleep and set successful for each test case in parallel
+		go sleepAndSetSuccessful(tt)
+
+		// wait for each test case in parallel
+		t.Run(tt.name, func(t *testing.T) {
+			var req *longrunningpb.WaitOperationRequest
+			if tt.args.timeout > 0 {
+				req = &longrunningpb.WaitOperationRequest{Name: tt.args.operationName, Timeout: &durationpb.Duration{Seconds: tt.args.timeout}}
+			} else {
+				req = &longrunningpb.WaitOperationRequest{Name: tt.args.operationName}
+			}
+
+			// wait
+			got, err := s.WaitOperation(tt.args.ctx, req, nil)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("WaitOperation() error = %v", err)
+				return
+			} else {
+				if tt.wantErr {
+					log.Printf("Waited (behaviour as expected): %s", err)
+				} else {
+					log.Printf("Waited (behaviour as expected): %s", got)
+				}
 			}
 		})
 	}
