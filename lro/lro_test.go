@@ -19,9 +19,6 @@ var client *Client
 func init() {
 	var err error
 
-	// set ADC path
-	// os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/Users/jankrynauw/alis.build/krynauws/build/pl/key-krynauws-pl-dev-gqg.json")
-
 	client, err = NewClient(context.Background(), "alis-bt-prod-ar3s8lm", "default", "krynauws-pl", "krynauws_pl_dev_gqg_Operations")
 	if err != nil {
 		log.Fatal(err)
@@ -234,7 +231,7 @@ func TestClient_UpdateMetadata(t *testing.T) {
 				ctx:           context.Background(),
 				operationName: "operations/dcef5f7b-6bb0-41bf-9930-871ed389d4d8",
 				metadata: &longrunningpb.GetOperationRequest{
-					Name: "some text",
+					Name: "some text metadata",
 				},
 			},
 			want:    &longrunningpb.Operation{},

@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -59,8 +58,8 @@ func (c *Client) Close() {
 
 // CreateOptions provide additional, optional, parameters to the CreateOperation method.
 type CreateOptions struct {
-	Id       string     // Id is used to provide user defined operation Ids
-	Metadata *anypb.Any // Metadata object as defined for the relevant LRO metadata response.
+	Id       string        // Id is used to provide user defined operation Ids
+	Metadata proto.Message // Metadata object as defined for the relevant LRO metadata response.
 }
 
 // CreateOperation stores a new long-running operation in spanner, with done=false
@@ -86,7 +85,8 @@ func (c *Client) CreateOperation(ctx context.Context, opts *CreateOptions) (*lon
 
 	// set metadata
 	if opts.Metadata != nil {
-		op.Metadata = opts.Metadata
+		anyMeta, _ := anypb.New(opts.Metadata)
+		op.Metadata = anyMeta
 	}
 
 	// write operation and parent to respective spanner columns
@@ -111,7 +111,15 @@ func (c *Client) GetOperation(ctx context.Context, operationName string) (*longr
 	op := &longrunningpb.Operation{}
 	err = c.spanner.ReadProto(ctx, c.table, spanner.Key{operationName}, OperationColumnName, op, nil)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		if _, ok := err.(sproto.ErrNotFound); ok {
+			// Handle the ErrNotFound case.
+			return nil, ErrNotFound{
+				Operation: operationName,
+			}
+		} else {
+			// Handle other error types.
+			return nil, fmt.Errorf("read operation from database: %w", err)
+		}
 	}
 
 	return op, nil
@@ -134,7 +142,7 @@ func (c *Client) DeleteOperation(ctx context.Context, operationName string) (*em
 	// delete operation
 	err = c.spanner.DeleteRow(ctx, c.table, spanner.Key{operationName})
 	if err != nil {
-		return nil, status.Error(codes.Internal, fmt.Errorf("delete operation (%s): %s", operationName, err.Error()).Error())
+		return nil, fmt.Errorf("delete operation (%s): %w", operationName, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -259,23 +267,15 @@ func (c *Client) SetFailed(ctx context.Context, operationName string, error erro
 	// update operation fields
 	op.Done = true
 	if error == nil {
-		error = status.Errorf(codes.Internal, "unknown error")
+		error = fmt.Errorf("unknown error")
 	}
 
-	stat, ok := status.FromError(error)
-	if !ok {
-		op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
-			Code:    int32(codes.Unknown),
-			Message: error.Error(),
-			Details: nil,
-		}}
-	} else {
-		op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
-			Code:    int32(stat.Code()),
-			Message: stat.Message(),
-			Details: nil,
-		}}
-	}
+	op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
+		Code:    int32(codes.Unknown),
+		Message: error.Error(),
+		Details: nil,
+	}}
+
 	if metadata != nil {
 		// convert metadata to Any type as per longrunning.Operation requirement.
 		metaAny, err := anypb.New(metadata)
