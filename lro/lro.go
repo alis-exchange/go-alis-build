@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -21,6 +22,15 @@ import (
 
 const (
 	OperationColumnName = "Operation"
+	// CheckpointHeaderKey is used to keep track of actual code related checkpoints in the context of Resumable
+	// LROs.
+	CheckpointHeaderKey = "x-alis-checkpoint"
+	// OperationIdHeaderKey is use to indicate the the LRO already exists, and does not need to be created
+	OperationIdHeaderKey = "x-alis-operation-id"
+	// ChildOperationIdHeaderKey is used to store any child operation ids relevant to the main LRO.
+	// These headers are used in the context of resumable LROs, and can be more than one LROs.  That is
+	// a parent LRO can kick off a few child LROs which need to be completed before resuming.
+	ChildOperationIdHeaderKey = "x-alis-child-operation-id"
 )
 
 type Client struct {
@@ -331,4 +341,27 @@ func (c *Client) UpdateMetadata(ctx context.Context, operationName string, metad
 	}
 
 	return op, nil
+}
+
+// ForwardContext forwards the incoming context related to LROs and add them to the outgoing context.
+// This method will forward the following headers if available:
+//   - x-alis-checkpoint
+//   - x-alis-operation-id
+//   - x-alis-child-operation-id (which may be more than one, since a main LRO could invoke multiple child LROs)
+func (c *Client) ForwardContext(ctx context.Context) context.Context {
+	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		keys := []string{CheckpointHeaderKey, OperationIdHeaderKey, ChildOperationIdHeaderKey}
+		kvPairs := []string{}
+		for _, k := range keys {
+			for _, v := range md.Get(k) {
+				kvPairs = append(kvPairs, []string{k, v}...)
+			}
+		}
+		if len(kvPairs) > 0 {
+			ctx = metadata.AppendToOutgoingContext(ctx, kvPairs...)
+		}
+	}
+	return ctx
 }
