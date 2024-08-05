@@ -57,7 +57,7 @@ func (rr *ResourceRow) UpdatePolicy(ctx context.Context) error {
 	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Policy)
 }
 
-func (rr *ResourceRow) DeleteResource(ctx context.Context) error {
+func (rr *ResourceRow) Delete(ctx context.Context) error {
 	return rr.tbl.Delete(ctx, spanner.Key{rr.RowKey})
 }
 
@@ -175,7 +175,7 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	return resourceRows, nil
 }
 
-func (rt *ResourceClient) List(ctx context.Context, opts *QueryOptions, parent string) ([]*ResourceRow, string, error) {
+func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOptions) ([]*ResourceRow, string, error) {
 	var err error
 	spannerStatement := spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
 	spannerStatement.Params["prefix"], err = rt.rowKeyConv.GetRowKeyPrefix(parent)

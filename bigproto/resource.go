@@ -1,0 +1,187 @@
+package bigproto
+
+import (
+	"context"
+	"strings"
+
+	"cloud.google.com/go/iam/apiv1/iampb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+)
+
+type ResourceTblOptions struct {
+	// whether the resource is a version, i.e. the name has the format .../versions/%d-%d-%d
+	// If set, the conversion from the resource name to the row key will be such that
+	// the latest version is returned first when doing a query (which orders keys lexicographically)
+	IsVersion bool
+	// The default limit for queries if not provided in QueryOptions. If not provided, 100 is used.
+	DefaultLimit int
+	// Whether this resource type has iam policies stored next to it. If true, the ResourceRow's policy field
+	// will be populated with the policy for the resource when doing a read.
+	HasIamPolicy bool
+	// Whether to return permission denied for not found resources instead of not found error
+	// when doing a read or delete operation.
+	ReturnPermissionDeniedForNotFound bool
+	// The name of the column family that contains the resource. If not provided, 'r' is used.
+	ResourceColumnFamily string
+	// The name of the column family that contains the policy. If not provided, 'p' is used.
+	PolicyColumnFamily string
+}
+
+type ResourceClient struct {
+	tbl                               *BigProto
+	rowKeyConv                        *RowKeyConverter
+	resourceMsg                       proto.Message
+	hasIamPolicy                      bool
+	returnPermissionDeniedForNotFound bool
+	resourceColumnFamily              string
+	policyColumnFamily                string
+	defaultListLimit                  int32
+}
+
+type ResourceRow struct {
+	RowKey         string
+	Msg            proto.Message
+	Policy         *iampb.Policy
+	resourceClient *ResourceClient
+}
+
+func (rr *ResourceRow) UpdateResource(ctx context.Context) error {
+	return rr.resourceClient.tbl.WriteProto(ctx, rr.RowKey, rr.resourceClient.resourceColumnFamily, rr.Msg)
+}
+
+func (rr *ResourceRow) UpdatePolicy(ctx context.Context) error {
+	if rr.Policy == nil {
+		return status.Error(codes.InvalidArgument, "Policy is nil")
+	}
+	return rr.resourceClient.tbl.WriteProto(ctx, rr.RowKey, rr.resourceClient.policyColumnFamily, rr.Policy)
+}
+
+func (rr *ResourceRow) Delete(ctx context.Context) error {
+	return rr.resourceClient.tbl.DeleteRow(ctx, rr.RowKey)
+}
+
+func (d *BigProto) NewResourceClient(prefix string, msg proto.Message, options *ResourceTblOptions) *ResourceClient {
+	if options == nil {
+		options = &ResourceTblOptions{}
+	}
+	if options.DefaultLimit == 0 {
+		options.DefaultLimit = 100
+	}
+	if options.ResourceColumnFamily == "" {
+		options.ResourceColumnFamily = "r"
+	}
+	if options.PolicyColumnFamily == "" {
+		options.PolicyColumnFamily = "p"
+	}
+
+	rt := &ResourceClient{
+		tbl:                               d,
+		resourceMsg:                       msg,
+		rowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion, KeyPrefix: prefix},
+		hasIamPolicy:                      options.HasIamPolicy,
+		returnPermissionDeniedForNotFound: options.ReturnPermissionDeniedForNotFound,
+		resourceColumnFamily:              options.ResourceColumnFamily,
+		policyColumnFamily:                options.PolicyColumnFamily,
+		defaultListLimit:                  int32(options.DefaultLimit),
+	}
+	return rt
+}
+
+func (rt *ResourceClient) Create(ctx context.Context, name string, resource proto.Message, policy *iampb.Policy) (*ResourceRow, error) {
+	if policy == nil && rt.hasIamPolicy {
+		return nil, status.Error(codes.InvalidArgument, "Policy required because resource type has iam policies")
+	} else if policy != nil && !rt.hasIamPolicy {
+		return nil, status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	msgs := []proto.Message{resource}
+	colFamilies := []string{rt.resourceColumnFamily}
+	if rt.hasIamPolicy {
+		msgs = append(msgs, policy)
+		colFamilies = append(colFamilies, rt.policyColumnFamily)
+	}
+	err = rt.tbl.WriteProtos(ctx, rowKey, colFamilies, msgs)
+	if err != nil {
+		return nil, err
+	}
+	resourceRow := &ResourceRow{
+		RowKey: rowKey,
+		Msg:    resource,
+	}
+	if rt.hasIamPolicy {
+		resourceRow.Policy = policy
+	}
+	return resourceRow, nil
+}
+
+func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths ...string) (*ResourceRow, error) {
+	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	msg := proto.Clone(rt.resourceMsg)
+	policy := &iampb.Policy{}
+
+	if rt.hasIamPolicy {
+		policy, err = rt.tbl.ReadProtoWithPolicy(ctx, rowKey, rt.resourceColumnFamily, msg, &fieldmaskpb.FieldMask{Paths: fieldMaskPaths}, rt.policyColumnFamily)
+	} else {
+		err = rt.tbl.ReadProto(ctx, rowKey, rt.resourceColumnFamily, msg, &fieldmaskpb.FieldMask{Paths: fieldMaskPaths})
+	}
+	if err != nil {
+		if rt.returnPermissionDeniedForNotFound && strings.Contains(err.Error(), "not found") {
+			return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+		}
+		return nil, err
+	}
+	resourceRow := &ResourceRow{
+		RowKey: rowKey,
+		Msg:    msg,
+	}
+	if rt.hasIamPolicy {
+		resourceRow.Policy = policy
+	}
+	return resourceRow, nil
+}
+
+type ListOptions struct {
+	PageSize  int32
+	NextToken string
+	ReadMask  *fieldmaskpb.FieldMask
+}
+
+func (rt *ResourceClient) List(ctx context.Context, parent string, opts *ListOptions) ([]*ResourceRow, string, error) {
+	msg := proto.Clone(rt.resourceMsg)
+	prefix, err := rt.rowKeyConv.GetRowKeyPrefix(parent)
+	if err != nil {
+		return nil, "", status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	policyColFamily := ""
+	if rt.hasIamPolicy {
+		policyColFamily = rt.policyColumnFamily
+	}
+	rowsWithPolicies, nextToken, err := rt.tbl.PageProtosWithPolicies(ctx, rt.resourceColumnFamily, msg, policyColFamily, PageOptions{
+		RowKeyPrefix: prefix,
+		PageSize:     opts.PageSize,
+		NextToken:    opts.NextToken,
+		ReadMask:     opts.ReadMask,
+		MaxPageSize:  rt.defaultListLimit,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	resourceRows := make([]*ResourceRow, len(rowsWithPolicies))
+	for i, row := range rowsWithPolicies {
+		resourceRows[i] = &ResourceRow{
+			RowKey: row.Key,
+			Msg:    row.Row,
+			Policy: row.Policy,
+		}
+	}
+	return resourceRows, nextToken, nil
+}
