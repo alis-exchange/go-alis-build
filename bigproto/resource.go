@@ -32,7 +32,7 @@ type ResourceTblOptions struct {
 
 type ResourceClient struct {
 	tbl                               *BigProto
-	rowKeyConv                        *RowKeyConverter
+	RowKeyConv                        *RowKeyConverter
 	resourceMsg                       proto.Message
 	hasIamPolicy                      bool
 	returnPermissionDeniedForNotFound bool
@@ -80,7 +80,7 @@ func (d *BigProto) NewResourceClient(prefix string, msg proto.Message, options *
 	rt := &ResourceClient{
 		tbl:                               d,
 		resourceMsg:                       msg,
-		rowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion, KeyPrefix: prefix},
+		RowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion, KeyPrefix: prefix},
 		hasIamPolicy:                      options.HasIamPolicy,
 		returnPermissionDeniedForNotFound: options.ReturnPermissionDeniedForNotFound,
 		resourceColumnFamily:              options.ResourceColumnFamily,
@@ -96,7 +96,7 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	} else if policy != nil && !rt.hasIamPolicy {
 		return nil, status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
 	}
-	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 	}
@@ -121,7 +121,7 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 }
 
 func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths ...string) (*ResourceRow, error) {
-	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 	}
@@ -157,7 +157,7 @@ type ListOptions struct {
 
 func (rt *ResourceClient) List(ctx context.Context, parent string, opts *ListOptions) ([]*ResourceRow, string, error) {
 	msg := proto.Clone(rt.resourceMsg)
-	prefix, err := rt.rowKeyConv.GetRowKeyPrefix(parent)
+	prefix, err := rt.RowKeyConv.GetRowKeyPrefix(parent)
 	if err != nil {
 		return nil, "", status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 	}

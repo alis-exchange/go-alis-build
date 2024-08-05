@@ -32,7 +32,7 @@ type ResourceTblOptions struct {
 
 type ResourceClient struct {
 	tbl                               *TableClient
-	rowKeyConv                        *RowKeyConverter
+	RowKeyConv                        *RowKeyConverter
 	resourceMsg                       proto.Message
 	hasIamPolicy                      bool
 	returnPermissionDeniedForNotFound bool
@@ -78,7 +78,7 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 	rt := &ResourceClient{
 		tbl:                               tableClient,
 		resourceMsg:                       msg,
-		rowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion},
+		RowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion},
 		hasIamPolicy:                      options.HasIamPolicy,
 		returnPermissionDeniedForNotFound: options.ReturnPermissionDeniedForNotFound,
 	}
@@ -91,7 +91,7 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	} else if policy != nil && !rt.hasIamPolicy {
 		return nil, status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
 	}
-	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 	}
@@ -114,7 +114,7 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 }
 
 func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths ...string) (*ResourceRow, error) {
-	rowKey, err := rt.rowKeyConv.GetRowKey(name)
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 	}
@@ -144,7 +144,7 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMaskPaths ...string) ([]*ResourceRow, error) {
 	rowKeys := make([]spanner.Key, len(names))
 	for i, name := range names {
-		rowKey, err := rt.rowKeyConv.GetRowKey(name)
+		rowKey, err := rt.RowKeyConv.GetRowKey(name)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 		}
@@ -178,7 +178,7 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOptions) ([]*ResourceRow, string, error) {
 	var err error
 	spannerStatement := spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
-	spannerStatement.Params["prefix"], err = rt.rowKeyConv.GetRowKeyPrefix(parent)
+	spannerStatement.Params["prefix"], err = rt.RowKeyConv.GetRowKeyPrefix(parent)
 	if err != nil {
 		return nil, "", status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
 	}
