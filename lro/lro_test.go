@@ -14,12 +14,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-var client *Client
+var client *Client[MyCheckpoint]
+
+type MyCheckpoint struct {
+	Id            string
+	SomeValue     float64
+	AnotherString string
+}
 
 func init() {
 	var err error
 
-	client, err = NewClient(context.Background(), "alis-bt-prod-ar3s8lm", "default", "krynauws-pl", "krynauws_pl_dev_gqg_Operations")
+	client, err = NewClient[MyCheckpoint](context.Background(), "alis-bt-prod-ar3s8lm", "default", "krynauws-pl", "krynauws_pl_dev_gqg_Operations")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,10 +81,10 @@ func TestClient_GetOperation(t *testing.T) {
 			name: "GetOperation",
 			args: args{
 				ctx:           context.Background(),
-				operationName: "operations/18eb89c6-05e2-498f-a2c4-d9b959bf3af0",
+				operationName: "operations/08c09105-d9c1-4ade-a58d-8951024bc71a",
 			},
 			want: &longrunningpb.Operation{
-				Name:     "operations/c3eb5c65-bf5a-4abe-9244-49cf73c0451c",
+				Name:     "operations/08c09105-d9c1-4ade-a58d-8951024bc71a",
 				Metadata: nil,
 				Done:     false,
 				Result:   nil,
@@ -333,6 +339,77 @@ func TestClient_BatchWaitOperations(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Client.BatchWaitOperations() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClient_SaveCheckpoint(t *testing.T) {
+	type args struct {
+		ctx        context.Context
+		operation  string
+		checkpoint MyCheckpoint
+	}
+
+	myCheckpoint := MyCheckpoint{
+		Id:            "rerere",
+		SomeValue:     3333.012,
+		AnotherString: "ffff",
+	}
+
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "SaveCheckpoint",
+			args: args{
+				ctx:        context.Background(),
+				operation:  "operations/08c09105-d9c1-4ade-a58d-8951024bc71a",
+				checkpoint: myCheckpoint,
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := client.SaveCheckpoint(tt.args.ctx, tt.args.operation, tt.args.checkpoint); (err != nil) != tt.wantErr {
+				t.Errorf("Client.SaveCheckpoint() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestClient_LoadCheckpoint(t *testing.T) {
+	var cp MyCheckpoint
+
+	type args struct {
+		ctx        context.Context
+		operation  string
+		checkpoint MyCheckpoint
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "LoadCheckpoint",
+			args: args{
+				ctx:        context.Background(),
+				operation:  "operations/08c09105-d9c1-4ade-a58d-8951024bc71a",
+				checkpoint: cp,
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if cp, err := client.LoadCheckpoint(tt.args.ctx, tt.args.operation); (err != nil) != tt.wantErr {
+				t.Errorf("Client.LoadCheckpoint() error = %v, wantErr %v", err, tt.wantErr)
+			} else {
+				fmt.Println(cp)
 			}
 		})
 	}
