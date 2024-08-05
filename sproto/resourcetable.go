@@ -2,6 +2,7 @@ package sproto
 
 import (
 	"context"
+	"fmt"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"cloud.google.com/go/spanner"
@@ -25,6 +26,8 @@ type ResourceTblOptions struct {
 	// Whether to return permission denied for not found resources instead of not found error
 	// when doing a read or delete operation.
 	ReturnPermissionDeniedForNotFound bool
+	// The name of the column that contains the row key in the table. If not provided, 'key' is used.
+	KeyColumnName string
 }
 
 type ResourceClient struct {
@@ -33,6 +36,7 @@ type ResourceClient struct {
 	resourceMsg                       proto.Message
 	hasIamPolicy                      bool
 	returnPermissionDeniedForNotFound bool
+	keyColumnName                     string
 }
 
 type ResourceRow struct {
@@ -63,6 +67,9 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 	}
 	if options.DefaultLimit == 0 {
 		options.DefaultLimit = 100
+	}
+	if options.KeyColumnName == "" {
+		options.KeyColumnName = "key"
 	}
 	tableClient, err := d.NewTableClient(tableName, options.DefaultLimit)
 	if err != nil {
@@ -166,4 +173,52 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 		resourceRows[i] = resourceRow
 	}
 	return resourceRows, nil
+}
+
+func (rt *ResourceClient) List(ctx context.Context, opts *QueryOptions, parent string) ([]*ResourceRow, string, error) {
+	var err error
+	spannerStatement := spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
+	spannerStatement.Params["prefix"], err = rt.rowKeyConv.GetRowKeyPrefix(parent)
+	if err != nil {
+		return nil, "", status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
+	}
+	msgs := []proto.Message{proto.Clone(rt.resourceMsg)}
+	if rt.hasIamPolicy {
+		msgs = append(msgs, &iampb.Policy{})
+	}
+	rows, nextToken, err := rt.tbl.Query(ctx, msgs, &spannerStatement, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	resourceRows := make([]*ResourceRow, len(rows))
+	for i, row := range rows {
+		resourceRow := &ResourceRow{
+			RowKey: row.Key.String(),
+			Msg:    row.Messages[0],
+		}
+		if rt.hasIamPolicy {
+			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
+		}
+		resourceRows[i] = resourceRow
+	}
+	return resourceRows, nextToken, nil
+}
+
+func (rt *ResourceClient) Query(ctx context.Context, messages []proto.Message, filter *spanner.Statement, opts *QueryOptions) ([]*ResourceRow, string, error) {
+	rows, nextToken, err := rt.tbl.Query(ctx, messages, filter, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	resourceRows := make([]*ResourceRow, len(rows))
+	for i, row := range rows {
+		resourceRow := &ResourceRow{
+			RowKey: row.Key.String(),
+			Msg:    row.Messages[0],
+		}
+		if rt.hasIamPolicy {
+			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
+		}
+		resourceRows[i] = resourceRow
+	}
+	return resourceRows, nextToken, nil
 }
