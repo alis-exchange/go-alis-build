@@ -40,21 +40,15 @@ type ResourceClient struct {
 }
 
 type ResourceRow struct {
-	RowKey string
-	Msg    proto.Message
-	Policy *iampb.Policy
-	tbl    *TableClient
+	RowKey   string
+	Resource proto.Message
+	Policy   *iampb.Policy
+	tbl      *TableClient
 }
 
-func (rr *ResourceRow) UpdateResource(ctx context.Context) error {
-	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Msg)
-}
-
-func (rr *ResourceRow) UpdatePolicy(ctx context.Context) error {
-	if rr.Policy == nil {
-		return status.Error(codes.InvalidArgument, "Policy is nil")
-	}
-	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Policy)
+// Update the resource in the database. Does not update the policy.
+func (rr *ResourceRow) Update(ctx context.Context) error {
+	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Resource)
 }
 
 func (rr *ResourceRow) Delete(ctx context.Context) error {
@@ -104,10 +98,13 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey: rowKey,
-		Msg:    resource,
+		RowKey:   rowKey,
+		Resource: resource,
 	}
 	if rt.hasIamPolicy {
+		if policy.Etag == nil {
+			return nil, status.Error(codes.InvalidArgument, "Policy etag is required")
+		}
 		resourceRow.Policy = policy
 	}
 	return resourceRow, nil
@@ -132,13 +129,30 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey: rowKey,
-		Msg:    msg,
+		RowKey:   rowKey,
+		Resource: msg,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
 	}
 	return resourceRow, nil
+}
+
+func (rt *ResourceClient) UpdatePolicy(ctx context.Context, name string, policy *iampb.Policy) error {
+	if !rt.hasIamPolicy {
+		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	if policy == nil {
+		return status.Error(codes.InvalidArgument, "Policy is nil")
+	}
+	if policy.Etag == nil {
+		return status.Error(codes.InvalidArgument, "Policy etag is required")
+	}
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
+	if err != nil {
+		return status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	return rt.tbl.Update(ctx, spanner.Key{rowKey}, policy)
 }
 
 func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMaskPaths ...string) ([]*ResourceRow, error) {
@@ -164,8 +178,8 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	resourceRows := make([]*ResourceRow, len(names))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey: rowKeys[i].String(),
-			Msg:    row.Messages[0],
+			RowKey:   rowKeys[i].String(),
+			Resource: row.Messages[0],
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -193,8 +207,8 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 	resourceRows := make([]*ResourceRow, len(rows))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey: row.Key.String(),
-			Msg:    row.Messages[0],
+			RowKey:   row.Key.String(),
+			Resource: row.Messages[0],
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -212,8 +226,8 @@ func (rt *ResourceClient) Query(ctx context.Context, messages []proto.Message, f
 	resourceRows := make([]*ResourceRow, len(rows))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey: row.Key.String(),
-			Msg:    row.Messages[0],
+			RowKey:   row.Key.String(),
+			Resource: row.Messages[0],
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)

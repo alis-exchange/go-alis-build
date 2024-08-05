@@ -43,20 +43,14 @@ type ResourceClient struct {
 
 type ResourceRow struct {
 	RowKey         string
-	Msg            proto.Message
+	Resource       proto.Message
 	Policy         *iampb.Policy
 	resourceClient *ResourceClient
 }
 
-func (rr *ResourceRow) UpdateResource(ctx context.Context) error {
-	return rr.resourceClient.tbl.WriteProto(ctx, rr.RowKey, rr.resourceClient.resourceColumnFamily, rr.Msg)
-}
-
-func (rr *ResourceRow) UpdatePolicy(ctx context.Context) error {
-	if rr.Policy == nil {
-		return status.Error(codes.InvalidArgument, "Policy is nil")
-	}
-	return rr.resourceClient.tbl.WriteProto(ctx, rr.RowKey, rr.resourceClient.policyColumnFamily, rr.Policy)
+// Update the resource in the database. Does not affect the policy.
+func (rr *ResourceRow) Update(ctx context.Context) error {
+	return rr.resourceClient.tbl.WriteProto(ctx, rr.RowKey, rr.resourceClient.resourceColumnFamily, rr.Resource)
 }
 
 func (rr *ResourceRow) Delete(ctx context.Context) error {
@@ -103,6 +97,9 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	msgs := []proto.Message{resource}
 	colFamilies := []string{rt.resourceColumnFamily}
 	if rt.hasIamPolicy {
+		if policy.Etag == nil {
+			return nil, status.Error(codes.InvalidArgument, "Policy etag is required")
+		}
 		msgs = append(msgs, policy)
 		colFamilies = append(colFamilies, rt.policyColumnFamily)
 	}
@@ -111,8 +108,8 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey: rowKey,
-		Msg:    resource,
+		RowKey:   rowKey,
+		Resource: resource,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -140,13 +137,30 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey: rowKey,
-		Msg:    msg,
+		RowKey:   rowKey,
+		Resource: msg,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
 	}
 	return resourceRow, nil
+}
+
+func (rt *ResourceClient) UpdatePolicy(ctx context.Context, name string, policy *iampb.Policy) error {
+	if !rt.hasIamPolicy {
+		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	if policy == nil {
+		return status.Error(codes.InvalidArgument, "Policy is nil")
+	}
+	if policy.Etag == nil {
+		return status.Error(codes.InvalidArgument, "Policy etag is required")
+	}
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
+	if err != nil {
+		return status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	return rt.tbl.WriteProto(ctx, rowKey, rt.policyColumnFamily, policy)
 }
 
 type ListOptions struct {
@@ -178,9 +192,9 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *ListOpt
 	resourceRows := make([]*ResourceRow, len(rowsWithPolicies))
 	for i, row := range rowsWithPolicies {
 		resourceRows[i] = &ResourceRow{
-			RowKey: row.Key,
-			Msg:    row.Row,
-			Policy: row.Policy,
+			RowKey:   row.Key,
+			Resource: row.Row,
+			Policy:   row.Policy,
 		}
 	}
 	return resourceRows, nextToken, nil
