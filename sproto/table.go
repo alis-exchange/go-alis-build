@@ -125,6 +125,119 @@ func (t *TableClient) getColNames(messages []proto.Message) ([]string, error) {
 	return colNames, nil
 }
 
+// Create a single row
+func (t *TableClient) Create(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
+	return t.BatchCreate(ctx, []*Row{
+		{
+			Key:      rowKey,
+			Messages: messages,
+		},
+	})
+}
+
+func (t *TableClient) BatchCreate(ctx context.Context, rows []*Row) error {
+	mutations := make([]*spanner.Mutation, len(rows))
+	for i, row := range rows {
+		keyValues := make([]interface{}, len(row.Key))
+		copy(keyValues, row.Key)
+		if len(t.primaryKeyColumns) != len(keyValues) {
+			return ErrInvalidArguments{
+				err:    fmt.Errorf("row key length does not match the primary key columns length"),
+				fields: []string{"rowKey"},
+			}
+		}
+
+		// Construct columns and values from the provided row
+		maxNrValues := len(keyValues) + len(row.Messages)
+		columns := make([]string, 0, maxNrValues)
+		values := make([]interface{}, 0, maxNrValues)
+		for i, keyCol := range t.primaryKeyColumns {
+			if keyCol.isGenerated || keyCol.isStored {
+				continue
+			}
+			columns = append(columns, keyCol.columnName)
+			values = append(values, keyValues[i])
+		}
+
+		for _, message := range row.Messages {
+			columnName, ok := t.msgTypeToColumn[string(proto.MessageName(message))]
+			if !ok {
+				return ErrInvalidArguments{
+					err:    fmt.Errorf("message type %s not found in table %s", proto.MessageName(message), t.tableName),
+					fields: []string{"messages"},
+				}
+			}
+			columns = append(columns, columnName)
+			values = append(values, message)
+		}
+
+		mutations[i] = spanner.Insert(t.tableName, columns, values)
+	}
+
+	_, err := t.db.client.Apply(ctx, mutations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *TableClient) Update(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
+	return t.BatchUpdate(ctx, []*Row{
+		{
+			Key:      rowKey,
+			Messages: messages,
+		},
+	})
+}
+
+func (t *TableClient) BatchUpdate(ctx context.Context, rows []*Row) error {
+	mutations := make([]*spanner.Mutation, len(rows))
+	for i, row := range rows {
+		keyValues := make([]interface{}, len(row.Key))
+		copy(keyValues, row.Key)
+		if len(t.primaryKeyColumns) != len(keyValues) {
+			return ErrInvalidArguments{
+				err:    fmt.Errorf("row key length does not match the primary key columns length"),
+				fields: []string{"rowKey"},
+			}
+		}
+
+		// Construct columns and values from the provided row
+		maxNrValues := len(keyValues) + len(row.Messages)
+		columns := make([]string, 0, maxNrValues)
+		values := make([]interface{}, 0, maxNrValues)
+		for i, keyCol := range t.primaryKeyColumns {
+			if keyCol.isGenerated || keyCol.isStored {
+				continue
+			}
+			columns = append(columns, keyCol.columnName)
+			values = append(values, keyValues[i])
+		}
+
+		for _, message := range row.Messages {
+			columnName, ok := t.msgTypeToColumn[string(proto.MessageName(message))]
+			if !ok {
+				return ErrInvalidArguments{
+					err:    fmt.Errorf("message type %s not found in table %s", proto.MessageName(message), t.tableName),
+					fields: []string{"messages"},
+				}
+			}
+			columns = append(columns, columnName)
+			values = append(values, message)
+		}
+
+		mutations[i] = spanner.Update(t.tableName, columns, values)
+	}
+
+	_, err := t.db.client.Apply(ctx, mutations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Write one/more proto columns to a single row
 func (t *TableClient) Write(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.BatchWrite(ctx, []*Row{
