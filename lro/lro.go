@@ -5,13 +5,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"cloud.google.com/go/spanner"
+	executions "cloud.google.com/go/workflows/executions/apiv1"
+	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
 	"github.com/google/uuid"
-	"github.com/mennanov/fmutils"
 	"go.alis.build/lro/internal/validate"
 	"go.alis.build/sproto"
 	"golang.org/x/sync/errgroup"
@@ -19,10 +21,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 const (
@@ -30,145 +31,118 @@ const (
 	OperationColumnName = "Operation"
 	// CheckpointColumnName is the column name used in spanner to store checkpoints (if used)
 	CheckpointColumnName = "Checkpoint"
-	// CheckpointHeaderKey is used to keep track of actual code related checkpoints in the context of Resumable
-	// LROs.
-	CheckpointHeaderKey = "x-alis-checkpoint"
 	// OperationIdHeaderKey is use to indicate the the LRO already exists, and does not need to be created
 	OperationIdHeaderKey = "x-alis-operation-id"
-	// ChildOperationIdHeaderKey is used to store any child operation ids relevant to the main LRO.
-	// These headers are used in the context of resumable LROs, and can be more than one LROs.  That is
-	// a parent LRO can kick off a few child LROs which need to be completed before resuming.
-	ChildOperationIdHeaderKey = "x-alis-child-operation-id"
 )
 
-type Client[T Checkpoint] struct {
-	spanner *sproto.Client
-	table   string
+type Client struct {
+	spanner         *sproto.Client
+	workflows       *executions.Client
+	spannerConfig   *SpannerConfig
+	WorkflowsConfig *WorkflowsConfig
+}
+
+// WorkflowsConfig is used to configre the underlying Google Workflows client.
+type WorkflowsConfig struct {
+	// Name of the workflow for which an execution should be created.
+	// Format: projects/{project}/locations/{location}/workflows/{workflow}
+	// Example: projects/myabc-123/locations/europe-west1/workflows/my-lro
+	name string
+	// Project in which Workflow is deployed, for example myproject-123
+	Project string
+	// Location of workflow, for example: europe-west1
+	Location string
+	// Workflow name, for example: my-lro-workflow
+	Workflow string
+}
+
+// SpannerConfig is used to configure the underlygin Google Cloud Spanner client.
+type SpannerConfig struct {
+	// Project
+	Project string
+	// Spanner Instance
+	Instance string
+	// Spanner Database
+	Database string
+	// The name of the Spanner table used to keep track of LROs
+	Table string
+	// Database role
+	Role string
+}
+
+// Operation is the object used to manage the relevant LROs activties.
+type Operation[T Checkpoint] struct {
+	ctx       context.Context
+	client    *Client
+	id        string
+	operation *longrunningpb.Operation
 }
 
 // A Checkpoint object of any type.
 type Checkpoint interface{}
 
 /*
-NewClient creates a new lro Client object. The function takes four arguments:
-
-  - project: The Google Cloud project which hosts the Spanner database
-  - instance: The name of the Spanner instance
-  - database: The name of the Spanner database
-  - table: The name of the Spanner table used to keep track of LROs.
+NewClient creates a new lro Client object. The function takes five arguments:
+  - ctx: The Context
+  - spannerConfig: The configuration to setup the underlying Google Spanner client
+  - workflowsConfig: The (optional) configuration to setup the underlyging Google Cloud Workflows client
 */
-func NewClient[T Checkpoint](ctx context.Context, project string, instance string, database string, table string) (*Client[T], error) {
-	// Establish sproto spanner connection with fine grained table-level role
-	client, err := sproto.NewClient(ctx, project, instance, database, "")
-	if err != nil {
-		return nil, err
+func NewClient(ctx context.Context, spannerConfig *SpannerConfig, workflowsConfig *WorkflowsConfig) (*Client, error) {
+	// Create a new Client object
+	client := &Client{
+		spannerConfig: spannerConfig,
 	}
 
-	return &Client[T]{
-		spanner: client,
-		table:   table,
-	}, nil
+	if spannerConfig != nil {
+		client.spannerConfig = spannerConfig
+		// Establish sproto spanner connection with fine grained table-level role
+		c, err := sproto.NewClient(ctx, spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database, spannerConfig.Role)
+		if err != nil {
+			return nil, err
+		}
+		client.spanner = c
+	} else {
+		return nil, fmt.Errorf("spannerConfig is required but not provided")
+	}
+
+	// Instantiate a new Workflows client if provided
+	if workflowsConfig != nil {
+		workflowsConfig.name = fmt.Sprintf("projects/%s/locations/%s/workflows/%s",
+			workflowsConfig.Project, workflowsConfig.Location, workflowsConfig.Workflow)
+		client.WorkflowsConfig = workflowsConfig
+		c, err := executions.NewClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		client.workflows = c
+	}
+
+	return client, nil
 }
 
 /*
 Close closes the underlying spanner.Client instance.
 */
-func (c *Client[T]) Close() {
+func (c *Client) Close() {
 	c.spanner.Close()
 }
 
-// CreateOptions provide additional, optional, parameters to the CreateOperation method.
-type CreateOptions struct {
-	Id       string        // Id is used to provide user defined operation Ids
-	Metadata proto.Message // Metadata object as defined for the relevant LRO metadata response.
-}
-
-// CreateOperation stores a new long-running operation in spanner, with done=false
-func (c *Client[T]) CreateOperation(ctx context.Context, opts *CreateOptions) (*longrunningpb.Operation, error) {
-	// create new unpopulated long-running operation
-	op := &longrunningpb.Operation{}
-
-	// set opts to empty struct if nil
-	if opts == nil {
-		opts = &CreateOptions{}
-	}
-
-	// Set the name if an id has been provided.
-	if opts.Id != "" {
-		op.Name = "operations/" + opts.Id
-	}
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return nil, err
-	}
-
-	op.Name = "operations/" + id.String()
-
-	// set metadata
-	if opts.Metadata != nil {
-		anyMeta, _ := anypb.New(opts.Metadata)
-		op.Metadata = anyMeta
-	}
-
-	// write operation and parent to respective spanner columns
-	row := map[string]interface{}{"Operation": op}
-	err = c.spanner.InsertRow(ctx, c.table, row)
-	if err != nil {
-		return nil, err
-	}
-
-	return op, nil
-}
-
-// CreateOperation stores a new long-running operation in spanner, with done=false
-func (c *Client[T]) CreateOrResumeOperation(ctx context.Context, opts *CreateOptions) (op *longrunningpb.Operation, checkpoint *T, err error) {
-	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		if len(md.Get(OperationIdHeaderKey)) > 0 {
-			// We found a special header x-alis-operation-id, it suggest that the LRO is an existing one.
-			operationId := md.Get(OperationIdHeaderKey)[0] // We'll only take the first one found.
-			op, err = c.GetOperation(ctx, "operations/"+operationId)
-			if err != nil {
-				return nil, nil, err
-			}
-			checkpoint, err = c.LoadCheckpoint(ctx, op.GetName())
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			op, err = c.CreateOperation(ctx, opts)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-	} else {
-		// Handle the scenario where no context exists.
-		op, err = c.CreateOperation(ctx, opts)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return op, checkpoint, err
-}
-
-// GetOperation can be used directly in your GetOperation rpc method to return a long-running operation to a client
-func (c *Client[T]) GetOperation(ctx context.Context, operationName string) (*longrunningpb.Operation, error) {
+// getOperation is an internal method use to get a specified operation.
+func (c *Client) GetOperation(ctx context.Context, operation string) (*longrunningpb.Operation, error) {
 	// validate arguments
-	err := validate.Argument("name", operationName, validate.OperationRegex)
+	err := validate.Argument("name", operation, validate.OperationRegex)
 	if err != nil {
 		return nil, err
 	}
 
 	// read operation resource from spanner
 	op := &longrunningpb.Operation{}
-	err = c.spanner.ReadProto(ctx, c.table, spanner.Key{operationName}, OperationColumnName, op, nil)
+	err = c.spanner.ReadProto(ctx, c.spannerConfig.Table, spanner.Key{operation}, OperationColumnName, op, nil)
 	if err != nil {
 		if _, ok := err.(sproto.ErrNotFound); ok {
 			// Handle the ErrNotFound case.
 			return nil, ErrNotFound{
-				Operation: operationName,
+				Operation: operation,
 			}
 		} else {
 			// Handle other error types.
@@ -179,75 +153,47 @@ func (c *Client[T]) GetOperation(ctx context.Context, operationName string) (*lo
 	return op, nil
 }
 
-// DeleteOperation deletes the operation row, indexed by operationName, from the spanner table.
-func (c *Client[T]) DeleteOperation(ctx context.Context, operationName string) (*emptypb.Empty, error) {
-	// validate operation name
-	err := validate.Argument("name", operationName, validate.OperationRegex)
-	if err != nil {
-		return nil, err
-	}
-
-	// validate existence of operation
-	_, err = c.GetOperation(ctx, operationName)
-	if err != nil {
-		return nil, err
-	}
-
-	// delete operation
-	err = c.spanner.DeleteRow(ctx, c.table, spanner.Key{operationName})
-	if err != nil {
-		return nil, fmt.Errorf("delete operation (%s): %w", operationName, err)
-	}
-	return &emptypb.Empty{}, nil
-}
-
-// WaitOperation can be used directly in your WaitOperation rpc method to wait for a long-running operation to complete.
-// The metadataCallback parameter can be used to handle metadata provided by the operation.
-// Note that if you do not specify a timeout, the timeout is set to 49 seconds.
-func (c *Client[T]) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest, metadataCallback func(*anypb.Any)) (*longrunningpb.Operation, error) {
-	timeout := req.GetTimeout()
-	if timeout == nil {
-		timeout = &durationpb.Duration{Seconds: 7 * 7}
+// Wait polls the provided operation and waits until done.
+func (c *Client) Wait(ctx context.Context, operation string, timeout time.Duration) (*longrunningpb.Operation, error) {
+	// Set the default timeout
+	if timeout == 0 {
+		timeout = time.Second * 77
 	}
 	startTime := time.Now()
-	duration := time.Duration(timeout.Seconds*1e9 + int64(timeout.Nanos))
 
 	// start loop to check if operation is done or timeout has passed
 	var op *longrunningpb.Operation
 	var err error
 	for {
-		op, err = c.GetOperation(ctx, req.GetName())
+		op, err = c.GetOperation(ctx, operation)
 		if err != nil {
 			return nil, err
 		}
 		if op.Done {
 			return op, nil
 		}
-		if metadataCallback != nil && op.Metadata != nil {
-			// If a metadata callback was provided, and metadata is available, pass the metadata to the callback.
-			metadataCallback(op.GetMetadata())
-		}
 
 		timePassed := time.Since(startTime)
-		if timeout != nil && timePassed > duration {
+		if timePassed.Seconds() > timeout.Seconds() {
 			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(777 * time.Millisecond)
 	}
 }
 
-// BatchWaitOperations is a batch version of the WaitOperation method.
-func (c *Client[T]) BatchWaitOperations(ctx context.Context, operations []string, timeout *durationpb.Duration) ([]*longrunningpb.Operation, error) {
+// BatchWait is a batch version of the WaitOperation method.
+// Takes three agruments:
+//   - ctx: The Context header
+//   - operations: An array of LRO names, for example: []string{"operations/123", "operations/456", ...}
+//   - timeoute: the timeout duration to apply with each operation
+func (c *Client) BatchWait(ctx context.Context, operations []string, timeout time.Duration) ([]*longrunningpb.Operation, error) {
 	// iterate through the requests
 	errs, ctx := errgroup.WithContext(ctx)
 	results := make([]*longrunningpb.Operation, len(operations))
 	for i, operation := range operations {
 		i := i
 		errs.Go(func() error {
-			op, err := c.WaitOperation(ctx, &longrunningpb.WaitOperationRequest{
-				Name:    operation,
-				Timeout: timeout,
-			}, nil)
+			op, err := c.Wait(ctx, operation, timeout)
 			if err != nil {
 				return err
 			}
@@ -255,6 +201,8 @@ func (c *Client[T]) BatchWaitOperations(ctx context.Context, operations []string
 
 			return nil
 		})
+		// Add some spacing between the api hits.
+		time.Sleep(time.Millisecond * 77)
 	}
 
 	err := errs.Wait()
@@ -265,11 +213,61 @@ func (c *Client[T]) BatchWaitOperations(ctx context.Context, operations []string
 	return results, nil
 }
 
+// create stores a new long-running operation in spanner, with done=false
+func (o *Operation[T]) create() error {
+	// create new unpopulated long-running operation
+	o.operation = &longrunningpb.Operation{}
+
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return err
+	}
+
+	o.id = id.String()
+	o.operation.Name = "operations/" + id.String()
+
+	// write operation and parent to respective spanner columns
+	row := map[string]interface{}{"Operation": o.operation}
+	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Get returns a long-running operation
+func (o *Operation[T]) Get() (*longrunningpb.Operation, error) {
+	return o.client.GetOperation(o.ctx, "operations/"+o.id)
+}
+
+// Delete deletes the LRO (including )
+func (o *Operation[T]) Delete() (*emptypb.Empty, error) {
+	// validate operation name
+	err := validate.Argument("name", "operations/"+o.id, validate.OperationRegex)
+	if err != nil {
+		return nil, err
+	}
+
+	// validate existence of operation
+	_, err = o.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	// delete operation
+	err = o.client.spanner.DeleteRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id})
+	if err != nil {
+		return nil, fmt.Errorf("delete operation (operations/%s): %w", o.id, err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
 // metadata if provided.
-func (c *Client[T]) SetSuccessful(ctx context.Context, operationName string, response proto.Message, metadata proto.Message) (*longrunningpb.Operation, error) {
+func (o *Operation[T]) Done(response proto.Message) (*longrunningpb.Operation, error) {
 	// get operation
-	op, err := c.GetOperation(ctx, operationName)
+	op, err := o.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -284,24 +282,15 @@ func (c *Client[T]) SetSuccessful(ctx context.Context, operationName string, res
 		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
 
-	// update metadata if provided
-	if metadata != nil {
-		metaAny, err := anypb.New(metadata)
-		if err != nil {
-			return nil, err
-		}
-		op.Metadata = metaAny
-	}
-
 	// update in spanner by first deleting and then writing
-	_, err = c.DeleteOperation(ctx, op.GetName())
+	_, err = o.Delete()
 	if err != nil {
 		return nil, err
 	}
 
 	//  write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
-	err = c.spanner.InsertRow(ctx, c.table, row)
+	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
 	if err != nil {
 		return nil, err
 	}
@@ -309,11 +298,10 @@ func (c *Client[T]) SetSuccessful(ctx context.Context, operationName string, res
 	return op, nil
 }
 
-// SetFailed updates an existing long-running operation's done field to true, sets the error and updates the metadata
-// if metaOptions.Update is true
-func (c *Client[T]) SetFailed(ctx context.Context, operationName string, error error, metadata proto.Message) (*longrunningpb.Operation, error) {
+// Error updates an existing long-running operation's done field to true.
+func (o *Operation[T]) Error(error error) (*longrunningpb.Operation, error) {
 	// get operation
-	op, err := c.GetOperation(ctx, operationName)
+	op, err := o.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -330,24 +318,85 @@ func (c *Client[T]) SetFailed(ctx context.Context, operationName string, error e
 		Details: nil,
 	}}
 
-	if metadata != nil {
-		// convert metadata to Any type as per longrunning.Operation requirement.
-		metaAny, err := anypb.New(metadata)
-		if err != nil {
-			return nil, err
-		}
-		op.Metadata = metaAny
-	}
-
 	// update in spanner by first deleting and then writing
-	_, err = c.DeleteOperation(ctx, op.GetName())
+	_, err = o.Delete()
 	if err != nil {
 		return nil, err
 	}
 
 	// write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
-	err = c.spanner.InsertRow(ctx, c.table, row)
+	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+/*
+WaitAndResume orchestrates the pausing and resumption of an LRO using a Google Cloud Workflow.
+
+This function performs the following steps:
+
+ 1. Saves the current checkpoint for the operation.
+ 2. Triggers a Google Cloud Workflow that polls the provided list of operations.
+ 3. Once all operations are complete, the workflow re-invokes the same method,
+    passing a special header `x-alis-operation-id` to resume the original business logic using the saved checkpoint.
+
+Parameters:
+  - operations: A slice of operation IDs to monitor.
+  - timeout: The overal time out for the polling.
+  - checkpoint: The current state data to be saved for later resumption.
+  - method: The method which will be resumed after the operations are done.
+    for example: krynauws.pl.lros.v1.ReviewService/RequestReview
+
+Returns:
+  - An error if saving the checkpoint or initiating the workflow fails, otherwise nil.
+*/
+func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration, checkpoint *T, method string) (*longrunningpb.Operation, error) {
+	if o.client.WorkflowsConfig == nil {
+		return nil, fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
+	}
+
+	// First it saves the checkpoint
+	err := o.SaveCheckpoint("operations/"+o.id, checkpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare the Google Cloud Workflow arguments
+	type Args struct {
+		OperationId string   // The LRO Id of the main method.
+		Operations  []string // The list of operations to wait for.
+		Method      string
+		Timeout     float64
+	}
+	// Configure the arguments to pass into the container at runtime.
+	// The Workflow service requires the argument in JSON format.
+	args, err := json.Marshal(Args{
+		OperationId: o.id,
+		Operations:  operations,
+		Method:      method,
+		Timeout:     timeout.Seconds(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Launch Google Cloud Workflows and wait...
+	_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
+		Parent: o.client.WorkflowsConfig.name,
+		Execution: &executionspb.Execution{
+			Argument:     string(args),
+			CallLogLevel: executionspb.Execution_LOG_ALL_CALLS,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Get a copy of the LRO
+	op, err := o.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -357,9 +406,9 @@ func (c *Client[T]) SetFailed(ctx context.Context, operationName string, error e
 
 // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
 // contains progress information and common metadata such as create time.
-func (c *Client[T]) UpdateMetadata(ctx context.Context, operationName string, metadata proto.Message) (*longrunningpb.Operation, error) {
+func (o *Operation[T]) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
 	// get operation
-	op, err := c.GetOperation(ctx, operationName)
+	op, err := o.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -372,96 +421,30 @@ func (c *Client[T]) UpdateMetadata(ctx context.Context, operationName string, me
 	op.Metadata = metaAny
 
 	// update in spanner by first deleting and then writing
-	_, err = c.DeleteOperation(ctx, op.GetName())
+	_, err = o.Delete()
 	if err != nil {
 		return nil, err
 	}
 
 	// write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
-	err = c.spanner.InsertRow(ctx, c.table, row)
+	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
 	if err != nil {
 		return nil, err
 	}
 
 	return op, nil
-}
-
-// UpdateResponse updates the response data within the Operation
-func (c *Client[T]) UpdateResponse(ctx context.Context, operationName string, response proto.Message, updateMask *fieldmaskpb.FieldMask) (*longrunningpb.Operation, error) {
-	// get the operation
-	op, err := c.GetOperation(ctx, operationName)
-	if err != nil {
-		return nil, err
-	}
-
-	// If an update mask is provided, merge with existing
-	if updateMask != nil {
-		// We first unmarshall the type into expected type.
-		existingResponse, err := anypb.UnmarshalNew(op.GetResponse(), proto.UnmarshalOptions{})
-		if err != nil {
-			return nil, err
-		}
-		fmutils.Filter(response, updateMask.GetPaths())        // Redact the response according to the provided field mask.
-		fmutils.Prune(existingResponse, updateMask.GetPaths()) // Clear existing reponse fields to be updated
-		proto.Merge(response, existingResponse)                // Merge updated fields to existing resource
-	}
-
-	// Now that we have the response sorted, convert it to an Any type required by the LRO.
-	responseAny, err := anypb.New(response)
-	if err != nil {
-		return nil, err
-	}
-	op.Result = &longrunningpb.Operation_Response{Response: responseAny}
-
-	// update in spanner by first deleting and then writing
-	_, err = c.DeleteOperation(ctx, op.GetName())
-	if err != nil {
-		return nil, err
-	}
-
-	// write operation and parent to respective spanner columns
-	row := map[string]interface{}{"Operation": op}
-	err = c.spanner.InsertRow(ctx, c.table, row)
-	if err != nil {
-		return nil, err
-	}
-
-	return op, nil
-}
-
-// ForwardContext forwards the incoming context related to LROs and add them to the outgoing context.
-// This method will forward the following headers if available:
-//   - x-alis-checkpoint
-//   - x-alis-operation-id
-//   - x-alis-child-operation-id (which may be more than one, since a main LRO could invoke multiple child LROs)
-func (c *Client[T]) ForwardContext(ctx context.Context) context.Context {
-	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		keys := []string{CheckpointHeaderKey, OperationIdHeaderKey, ChildOperationIdHeaderKey}
-		kvPairs := []string{}
-		for _, k := range keys {
-			for _, v := range md.Get(k) {
-				kvPairs = append(kvPairs, []string{k, v}...)
-			}
-		}
-		if len(kvPairs) > 0 {
-			ctx = metadata.AppendToOutgoingContext(ctx, kvPairs...)
-		}
-	}
-	return ctx
 }
 
 // SaveCheckpoint saves a current checkpoint with the LRO resource
-func (c *Client[T]) SaveCheckpoint(ctx context.Context, operation string, checkpoint T) error {
+func (o *Operation[T]) SaveCheckpoint(operation string, checkpoint *T) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
 	if err := enc.Encode(checkpoint); err != nil {
 		return err
 	}
 
-	err := c.spanner.UpdateRow(ctx, c.table, map[string]interface{}{
+	err := o.client.spanner.UpdateRow(o.ctx, o.client.spannerConfig.Table, map[string]interface{}{
 		"key":        operation,
 		"Checkpoint": buffer.Bytes(),
 	})
@@ -473,9 +456,9 @@ func (c *Client[T]) SaveCheckpoint(ctx context.Context, operation string, checkp
 }
 
 // LoadCheckpoint loads the current checkpoint stored with the LRO resource
-func (c *Client[T]) LoadCheckpoint(ctx context.Context, operation string) (*T, error) {
+func (o *Operation[T]) LoadCheckpoint() (*T, error) {
 	var data T
-	row, err := c.spanner.ReadRow(ctx, c.table, spanner.Key{operation}, []string{CheckpointColumnName}, nil)
+	row, err := o.client.spanner.ReadRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id}, []string{CheckpointColumnName}, nil)
 	if err != nil {
 		return &data, err
 	}
@@ -504,4 +487,93 @@ func (c *Client[T]) LoadCheckpoint(ctx context.Context, operation string) (*T, e
 	}
 
 	return &data, nil
+}
+
+// SetResponse retrieves the underlying LRO and unmarshals the Response into the provided response object.
+// It takes three arguments
+//   - ctx: Context
+//   - operation: The resource name of the operation in the format `operations/*`
+//   - response: The response object into which the underlyging response of the LRO should be marshalled into.
+func (c *Client) UnmarshalOperation(ctx context.Context, operation string, response, metadata protoreflect.ProtoMessage) error {
+	op, err := c.GetOperation(ctx, operation)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the Response
+	err = anypb.UnmarshalTo(op.GetResponse(), response, proto.UnmarshalOptions{})
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the Metadata
+	err = anypb.UnmarshalTo(op.GetMetadata(), metadata, proto.UnmarshalOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+/*
+Init initializes a Long-Running Operation (LRO) with the provided Checkpoint type (T).
+
+This function intelligently checks for an existing LRO by looking for the 'alis-x-operation-id' header.
+If found, it reconnects to the existing operation; otherwise, it creates a new LRO.
+
+Example (with Checkpoint):
+
+	// CheckPoint is a custom object which will be stored alongside the LRO
+	type CheckPoint struct {
+			Next        string
+			Review      string
+			Rating      int32
+			ApprovedBy  string
+			ApprovalLRO string
+	}
+	var checkpoint *CheckPoint
+	op, checkpoint, err := lro.Create[CheckPoint](ctx, lroClient)
+
+Example (without a Checkpoint):
+
+	op, _, err := lro.Create[interface{}](ctx, lroClient)
+*/
+func Init[T Checkpoint](ctx context.Context, client *Client) (op *Operation[T], checkpoint *T, err error) {
+	op = &Operation[T]{
+		ctx:    ctx,
+		client: client,
+	}
+
+	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if len(md.Get(OperationIdHeaderKey)) > 0 {
+			// We found a special header x-alis-operation-id, it suggest that the LRO is an existing one.
+			// No need to create one
+			op.id = "operations/" + md.Get(OperationIdHeaderKey)[0]
+
+			checkpoint, err = op.LoadCheckpoint()
+			if err != nil {
+				return nil, nil, err
+			}
+			return op, checkpoint, nil
+		} else {
+			err = op.create()
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	} else {
+		// Handle the scenario where no context exists.
+		err = op.create()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	err = op.create()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return op, nil, err
 }
