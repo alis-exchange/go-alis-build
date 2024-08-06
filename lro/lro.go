@@ -549,7 +549,7 @@ func Init[T Checkpoint](ctx context.Context, client *Client) (op *Operation[T], 
 		if len(md.Get(OperationIdHeaderKey)) > 0 {
 			// We found a special header x-alis-operation-id, it suggest that the LRO is an existing one.
 			// No need to create one
-			op.id = "operations/" + md.Get(OperationIdHeaderKey)[0]
+			op.id = md.Get(OperationIdHeaderKey)[0]
 
 			checkpoint, err = op.LoadCheckpoint()
 			if err != nil {
