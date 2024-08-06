@@ -6,6 +6,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"cloud.google.com/go/spanner"
+	"github.com/mennanov/fmutils"
 	"go.alis.build/alog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,6 +45,12 @@ type ResourceRow struct {
 	Resource proto.Message
 	Policy   *iampb.Policy
 	tbl      *TableClient
+}
+
+func (rr *ResourceRow) Merge(updatedMsg proto.Message, fieldMaskPaths ...string) {
+	fmutils.Filter(updatedMsg, fieldMaskPaths)
+	fmutils.Prune(rr.Resource, fieldMaskPaths)
+	proto.Merge(rr.Resource, updatedMsg)
 }
 
 // Update the resource in the database. Does not update the policy.

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"github.com/mennanov/fmutils"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -55,6 +56,12 @@ func (rr *ResourceRow) Update(ctx context.Context) error {
 
 func (rr *ResourceRow) Delete(ctx context.Context) error {
 	return rr.resourceClient.tbl.DeleteRow(ctx, rr.RowKey)
+}
+
+func (rr *ResourceRow) Merge(updatedMsg proto.Message, fieldMaskPaths ...string) {
+	fmutils.Filter(updatedMsg, fieldMaskPaths)
+	fmutils.Prune(rr.Resource, fieldMaskPaths)
+	proto.Merge(rr.Resource, updatedMsg)
 }
 
 func (d *BigProto) NewResourceClient(prefix string, msg proto.Message, options *ResourceTblOptions) *ResourceClient {
