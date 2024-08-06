@@ -9,6 +9,7 @@ import (
 	"go.alis.build/alog"
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -303,9 +304,8 @@ func (r *Authorizer) Authorize(ctx context.Context, method string, resource stri
 	// first wait for all async policy fetches to complete
 	r.wg.Wait()
 
-	policySources := r.authorizer.policySourceResolver(ctx, resource)
-	for _, source := range policySources {
-		policy := r.GetPolicy(ctx, source)
+	policies := r.getResourcePolicies(ctx, resource)
+	for source, policy := range policies {
 		if policy != nil {
 			resourceRoles := &PrincipalResourceRoles{
 				resource: source,
@@ -330,4 +330,79 @@ func (r *Authorizer) Authorize(ctx context.Context, method string, resource stri
 		return nil, status.Errorf(codes.PermissionDenied, "principal must have one of the following roles for %s: %s", resource, strings.Join(maps.Keys(rolesThatGrantThisPermission), ", "))
 	}
 	return roles, nil
+}
+
+func (s *Authorizer) getResourcePolicies(ctx context.Context, resource string) map[string]*iampb.Policy {
+	policySources := s.authorizer.policySourceResolver(ctx, resource)
+	policies := sync.Map{}
+	for _, source := range policySources {
+		go func(source string) {
+			policies.Store(source, s.GetPolicy(ctx, source))
+		}(source)
+	}
+	result := map[string]*iampb.Policy{}
+	policies.Range(func(key, value interface{}) bool {
+		result[key.(string)] = value.(*iampb.Policy)
+		return true
+	})
+	return result
+}
+
+// This method is used to add the JWT token to the outgoing context in the x-forwarded-authorization header. This might be useful
+// if one service needs wants to make a grpc hit in the same product deployment as the requester, in stead of as itself.
+func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.Context {
+	if s.requester.IsSuperAdmin {
+		return ctx
+	}
+	// first remove any existing forwarded authorization header
+	currentOutgoingMd, _ := metadata.FromOutgoingContext(ctx)
+	if currentOutgoingMd == nil {
+		currentOutgoingMd = metadata.New(nil)
+	}
+	currentOutgoingMd.Delete(AuthForwardingHeader)
+	currentOutgoingMd.Set(AuthForwardingHeader, "Bearer "+s.requester.Jwt)
+	ctx = metadata.NewOutgoingContext(ctx, currentOutgoingMd)
+
+	return ctx
+}
+
+// TestPermissions returns the permissions that the requester has on the specified resource.
+// Note if the list of permissions is empty, all permissions will be returned.
+func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permissions []string) []string {
+	policies := r.getResourcePolicies(ctx, resource)
+	perms := map[string]bool{}
+	for _, policy := range policies {
+		if policy != nil {
+			for _, binding := range policy.GetBindings() {
+				isMember := false
+				if r.requester.IsSuperAdmin {
+					isMember = true
+				} else {
+					for _, member := range binding.GetMembers() {
+						if r.IsMember(ctx, member) {
+							isMember = true
+							break
+						}
+					}
+				}
+				if isMember {
+					rolePerms := r.authorizer.rolesMap[binding.GetRole()]
+					for perm := range rolePerms {
+						perms[perm] = true
+					}
+				}
+			}
+		}
+	}
+	result := []string{}
+	if len(permissions) == 0 {
+		result = maps.Keys(perms)
+	} else {
+		for _, perm := range permissions {
+			if perms[perm] {
+				result = append(result, perm)
+			}
+		}
+	}
+	return result
 }
