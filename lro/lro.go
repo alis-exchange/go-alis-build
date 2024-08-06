@@ -539,7 +539,7 @@ Example (without a Checkpoint):
 */
 func Init[T Checkpoint](ctx context.Context, client *Client) (op *Operation[T], checkpoint *T, err error) {
 	op = &Operation[T]{
-		ctx:    ctx,
+		ctx:    context.WithoutCancel(ctx),
 		client: client,
 	}
 
