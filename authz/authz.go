@@ -53,7 +53,7 @@ type Authz struct {
 }
 
 type Role struct {
-	// The role name
+	// The role name.
 	Name string
 	// Permissions that this role has
 	Permissions []string
