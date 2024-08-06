@@ -297,6 +297,11 @@ func (r *Authorizer) Authorize(ctx context.Context, method string, resource stri
 		return roles, nil
 	}
 
+	// if resource is empty, return error
+	if resource == "" {
+		return roles, status.Errorf(codes.PermissionDenied, "only super admins can call %s", method)
+	}
+
 	// Get the roles that grant the required permission
 	rolesThatGrantThisPermission := r.authorizer.rpcRolesMap[method]
 	if rolesThatGrantThisPermission == nil {
