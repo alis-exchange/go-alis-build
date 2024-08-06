@@ -99,8 +99,10 @@ func (s *ServerAuthorizer) WithPolicyReader(policyReader func(ctx context.Contex
 // Group type of "user" and "serviceAccount" are reserved and should not be used.
 // Results are cached per Authorize/GetRoles call, so if you need to resolve the same group multiple times, it will only be resolved once.
 // The cache argument is passed to your policy reader function from the cache argument your program passes to the Authorize,AuthorizeFromResources,GetRoles,GetRolesFromResources,GetPermissions and GetPermissionsFromResources methods.
-func (s *ServerAuthorizer) WithMemberResolver(groupType string, resolver func(ctx context.Context, groupType string, groupId string, principal *Authorizer) bool) *ServerAuthorizer {
-	s.memberResolver[groupType] = resolver
+func (s *ServerAuthorizer) WithMemberResolver(groupTypes []string, resolver func(ctx context.Context, groupType string, groupId string, principal *Authorizer) bool) *ServerAuthorizer {
+	for _, groupType := range groupTypes {
+		s.memberResolver[groupType] = resolver
+	}
 	return s
 }
 
