@@ -130,8 +130,8 @@ type Authorizer struct {
 	// The rpc method
 	// Format: /package.service/method
 	method string
-	// The requester
-	requester *Principal
+	// The Requester
+	Requester *Principal
 	// Whether authorization is required. No auth required is principal is super admin or auth is already claimed.
 	requireAuth bool
 
@@ -171,7 +171,7 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 	return &Authorizer{
 		authorizer:  s,
 		method:      method,
-		requester:   principal,
+		Requester:   principal,
 		requireAuth: requireAuth,
 		policyCache: sync.Map{},
 		memberCache: sync.Map{},
@@ -194,7 +194,7 @@ func (r *Authorizer) GetPolicy(ctx context.Context, resource string) *iampb.Poli
 }
 
 func (r *Authorizer) IsMember(ctx context.Context, member string) bool {
-	if member == r.requester.PolicyMemberUsingEmail || member == r.requester.PolicyMemberUsingId {
+	if member == r.Requester.PolicyMemberUsingEmail || member == r.Requester.PolicyMemberUsingId {
 		return true
 	}
 	parts := strings.Split(member, ":")
@@ -351,9 +351,9 @@ func (s *Authorizer) getResourcePolicies(ctx context.Context, resource string) m
 }
 
 // This method is used to add the JWT token to the outgoing context in the x-forwarded-authorization header. This might be useful
-// if one service needs wants to make a grpc hit in the same product deployment as the requester, in stead of as itself.
+// if one service needs wants to make a grpc hit in the same product deployment as the Requester, in stead of as itself.
 func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.Context {
-	if s.requester.IsSuperAdmin {
+	if s.Requester.IsSuperAdmin {
 		return ctx
 	}
 	// first remove any existing forwarded authorization header
@@ -362,13 +362,13 @@ func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.C
 		currentOutgoingMd = metadata.New(nil)
 	}
 	currentOutgoingMd.Delete(AuthForwardingHeader)
-	currentOutgoingMd.Set(AuthForwardingHeader, "Bearer "+s.requester.Jwt)
+	currentOutgoingMd.Set(AuthForwardingHeader, "Bearer "+s.Requester.Jwt)
 	ctx = metadata.NewOutgoingContext(ctx, currentOutgoingMd)
 
 	return ctx
 }
 
-// TestPermissions returns the permissions that the requester has on the specified resource.
+// TestPermissions returns the permissions that the Requester has on the specified resource.
 // Note if the list of permissions is empty, all permissions will be returned.
 func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permissions []string) []string {
 	policies := r.getResourcePolicies(ctx, resource)
@@ -377,7 +377,7 @@ func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permi
 		if policy != nil {
 			for _, binding := range policy.GetBindings() {
 				isMember := false
-				if r.requester.IsSuperAdmin {
+				if r.Requester.IsSuperAdmin {
 					isMember = true
 				} else {
 					for _, member := range binding.GetMembers() {
