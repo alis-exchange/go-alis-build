@@ -61,10 +61,104 @@ resource "alis_google_spanner_table" "operations" {
 
 ```
 
-## Using Terraform for your worflow?
+## Cloud Workflows
 
-Here is an example terraform you could use to provision and manage your workflow responsible for resuming LROs (if used)
+Here is an example yaml you could use to provision and manage your workflow responsible for resuming LROs (if used)
 
-```tf
+```yaml
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - operationId: ${args.operationId}
+          - operations: ${args.operations}
+          - method: ${args.method}
+          - timeout: ${args.timeout}
+          - pollFrequency: ${args.pollFrequency}
+    - wait:
+        parallel:
+          for:
+            value: op
+            in: ${args.operations}
+            steps:
+              - log:
+                  call: sys.log
+                  args:
+                    data: ${"polling " + op}
+              - startCounter:
+                  assign:
+                    - counter: 0
+              - poll:
+                  try:
+                    call: http.post
+                    args:
+                      url: https://internal-gateway-...-ew.a.run.app/.../GetOperation
+                      auth:
+                        type: OIDC
+                        audience: https://internal-gateway-...-ew.a.run.app
+                      body:
+                        name: ${op}
+                    result: operation
+                  retry:
+                    predicate: ${custom_predicate}
+                    max_retries: 7
+                    backoff:
+                      initial_delay: 1
+                      max_delay: 60
+                      multiplier: 2
+                  except:
+                    as: e
+                    steps:
+                      - return_run_step_error:
+                          raise: ${e}
+              - checkStatus:
+                  switch:
+                    - condition: ${not("done" in operation.body)}
+                      next: sleep
+                    - condition: true
+                      next: done
+              - sleep:
+                  call: sys.sleep
+                  args:
+                    seconds: ${pollFrequency}
+              - increment:
+                  assign:
+                    - counter: ${counter+pollFrequency}
+              - timeoutCheck:
+                  switch:
+                    - condition: ${counter > timeout}
+                      next: timedOut
+                  next: poll
+              - timedOut:
+                  call: sys.log
+                  args:
+                    data: ${op + " timed out"}
+                  next: continue
+              - done:
+                  call: sys.log
+                  args:
+                    data: ${op + " completed"}
+    - resumeMethod:
+        call: http.post
+        args:
+          url: ${"https://internal-gateway-...-ew.a.run.app/" + method}
+          headers:
+            x-alis-operation-id: ${operationId}
+          body:
+            data: {}
+          auth:
+            type: OIDC
+            audience: https://internal-gateway-...-ew.a.run.app
 
+# A fix to avoid connection related issues with hitting the LRO service
+custom_predicate:
+  params: [e]
+  steps:
+    - handle:
+        switch:
+          - condition: ${e.message == "connection broken"}
+            return: true
+    - dont_handle:
+        return: false
 ```

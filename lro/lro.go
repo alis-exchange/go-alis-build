@@ -353,7 +353,7 @@ Parameters:
 Returns:
   - An error if saving the checkpoint or initiating the workflow fails, otherwise nil.
 */
-func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration, checkpoint *T, method string) error {
+func (o *Operation[T]) WaitAndResume(operations []string, timeout, pollFrequency time.Duration, checkpoint *T, method string) error {
 	if o.client.WorkflowsConfig == nil {
 		return fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
 	}
@@ -364,20 +364,23 @@ func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration,
 		return err
 	}
 
-	// Prepare the Google Cloud Workflow arguments
+	// Prepare the Google Cloud Workflow argument
 	type Args struct {
-		OperationId string   // The LRO Id of the main method.
-		Operations  []string // The list of operations to wait for.
-		Method      string
-		Timeout     float64
+		Method        string   `json:"method"`
+		OperationId   string   `json:"operationId"`
+		Operations    []string `json:"operations"`
+		Timeout       int64    `json:"timeout"`
+		PollFrequency int64    `json:"pollFrequency"`
 	}
+
 	// Configure the arguments to pass into the container at runtime.
 	// The Workflow service requires the argument in JSON format.
 	args, err := json.Marshal(Args{
-		OperationId: o.id,
-		Operations:  operations,
-		Method:      method,
-		Timeout:     timeout.Seconds(),
+		OperationId:   o.id,
+		Operations:    operations,
+		Method:        method,
+		Timeout:       int64(timeout.Seconds()),
+		PollFrequency: int64(pollFrequency.Seconds()),
 	})
 	if err != nil {
 		return err
