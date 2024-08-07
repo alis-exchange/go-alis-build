@@ -150,7 +150,7 @@ func getAuthorizedPrincipal(ctx context.Context, superAdminEmails []string) *Pri
 	// for any forwarded authorization and if not found, return the principal from the authorization header
 	if principal.IsSuperAdmin {
 		forwardedPrincipal, err := getPrincipalFromJwtHeader(ctx, AuthForwardingHeader, superAdminEmails, true)
-		if err == nil {
+		if err == nil && forwardedPrincipal != nil {
 			return forwardedPrincipal
 		}
 	}
