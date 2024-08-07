@@ -115,8 +115,9 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: resource,
+		RowKey:         rowKey,
+		Resource:       resource,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -144,8 +145,9 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: msg,
+		RowKey:         rowKey,
+		Resource:       msg,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -199,9 +201,10 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *ListOpt
 	resourceRows := make([]*ResourceRow, len(rowsWithPolicies))
 	for i, row := range rowsWithPolicies {
 		resourceRows[i] = &ResourceRow{
-			RowKey:   row.Key,
-			Resource: row.Row,
-			Policy:   row.Policy,
+			RowKey:         row.Key,
+			Resource:       row.Row,
+			Policy:         row.Policy,
+			resourceClient: rt,
 		}
 	}
 	return resourceRows, nextToken, nil

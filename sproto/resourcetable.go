@@ -139,6 +139,7 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 	resourceRow := &ResourceRow{
 		RowKey:   rowKey,
 		Resource: msg,
+		tbl:      rt.tbl,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -188,6 +189,7 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 		resourceRow := &ResourceRow{
 			RowKey:   rowKeys[i].String(),
 			Resource: row.Messages[0],
+			tbl:      rt.tbl,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -217,6 +219,7 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 		resourceRow := &ResourceRow{
 			RowKey:   row.Key.String(),
 			Resource: row.Messages[0],
+			tbl:      rt.tbl,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -240,6 +243,7 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 		resourceRow := &ResourceRow{
 			RowKey:   row.Key.String(),
 			Resource: row.Messages[0],
+			tbl:      rt.tbl,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
