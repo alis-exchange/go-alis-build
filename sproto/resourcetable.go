@@ -225,7 +225,11 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 	return resourceRows, nextToken, nil
 }
 
-func (rt *ResourceClient) Query(ctx context.Context, messages []proto.Message, filter *spanner.Statement, opts *QueryOptions) ([]*ResourceRow, string, error) {
+func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, opts *QueryOptions) ([]*ResourceRow, string, error) {
+	messages := []proto.Message{proto.Clone(rt.resourceMsg)}
+	if rt.hasIamPolicy {
+		messages = append(messages, &iampb.Policy{})
+	}
 	rows, nextToken, err := rt.tbl.Query(ctx, messages, filter, opts)
 	if err != nil {
 		return nil, "", err
