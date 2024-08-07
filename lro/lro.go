@@ -264,11 +264,11 @@ func (o *Operation[T]) Delete() (*emptypb.Empty, error) {
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
 // metadata if provided.
-func (o *Operation[T]) Done(response proto.Message) (*longrunningpb.Operation, error) {
+func (o *Operation[T]) Done(response proto.Message) error {
 	// get operation
 	op, err := o.Get()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// update done and result
@@ -276,7 +276,7 @@ func (o *Operation[T]) Done(response proto.Message) (*longrunningpb.Operation, e
 	if response != nil {
 		resultAny, err := anypb.New(response)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
@@ -284,25 +284,25 @@ func (o *Operation[T]) Done(response proto.Message) (*longrunningpb.Operation, e
 	// update in spanner by first deleting and then writing
 	_, err = o.Delete()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	//  write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
 	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return op, nil
+	return nil
 }
 
 // Error updates an existing long-running operation's done field to true.
-func (o *Operation[T]) Error(error error) (*longrunningpb.Operation, error) {
+func (o *Operation[T]) Error(error error) error {
 	// get operation
 	op, err := o.Get()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// update operation fields
@@ -320,17 +320,17 @@ func (o *Operation[T]) Error(error error) (*longrunningpb.Operation, error) {
 	// update in spanner by first deleting and then writing
 	_, err = o.Delete()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
 	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return op, nil
+	return nil
 }
 
 /*
@@ -353,15 +353,15 @@ Parameters:
 Returns:
   - An error if saving the checkpoint or initiating the workflow fails, otherwise nil.
 */
-func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration, checkpoint *T, method string) (*longrunningpb.Operation, error) {
+func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration, checkpoint *T, method string) error {
 	if o.client.WorkflowsConfig == nil {
-		return nil, fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
+		return fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
 	}
 
 	// First it saves the checkpoint
 	err := o.SaveCheckpoint("operations/"+o.id, checkpoint)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Prepare the Google Cloud Workflow arguments
@@ -380,7 +380,7 @@ func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration,
 		Timeout:     timeout.Seconds(),
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Launch Google Cloud Workflows and wait...
 	_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
@@ -391,16 +391,10 @@ func (o *Operation[T]) WaitAndResume(operations []string, timeout time.Duration,
 		},
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Get a copy of the LRO
-	op, err := o.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	return op, nil
+	return nil
 }
 
 // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
@@ -500,16 +494,21 @@ func (c *Client) UnmarshalOperation(ctx context.Context, operation string, respo
 	}
 
 	// Unmarshal the Response
-	err = anypb.UnmarshalTo(op.GetResponse(), response, proto.UnmarshalOptions{})
-	if err != nil {
-		return err
+	if response != nil && op.GetResponse() != nil {
+		err = anypb.UnmarshalTo(op.GetResponse(), response, proto.UnmarshalOptions{})
+		if err != nil {
+			return err
+		}
 	}
 
 	// Unmarshal the Metadata
-	err = anypb.UnmarshalTo(op.GetMetadata(), metadata, proto.UnmarshalOptions{})
-	if err != nil {
-		return err
+	if metadata != nil && op.GetMetadata() != nil {
+		err = anypb.UnmarshalTo(op.GetMetadata(), metadata, proto.UnmarshalOptions{})
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 

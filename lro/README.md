@@ -50,8 +50,21 @@ resource "alis_google_spanner_table" "operations" {
         proto_package = "google.longrunning.Operation"
         required      = true
       },
+      {
+        name          = "Checkpoint"
+        type          = "BYTES"
+        required      = false
+      },
     ]
   }
 }
+
+```
+
+## Using Terraform for your worflow?
+
+Here is an example terraform you could use to provision and manage your workflow responsible for resuming LROs (if used)
+
+```tf
 
 ```
