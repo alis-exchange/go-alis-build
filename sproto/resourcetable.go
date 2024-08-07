@@ -3,6 +3,7 @@ package sproto
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"cloud.google.com/go/spanner"
@@ -131,7 +132,7 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 	}
 	err = rt.tbl.ReadWithFieldMask(ctx, spanner.Key{rowKey}, msgs, []*fieldmaskpb.FieldMask{{Paths: fieldMaskPaths}})
 	if err != nil {
-		if spanner.ErrCode(err) == codes.NotFound {
+		if strings.Contains(err.Error(), "not found") {
 			if rt.returnPermissionDeniedForNotFound {
 				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource or it does not exist")
 			} else {
@@ -183,7 +184,7 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	}
 	rows, err := rt.tbl.BatchReadWithFieldMask(ctx, rowKeys, msgs, []*fieldmaskpb.FieldMask{{Paths: fieldMaskPaths}})
 	if err != nil {
-		if spanner.ErrCode(err) == codes.NotFound {
+		if strings.Contains(err.Error(), "not found") {
 			if rt.returnPermissionDeniedForNotFound {
 				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access one of these resources or it does not exist")
 			} else {
