@@ -52,6 +52,8 @@ func NewServerAuthorizer(roles []*Role, superAdminEmails ...string) *ServerAutho
 	s := &ServerAuthorizer{
 		rpcRolesMap:      make(map[string](map[string]bool)),
 		rolesMap:         make(map[string](map[string]bool)),
+		openRpcs:         make(map[string]bool),
+		memberResolver:   make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
 		superAdminEmails: superAdminEmails,
 		policySourceResolver: func(ctx context.Context, resource string) []string {
 			return []string{resource}
