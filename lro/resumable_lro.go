@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
@@ -244,23 +245,37 @@ func (o *ResumableOperation[T]) Wait(operations []string, timeout, pollFrequency
 
 	// Prepare the Google Cloud Workflow argument
 	type Args struct {
-		OperationId    string   `json:"operationId"`
-		Operations     []string `json:"operations"`
-		Timeout        int64    `json:"timeout"`
-		PollFrequency  int64    `json:"pollFrequency"`
-		PollEndpoint   string   `json:"pollEndpoint"`
-		ResumeEndpoint string   `json:"resumeEndpoint"`
+		OperationId            string   `json:"operationId"`
+		Operations             []string `json:"operations"`
+		Timeout                int64    `json:"timeout"`
+		PollFrequency          int64    `json:"pollFrequency"`
+		PollEndpoint           string   `json:"pollEndpoint"`
+		PollEndpointAudience   string   `json:"pollEndpointAudience"`
+		ResumeEndpoint         string   `json:"resumeEndpoint"`
+		ResumeEndpointAudience string   `json:"resumeEndpointAudience"`
+	}
+
+	// Retrieve the Audience values required by the authenticated api call made by the workflow.
+	pollUrl, err := url.Parse(pollEndpoint)
+	if err != nil {
+		return fmt.Errorf("invalid polling endpoint (%s): %w", pollEndpoint, err)
+	}
+	resumeUrl, err := url.Parse(o.resumeEndpoint)
+	if err != nil {
+		return fmt.Errorf("invalid resume endpoint (%s): %w", o.resumeEndpoint, err)
 	}
 
 	// Configure the arguments to pass into the container at runtime.
 	// The Workflow service requires the argument in JSON format.
 	args, err := json.Marshal(Args{
-		OperationId:    o.id,
-		Operations:     operations,
-		Timeout:        int64(timeout.Seconds()),
-		PollFrequency:  int64(pollFrequency.Seconds()),
-		PollEndpoint:   pollEndpoint,
-		ResumeEndpoint: o.resumeEndpoint,
+		OperationId:            o.id,
+		Operations:             operations,
+		Timeout:                int64(timeout.Seconds()),
+		PollFrequency:          int64(pollFrequency.Seconds()),
+		PollEndpoint:           pollEndpoint,
+		PollEndpointAudience:   "https://" + pollUrl.Host,
+		ResumeEndpoint:         o.resumeEndpoint,
+		ResumeEndpointAudience: "https://" + resumeUrl.Host,
 	})
 	if err != nil {
 		return err
