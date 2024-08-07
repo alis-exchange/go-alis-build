@@ -115,8 +115,9 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: resource,
+		RowKey:         rowKey,
+		Resource:       resource,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -138,14 +139,19 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		err = rt.tbl.ReadProto(ctx, rowKey, rt.resourceColumnFamily, msg, &fieldmaskpb.FieldMask{Paths: fieldMaskPaths})
 	}
 	if err != nil {
-		if rt.returnPermissionDeniedForNotFound && strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+		if strings.Contains(err.Error(), "not found") {
+			if rt.returnPermissionDeniedForNotFound {
+				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource or it does not exist")
+			} else {
+				return nil, status.Errorf(codes.NotFound, "%s not found", name)
+			}
 		}
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: msg,
+		RowKey:         rowKey,
+		Resource:       msg,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -199,9 +205,10 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *ListOpt
 	resourceRows := make([]*ResourceRow, len(rowsWithPolicies))
 	for i, row := range rowsWithPolicies {
 		resourceRows[i] = &ResourceRow{
-			RowKey:   row.Key,
-			Resource: row.Row,
-			Policy:   row.Policy,
+			RowKey:         row.Key,
+			Resource:       row.Row,
+			Policy:         row.Policy,
+			resourceClient: rt,
 		}
 	}
 	return resourceRows, nextToken, nil
