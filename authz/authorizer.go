@@ -272,8 +272,8 @@ func (r *Authorizer) AsyncFetchExternalPolicies(ctx context.Context, resources .
 }
 
 type PrincipalResourceRoles struct {
-	resource string
-	roles    []string
+	Resource string
+	Roles    []string
 }
 
 func (r *Authorizer) AuthorizeRpc(ctx context.Context, resource string, resourcePolicy *iampb.Policy) ([]*PrincipalResourceRoles, error) {
@@ -315,19 +315,19 @@ func (r *Authorizer) Authorize(ctx context.Context, method string, resource stri
 	for source, policy := range policies {
 		if policy != nil {
 			resourceRoles := &PrincipalResourceRoles{
-				resource: source,
-				roles:    []string{},
+				Resource: source,
+				Roles:    []string{},
 			}
 			for _, binding := range policy.GetBindings() {
 				if _, ok := rolesThatGrantThisPermission[binding.GetRole()]; ok {
 					for _, member := range binding.GetMembers() {
 						if r.IsMember(ctx, member) {
-							resourceRoles.roles = append(resourceRoles.roles, binding.GetRole())
+							resourceRoles.Roles = append(resourceRoles.Roles, binding.GetRole())
 						}
 					}
 				}
 			}
-			if len(resourceRoles.roles) > 0 {
+			if len(resourceRoles.Roles) > 0 {
 				roles = append(roles, resourceRoles)
 			}
 		}
