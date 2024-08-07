@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"github.com/golang-jwt/jwt"
 	"go.alis.build/alog"
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/codes"
@@ -414,4 +415,21 @@ func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permi
 		}
 	}
 	return result
+}
+
+// GetTextCtx is useful to test authorization in unit tests. It creates a test
+// jwt token with the specified user id and email and adds it to the context.
+// DO NOT USE THIS TO CREATE JWT TOKENS IN PRODUCTION.
+func GetTestCtx(testUserId string, testUserEmail string) context.Context {
+	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":   testUserId,
+		"email": testUserEmail,
+	})
+	token, err := jwt.SignedString([]byte("authz-test-key"))
+	if err != nil {
+		alog.Fatalf(context.Background(), "failed to sign test jwt: %v", err)
+	}
+	md := metadata.Pairs("authorization", "Bearer "+token)
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	return ctx
 }
