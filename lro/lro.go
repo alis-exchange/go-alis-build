@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -494,7 +493,7 @@ func (o *Operation[T]) LoadCheckpoint() (*T, error) {
 //   - ctx: Context
 //   - operation: The resource name of the operation in the format `operations/*`
 //   - response: The response object into which the underlyging response of the LRO should be marshalled into.
-func (c *Client) UnmarshalOperation(ctx context.Context, operation string, response, metadata protoreflect.ProtoMessage) error {
+func (c *Client) UnmarshalOperation(ctx context.Context, operation string, response, metadata proto.Message) error {
 	op, err := c.GetOperation(ctx, operation)
 	if err != nil {
 		return err
