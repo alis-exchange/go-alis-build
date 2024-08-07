@@ -139,8 +139,12 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		err = rt.tbl.ReadProto(ctx, rowKey, rt.resourceColumnFamily, msg, &fieldmaskpb.FieldMask{Paths: fieldMaskPaths})
 	}
 	if err != nil {
-		if rt.returnPermissionDeniedForNotFound && strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+		if strings.Contains(err.Error(), "not found") {
+			if rt.returnPermissionDeniedForNotFound {
+				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource or it does not exist")
+			} else {
+				return nil, status.Errorf(codes.NotFound, "%s not found", name)
+			}
 		}
 		return nil, err
 	}

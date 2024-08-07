@@ -131,8 +131,12 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 	}
 	err = rt.tbl.ReadWithFieldMask(ctx, spanner.Key{rowKey}, msgs, []*fieldmaskpb.FieldMask{{Paths: fieldMaskPaths}})
 	if err != nil {
-		if spanner.ErrCode(err) == codes.NotFound && rt.returnPermissionDeniedForNotFound {
-			return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+		if spanner.ErrCode(err) == codes.NotFound {
+			if rt.returnPermissionDeniedForNotFound {
+				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource or it does not exist")
+			} else {
+				return nil, status.Errorf(codes.NotFound, "%s not found", name)
+			}
 		}
 		return nil, err
 	}
@@ -179,8 +183,12 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	}
 	rows, err := rt.tbl.BatchReadWithFieldMask(ctx, rowKeys, msgs, []*fieldmaskpb.FieldMask{{Paths: fieldMaskPaths}})
 	if err != nil {
-		if spanner.ErrCode(err) == codes.NotFound && rt.returnPermissionDeniedForNotFound {
-			return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access this resource")
+		if spanner.ErrCode(err) == codes.NotFound {
+			if rt.returnPermissionDeniedForNotFound {
+				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access one of these resources or it does not exist")
+			} else {
+				return nil, status.Errorf(codes.NotFound, "one of the resources not found")
+			}
 		}
 		return nil, err
 	}
