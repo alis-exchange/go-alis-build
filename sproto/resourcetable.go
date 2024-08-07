@@ -82,6 +82,7 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 		RowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion},
 		hasIamPolicy:                      options.HasIamPolicy,
 		returnPermissionDeniedForNotFound: options.ReturnPermissionDeniedForNotFound,
+		keyColumnName:                     options.KeyColumnName,
 	}
 	return rt
 }
