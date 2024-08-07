@@ -164,7 +164,7 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 		requireAuth = false
 	}
 	principal := getAuthorizedPrincipal(ctx, s.superAdminEmails)
-	if principal.IsSuperAdmin {
+	if principal != nil && principal.IsSuperAdmin {
 		requireAuth = false
 	}
 
@@ -284,6 +284,10 @@ func (r *Authorizer) AuthorizeRpc(ctx context.Context, resource string, resource
 }
 
 func (r *Authorizer) Authorize(ctx context.Context, method string, resource string, resourcePolicy *iampb.Policy) ([]*PrincipalResourceRoles, error) {
+	if r.Requester == nil {
+		return nil, status.Error(codes.Unauthenticated, "no authorized principal found")
+	}
+
 	roles := []*PrincipalResourceRoles{}
 	// if not empty, add policy to cache
 	if resourcePolicy != nil {
@@ -345,11 +349,15 @@ func (r *Authorizer) Authorize(ctx context.Context, method string, resource stri
 func (s *Authorizer) getResourcePolicies(ctx context.Context, resource string) map[string]*iampb.Policy {
 	policySources := s.authorizer.policySourceResolver(ctx, resource)
 	policies := sync.Map{}
+	wg := sync.WaitGroup{}
 	for _, source := range policySources {
+		wg.Add(1)
 		go func(source string) {
+			defer wg.Done()
 			policies.Store(source, s.GetPolicy(ctx, source))
 		}(source)
 	}
+	wg.Wait()
 	result := map[string]*iampb.Policy{}
 	policies.Range(func(key, value interface{}) bool {
 		result[key.(string)] = value.(*iampb.Policy)
@@ -361,6 +369,9 @@ func (s *Authorizer) getResourcePolicies(ctx context.Context, resource string) m
 // This method is used to add the JWT token to the outgoing context in the x-forwarded-authorization header. This might be useful
 // if one service needs wants to make a grpc hit in the same product deployment as the Requester, in stead of as itself.
 func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.Context {
+	if s.Requester == nil {
+		return ctx
+	}
 	if s.Requester.IsSuperAdmin {
 		return ctx
 	}
@@ -379,6 +390,9 @@ func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.C
 // TestPermissions returns the permissions that the Requester has on the specified resource.
 // Note if the list of permissions is empty, all permissions will be returned.
 func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permissions []string) []string {
+	if r.Requester == nil {
+		return []string{}
+	}
 	policies := r.getResourcePolicies(ctx, resource)
 	perms := map[string]bool{}
 	for _, policy := range policies {
@@ -417,10 +431,7 @@ func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permi
 	return result
 }
 
-// GetTextCtx is useful to test authorization in unit tests. It creates a test
-// jwt token with the specified user id and email and adds it to the context.
-// DO NOT USE THIS TO CREATE JWT TOKENS IN PRODUCTION.
-func GetTestCtx(testUserId string, testUserEmail string) context.Context {
+func getTestCtx(testUserId string, testUserEmail string) context.Context {
 	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":   testUserId,
 		"email": testUserEmail,
@@ -432,4 +443,15 @@ func GetTestCtx(testUserId string, testUserEmail string) context.Context {
 	md := metadata.Pairs("authorization", "Bearer "+token)
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 	return ctx
+}
+
+// GetSuperAdminCtx is useful to test methods that require super admin authorization in unit tests.
+func (s *ServerAuthorizer) GetSuperAdminCtx() context.Context {
+	return getTestCtx("", s.superAdminEmails[0])
+}
+
+// GetTextUserCtx is useful to test authorization in unit tests. It creates a test
+// jwt token with the specified user id and email and adds it to the context.
+func (s *ServerAuthorizer) GetTestUserCtx(id string, email string) context.Context {
+	return getTestCtx(id, email)
 }

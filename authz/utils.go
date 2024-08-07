@@ -118,13 +118,13 @@ func sliceContains(stringSlice []string, search1 string, search2 string) bool {
 func getAuthorizedPrincipal(ctx context.Context, superAdminEmails []string) *Principal {
 	// first get the current principal from the auth header that cloudrun used to do Authentication on the request
 	principal, err := getPrincipalFromJwtHeader(ctx, ServerlessAuthHeader1, superAdminEmails, true)
-	if principal == nil && err != nil {
+	if principal == nil && err == nil {
 		principal, err = getPrincipalFromJwtHeader(ctx, ServerlessAuthHeader2, superAdminEmails, true)
 	}
-	if principal == nil && err != nil {
+	if principal == nil && err == nil {
 		principal, err = getPrincipalFromJwtHeader(ctx, AuthorizationHeader, superAdminEmails, true)
 	}
-	if principal == nil && err != nil {
+	if principal == nil && err == nil {
 		principal, err = getPrincipalFromJwtHeader(ctx, AuthorizationHeader2, superAdminEmails, true)
 	}
 
@@ -133,11 +133,7 @@ func getAuthorizedPrincipal(ctx context.Context, superAdminEmails []string) *Pri
 		return nil
 	}
 	if principal == nil {
-		if len(superAdminEmails) > 0 {
-			return &Principal{IsSuperAdmin: true, Email: superAdminEmails[0], PolicyMemberUsingEmail: "serviceAccount:" + superAdminEmails[0]}
-		} else {
-			return nil
-		}
+		return nil
 	}
 
 	// if principal is a service account ending on "@gcp-sa-iap.iam.gserviceaccount.com", trust IAPJWTAssertionHeader
