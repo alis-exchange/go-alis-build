@@ -25,7 +25,7 @@ This package makes managing LROs on your server super simple. 😎
 
 Here is an example terraform you could use when setting up your underlying Spanner database
 
-```tf
+```terraform
 
 # Create a Spanner Table
 resource "alis_google_spanner_table" "operations" {
@@ -73,9 +73,12 @@ main:
         assign:
           - operationId: ${args.operationId}
           - operations: ${args.operations}
-          - method: ${args.method}
           - timeout: ${args.timeout}
           - pollFrequency: ${args.pollFrequency}
+          - pollEndpoint: ${args.pollEndpoint}
+          - pollEndpointAudience: ${args.pollEndpointAudience}
+          - resumeEndpoint: ${args.resumeEndpoint}
+          - resumeEndpointAudience: ${args.resumeEndpointAudience}
     - wait:
         parallel:
           for:
@@ -93,10 +96,10 @@ main:
                   try:
                     call: http.post
                     args:
-                      url: https://internal-gateway-...-ew.a.run.app/.../GetOperation
+                      url: ${pollEndpoint}
                       auth:
                         type: OIDC
-                        audience: https://internal-gateway-...-ew.a.run.app
+                        audience: ${pollEndpointAudience}
                       body:
                         name: ${op}
                     result: operation
@@ -139,17 +142,17 @@ main:
                   call: sys.log
                   args:
                     data: ${op + " completed"}
-    - resumeMethod:
+    - resume:
         call: http.post
         args:
-          url: ${"https://internal-gateway-...-ew.a.run.app/" + method}
+          url: ${resumeEndpoint}
           headers:
             x-alis-operation-id: ${operationId}
           body:
             data: {}
           auth:
             type: OIDC
-            audience: https://internal-gateway-...-ew.a.run.app
+            audience: ${resumeEndpointAudience}
 
 # A fix to avoid connection related issues with hitting the LRO service
 custom_predicate:
