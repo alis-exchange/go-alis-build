@@ -3,7 +3,6 @@ package lro
 import (
 	"context"
 	"log"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -26,22 +25,22 @@ func init() {
 	// Instantiate a LRO client, with Workflows as a resumable portion.
 	client, err = NewClient(context.Background(),
 		&SpannerConfig{
-			Project:  "alis-bt-prod-ar3s8lm",
-			Instance: "default",
-			Database: "krynauws-pl",
-			Table:    "krynauws_pl_dev_gqg_Operations",
-			Role:     "krynauws_pl_dev_gqg",
+			Project:  "",
+			Instance: "",
+			Database: "",
+			Table:    "",
+			Role:     "",
 		}, &WorkflowsConfig{
-			Project:  os.Getenv("ALIS_OS_PROJECT"),
-			Location: os.Getenv("ALIS_REGION"),
-			Workflow: "workflow-resume-test",
+			Project:  "",
+			Location: "",
+			Workflow: "",
 		})
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func TestClient_GetOperation(t *testing.T) {
+func TestClient_Get(t *testing.T) {
 	type args struct {
 		ctx           context.Context
 		operationName string
@@ -53,7 +52,7 @@ func TestClient_GetOperation(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "GetOperation",
+			name: "Get",
 			args: args{
 				ctx:           context.Background(),
 				operationName: "operations/08c09105-d9c1-4ade-a58d-8951024bc71a",
@@ -69,13 +68,13 @@ func TestClient_GetOperation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := client.getOperation(tt.args.ctx, tt.args.operationName)
+			got, err := client.Get(tt.args.ctx, tt.args.operationName)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.GetOperation() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Client.Get() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !proto.Equal(got, tt.want) {
-				t.Errorf("Client.GetOperation() = %v, want %v", got, tt.want)
+				t.Errorf("Client.Get() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -141,7 +141,7 @@ func (o *ResumableOperation[T]) create() error {
 
 // Get returns a long-running operation
 func (o *ResumableOperation[T]) Get() (*longrunningpb.Operation, error) {
-	return o.client.getOperation(o.ctx, "operations/"+o.id)
+	return o.client.Get(o.ctx, "operations/"+o.id)
 }
 
 // Delete deletes the LRO (including )
