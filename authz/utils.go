@@ -49,7 +49,7 @@ func getAuthInfoWithoutRoles(ctx context.Context, superAdmins []string) (*AuthIn
 	// if a valid principal was found in the authorization header and the principal is a super admin, look in the auth forwarding header
 	// for any forwarded authorization and if not found, return the principal from the authorization header
 	if authInfo.IsSuperAdmin {
-		forwardedAuthInfo, err := getAuthInfoWithoutRolesFromJwtHeader(ctx, AuthForwardingHeader, superAdmins, true)
+		forwardedAuthInfo, err := getAuthInfoWithoutRolesFromJwtHeader(ctx, ProxyForwardingHeader, superAdmins, true)
 		if err == nil {
 			return forwardedAuthInfo, nil
 		}
@@ -146,12 +146,19 @@ func getAuthorizedPrincipal(ctx context.Context, superAdminEmails []string) *Pri
 		return principal
 	}
 
-	// if a valid principal was found in the authorization header and the principal is a super admin, look in the auth forwarding header
-	// for any forwarded authorization and if not found, return the principal from the authorization header
+	// if a valid principal was found in the authorization header and the principal is a super admin, check if envoy proxy forwarded a principal
 	if principal.IsSuperAdmin {
-		forwardedPrincipal, err := getPrincipalFromJwtHeader(ctx, AuthForwardingHeader, superAdminEmails, true)
+		forwardedPrincipal, err := getPrincipalFromJwtHeader(ctx, ProxyForwardingHeader, superAdminEmails, true)
 		if err == nil && forwardedPrincipal != nil {
-			return forwardedPrincipal
+			principal = forwardedPrincipal
+		}
+	}
+
+	// if the principal is a super admin, check for any authz forwarded principal
+	if principal.IsSuperAdmin {
+		forwardedPrincipal, err := getPrincipalFromJwtHeader(ctx, AuthzForwardingHeader, superAdminEmails, true)
+		if err == nil && forwardedPrincipal != nil {
+			principal = forwardedPrincipal
 		}
 	}
 

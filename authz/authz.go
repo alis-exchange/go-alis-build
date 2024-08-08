@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	AuthForwardingHeader  = "x-forwarded-authorization" // The header used by ESPv2 gateways and other neurons to forward the JWT token
+	AuthzForwardingHeader = "authz-forwarded-authorization"
+	ProxyForwardingHeader = "x-forwarded-authorization" // The header used by ESPv2 gateways and other neurons to forward the JWT token
 	IAPJWTAssertionHeader = "x-goog-iap-jwt-assertion"  // The header used by IAP to forward the JWT token
 	AuthorizationHeader   = "Authorization"             // The header used by clients to send the JWT token directly to cloudrun (without ESPv2 or IAP)
 	AuthorizationHeader2  = "authorization"             // The header used by clients to send the JWT token directly to cloudrun (without ESPv2 or IAP)
@@ -112,7 +113,7 @@ func StripAuthHeaders(ctx context.Context) context.Context {
 	if !ok {
 		return ctx
 	}
-	authHeaders := []string{ServerlessAuthHeader1, ServerlessAuthHeader2, AuthorizationHeader, AuthorizationHeader2, IAPJWTAssertionHeader, AuthForwardingHeader}
+	authHeaders := []string{ServerlessAuthHeader1, ServerlessAuthHeader2, AuthorizationHeader, AuthorizationHeader2, IAPJWTAssertionHeader, ProxyForwardingHeader}
 	for _, header := range authHeaders {
 		md.Delete(header)
 	}
@@ -335,8 +336,8 @@ func (a *Authz) AddRequesterJwtToOutgoingCtx(ctx context.Context) (context.Conte
 	if currentOutgoingMd == nil {
 		currentOutgoingMd = metadata.New(nil)
 	}
-	currentOutgoingMd.Delete(AuthForwardingHeader)
-	currentOutgoingMd.Set(AuthForwardingHeader, "Bearer "+authInfo.Jwt)
+	currentOutgoingMd.Delete(ProxyForwardingHeader)
+	currentOutgoingMd.Set(ProxyForwardingHeader, "Bearer "+authInfo.Jwt)
 	ctx = metadata.NewOutgoingContext(ctx, currentOutgoingMd)
 
 	return ctx, nil

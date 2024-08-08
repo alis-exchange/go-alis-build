@@ -50,6 +50,9 @@ type ServerAuthorizer struct {
 // *@...gserviceaccount.com"
 // The first specified super admin is also the fall back principal if no principal is found in the request.
 func NewServerAuthorizer(roles []*Role, superAdminEmails ...string) *ServerAuthorizer {
+	if len(superAdminEmails) == 0 {
+		alog.Fatal(context.Background(), "at least one super admin required for server authorizer")
+	}
 	s := &ServerAuthorizer{
 		rpcRolesMap:      make(map[string](map[string]bool)),
 		rolesMap:         make(map[string](map[string]bool)),
@@ -148,23 +151,38 @@ type Authorizer struct {
 
 func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context.Context) {
 	requireAuth := true
+
+	principal := getAuthorizedPrincipal(ctx, s.superAdminEmails)
+	// if principal is nil, assume super admin
+	if principal == nil {
+		principal = &Principal{
+			Email:                  s.superAdminEmails[0],
+			PolicyMemberUsingEmail: "serviceAccount:" + s.superAdminEmails[0],
+			IsSuperAdmin:           true,
+			IsServiceAccount:       true,
+		}
+	}
+	if principal.IsSuperAdmin {
+		requireAuth = false
+	}
+
 	// extract method from context
 	method, ok := ctx.Value(rpcKey).(string)
 	if !ok {
-		alog.Fatalf(ctx, "rpc method not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
+		if requireAuth {
+			alog.Fatalf(ctx, "rpc method not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
+		}
 	}
 	// check if already claimed
 	claimed, ok := ctx.Value(claimdKey).(bool)
 	if !ok {
-		alog.Fatalf(ctx, "authz-claimed not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
+		if requireAuth {
+			alog.Fatalf(ctx, "authz-claimed not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
+		}
 	}
 
 	// if claimed, super admin or open rpc, do not require auth
 	if claimed {
-		requireAuth = false
-	}
-	principal := getAuthorizedPrincipal(ctx, s.superAdminEmails)
-	if principal != nil && principal.IsSuperAdmin {
 		requireAuth = false
 	}
 
@@ -380,8 +398,8 @@ func (s *Authorizer) AddRequesterJwtToOutgoingCtx(ctx context.Context) context.C
 	if currentOutgoingMd == nil {
 		currentOutgoingMd = metadata.New(nil)
 	}
-	currentOutgoingMd.Delete(AuthForwardingHeader)
-	currentOutgoingMd.Set(AuthForwardingHeader, "Bearer "+s.Requester.Jwt)
+	currentOutgoingMd.Delete(AuthzForwardingHeader)
+	currentOutgoingMd.Set(AuthzForwardingHeader, "Bearer "+s.Requester.Jwt)
 	ctx = metadata.NewOutgoingContext(ctx, currentOutgoingMd)
 
 	return ctx
@@ -431,10 +449,12 @@ func (r *Authorizer) TestPermissions(ctx context.Context, resource string, permi
 	return result
 }
 
-func getTestCtx(testUserId string, testUserEmail string) context.Context {
+// GetTextUserIncomingCtx is useful to test authorization in unit tests directly to the struct that implements a grpc server.
+// It creates a test jwt token with the specified user id and email and adds it to the context.
+func GetTestUserIncomingCtx(id string, email string) context.Context {
 	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   testUserId,
-		"email": testUserEmail,
+		"sub":   id,
+		"email": email,
 	})
 	token, err := jwt.SignedString([]byte("authz-test-key"))
 	if err != nil {
@@ -445,13 +465,17 @@ func getTestCtx(testUserId string, testUserEmail string) context.Context {
 	return ctx
 }
 
-// GetSuperAdminCtx is useful to test methods that require super admin authorization in unit tests.
-func (s *ServerAuthorizer) GetSuperAdminCtx() context.Context {
-	return getTestCtx("", s.superAdminEmails[0])
-}
-
-// GetTextUserCtx is useful to test authorization in unit tests. It creates a test
-// jwt token with the specified user id and email and adds it to the context.
-func (s *ServerAuthorizer) GetTestUserCtx(id string, email string) context.Context {
-	return getTestCtx(id, email)
+// ForwardTestUserInOutgoingCtx is useful to test authorization via gateways or load balancers that fronts a deployed grpc server.
+func ForwardTestUserInOutgoingCtx(id string, email string) context.Context {
+	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":   id,
+		"email": email,
+	})
+	token, err := jwt.SignedString([]byte("authz-test-key"))
+	if err != nil {
+		alog.Fatalf(context.Background(), "failed to sign test jwt: %v", err)
+	}
+	md := metadata.Pairs(AuthzForwardingHeader, "Bearer "+token)
+	ctx := metadata.NewOutgoingContext(context.Background(), md)
+	return ctx
 }
