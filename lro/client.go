@@ -104,7 +104,7 @@ func (c *Client) Close() {
 }
 
 // getOperation is an internal method use to get a specified operation.
-func (c *Client) getOperation(ctx context.Context, operation string) (*longrunningpb.Operation, error) {
+func (c *Client) Get(ctx context.Context, operation string) (*longrunningpb.Operation, error) {
 	// validate arguments
 	err := validate.Argument("name", operation, validate.OperationRegex)
 	if err != nil {
@@ -141,7 +141,7 @@ func (c *Client) Wait(ctx context.Context, operation string, timeout time.Durati
 	var op *longrunningpb.Operation
 	var err error
 	for {
-		op, err = c.getOperation(ctx, operation)
+		op, err = c.Get(ctx, operation)
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +195,7 @@ func (c *Client) BatchWait(ctx context.Context, operations []string, timeout tim
 //   - operation: The resource name of the operation in the format `operations/*`
 //   - response: The response object into which the underlyging response of the LRO should be marshalled into.
 func (c *Client) UnmarshalOperation(ctx context.Context, operation string, response, metadata proto.Message) error {
-	op, err := c.getOperation(ctx, operation)
+	op, err := c.Get(ctx, operation)
 	if err != nil {
 		return err
 	}
