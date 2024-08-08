@@ -16,10 +16,13 @@ type LroService interface {
 	GetOperation(ctx context.Context, in *longrunningpb.GetOperationRequest, opts ...grpc.CallOption) (*longrunningpb.Operation, error)
 }
 
-// Wait waits for the operation to complete. The metadataCallback parameter can be used to handle metadata
-// provided by the operation. The origin is the service from which the operation originates and should implement the
-// origin interface.
-func WaitOperation(ctx context.Context, operationName string, service LroService, timeout time.Duration,
+// Wait waits for the operation to complete.
+//
+// Arguments:
+//   - operation: The full LRO resource name, of the format 'operations/*'
+//   - service: The service from which the operation originates
+//   - timeout: The period after which the method time outs and returns an error.
+func WaitOperation(ctx context.Context, operation string, service LroService, timeout time.Duration,
 ) (*longrunningpb.Operation, error) {
 	// Set the default timeout
 	if timeout == 0 {
@@ -28,10 +31,8 @@ func WaitOperation(ctx context.Context, operationName string, service LroService
 	startTime := time.Now()
 
 	// start loop to check if operation is done or timeout has passed
-	var op *longrunningpb.Operation
-	var err error
 	for {
-		op, err = service.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: operationName})
+		op, err := service.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: operation})
 		if err != nil {
 			return nil, err
 		}
@@ -43,7 +44,7 @@ func WaitOperation(ctx context.Context, operationName string, service LroService
 		if timePassed.Seconds() > timeout.Seconds() {
 			return nil, ErrWaitDeadlineExceeded{
 				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-					operationName, timeout.Seconds()),
+					operation, timeout.Seconds()),
 			}
 		}
 		time.Sleep(777 * time.Millisecond)
