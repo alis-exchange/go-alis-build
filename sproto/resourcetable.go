@@ -210,10 +210,13 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 
 func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOptions) ([]*ResourceRow, string, error) {
 	var err error
-	spannerStatement := spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
-	spannerStatement.Params["prefix"], err = rt.RowKeyConv.GetRowKeyPrefix(parent)
-	if err != nil {
-		return nil, "", status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
+	var spannerStatement spanner.Statement
+	if parent != "" {
+		spannerStatement = spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
+		spannerStatement.Params["prefix"], err = rt.RowKeyConv.GetRowKeyPrefix(parent)
+		if err != nil {
+			return nil, "", status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
+		}
 	}
 	msgs := []proto.Message{proto.Clone(rt.resourceMsg)}
 	if rt.hasIamPolicy {
