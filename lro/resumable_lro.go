@@ -35,6 +35,7 @@ type ResumableOperation[T Checkpoint] struct {
 	id             string
 	operation      *longrunningpb.Operation
 	resumeEndpoint string
+	devMode        bool
 }
 
 // A Checkpoint object of any type.
@@ -78,7 +79,7 @@ func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, re
 			// No need to create one
 			op.id = md.Get(OperationIdHeaderKey)[0]
 
-			checkpoint, err = op.LoadCheckpoint()
+			checkpoint, err = op.loadCheckpoint()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -103,6 +104,16 @@ func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, re
 	}
 
 	return op, nil, err
+}
+
+// SetLocal could be used to switch off any resumable features and should only be used for local testing purposes
+func (o *ResumableOperation[T]) ActivateDevMode() {
+	o.devMode = true
+}
+
+// DevMode return 'true' if the LRO is running in development mode used for local testing purposes
+func (o *ResumableOperation[T]) DevMode() bool {
+	return o.devMode
 }
 
 // create stores a new long-running operation in spanner, with done=false
@@ -130,7 +141,7 @@ func (o *ResumableOperation[T]) create() error {
 
 // Get returns a long-running operation
 func (o *ResumableOperation[T]) Get() (*longrunningpb.Operation, error) {
-	return o.client.GetOperation(o.ctx, "operations/"+o.id)
+	return o.client.getOperation(o.ctx, "operations/"+o.id)
 }
 
 // Delete deletes the LRO (including )
@@ -215,7 +226,7 @@ func (o *ResumableOperation[T]) Error(error error) error {
 }
 
 /*
-Wait orchestrates the pausing and resumption of an LRO using a Google Cloud Workflow.
+WaitAsync orchestrates the pausing and resumption of an LRO using a Google Cloud Workflow.
 
 This function performs the following steps:
 
@@ -232,13 +243,17 @@ Parameters:
   - pollEndpoint: The RESTFull endpoint used for polling the status of the provided LROs
     for example: https://.../.../GetOperation
 */
-func (o *ResumableOperation[T]) Wait(operations []string, timeout, pollFrequency time.Duration, pollEndpoint string, checkpoint *T) error {
+func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFrequency time.Duration, pollEndpoint string, checkpoint *T) error {
+	if o.devMode {
+		return fmt.Errorf("unable to run WaitAsync while in development mode")
+	}
+
 	if o.client.workflowsConfig == nil {
 		return fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
 	}
 
 	// First it saves the checkpoint
-	err := o.SaveCheckpoint("operations/"+o.id, checkpoint)
+	err := o.saveCheckpoint("operations/"+o.id, checkpoint)
 	if err != nil {
 		return err
 	}
@@ -322,7 +337,7 @@ func (o *ResumableOperation[T]) SetMetadata(metadata proto.Message) (*longrunnin
 }
 
 // SaveCheckpoint saves a current checkpoint with the LRO resource
-func (o *ResumableOperation[T]) SaveCheckpoint(operation string, checkpoint *T) error {
+func (o *ResumableOperation[T]) saveCheckpoint(operation string, checkpoint *T) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
 	if err := enc.Encode(checkpoint); err != nil {
@@ -341,7 +356,7 @@ func (o *ResumableOperation[T]) SaveCheckpoint(operation string, checkpoint *T) 
 }
 
 // LoadCheckpoint loads the current checkpoint stored with the LRO resource
-func (o *ResumableOperation[T]) LoadCheckpoint() (*T, error) {
+func (o *ResumableOperation[T]) loadCheckpoint() (*T, error) {
 	var data T
 	row, err := o.client.spanner.ReadRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id}, []string{CheckpointColumnName}, nil)
 	if err != nil {

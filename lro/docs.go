@@ -15,5 +15,8 @@ The lro package provides a number of features for managing LROs, including:
     reached.
 
 // More details on LROs are available at: https://google.aip.dev/151
+
+This package support both standard LRO, as well as resumable LROs making use of Google Cloud Workflows to poll the relevant
+operation(s).
 */
 package lro // import "go.alis.build/lro"
