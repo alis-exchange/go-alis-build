@@ -47,7 +47,7 @@ func ExampleNewResumableOperation() {
 	ctx := context.Background()
 
 	// create client (preferably only once at a global level in the init function of your package/service)
-	client, _ := NewClient(ctx, &SpannerConfig{}, nil)
+	client, _ := NewClient(ctx, &SpannerConfig{}, &WorkflowsConfig{})
 
 	// An illustration of using a resumable LRO
 	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
