@@ -2,6 +2,7 @@ package lro
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
@@ -40,7 +41,10 @@ func WaitOperation(ctx context.Context, operationName string, service LroService
 
 		timePassed := time.Since(startTime)
 		if timePassed.Seconds() > timeout.Seconds() {
-			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
+			return nil, ErrWaitDeadlineExceeded{
+				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+					operationName, timeout.Seconds()),
+			}
 		}
 		time.Sleep(777 * time.Millisecond)
 	}

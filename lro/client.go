@@ -151,7 +151,10 @@ func (c *Client) Wait(ctx context.Context, operation string, timeout time.Durati
 
 		timePassed := time.Since(startTime)
 		if timePassed.Seconds() > timeout.Seconds() {
-			return nil, ErrWaitDeadlineExceeded{timeout: timeout}
+			return nil, ErrWaitDeadlineExceeded{
+				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+					operation, timeout.Seconds()),
+			}
 		}
 		time.Sleep(777 * time.Millisecond)
 	}

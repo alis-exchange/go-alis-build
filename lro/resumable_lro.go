@@ -310,6 +310,37 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFreq
 	return nil
 }
 
+// Wait polls the provided operation and waits until done.
+func (o *ResumableOperation[T]) Wait(ctx context.Context, operation string, timeout time.Duration) (*longrunningpb.Operation, error) {
+	// Set the default timeout
+	if timeout == 0 {
+		timeout = time.Second * 77
+	}
+	startTime := time.Now()
+
+	// start loop to check if operation is done or timeout has passed
+	var op *longrunningpb.Operation
+	var err error
+	for {
+		op, err = o.client.Get(o.ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		if op.Done {
+			return op, nil
+		}
+
+		timePassed := time.Since(startTime)
+		if timePassed.Seconds() > timeout.Seconds() {
+			return nil, ErrWaitDeadlineExceeded{
+				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+					operation, timeout.Seconds()),
+			}
+		}
+		time.Sleep(777 * time.Millisecond)
+	}
+}
+
 // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
 // contains progress information and common metadata such as create time.
 func (o *ResumableOperation[T]) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {

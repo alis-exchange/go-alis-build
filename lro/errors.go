@@ -3,7 +3,6 @@ package lro
 import (
 	"errors"
 	"fmt"
-	"time"
 )
 
 // ErrNotFound is returned when the requested operation does not exist in bigtable
@@ -17,11 +16,11 @@ func (e ErrNotFound) Error() string {
 
 // ErrWaitDeadlineExceeded is returned when the WaitOperation exceeds the specified, or default, timeout
 type ErrWaitDeadlineExceeded struct {
-	timeout time.Duration
+	message string
 }
 
 func (e ErrWaitDeadlineExceeded) Error() string {
-	return fmt.Sprintf("exceeded timeout deadline of %0.0f seconds", e.timeout.Seconds())
+	return e.message
 }
 
 type InvalidOperationName struct {
