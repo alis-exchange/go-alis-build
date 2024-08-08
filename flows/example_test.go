@@ -26,6 +26,9 @@ func ExampleNew() {
 	step.AwaitingInput()
 	step.Queued()
 
+	// Publish at a particular step
+	_ = step.AwaitingInput().Publish()
+
 	// Updating the Display name of a step
 	step.WithDisplayName("A New display name of the step")
 }

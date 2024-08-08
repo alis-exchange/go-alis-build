@@ -180,3 +180,8 @@ func (s *Step) Failed(err error) *Step {
 	s.data.State = flows.Flow_Step_FAILED
 	return s
 }
+
+// Publish allows one to publish a particular step.
+func (s *Step) Publish() error {
+	return s.f.Publish()
+}
