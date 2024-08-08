@@ -216,5 +216,15 @@ func (c *Client) UnmarshalOperation(ctx context.Context, operation string, respo
 		}
 	}
 
+	// Return an error if not done
+	if !op.Done {
+		return fmt.Errorf("operation (%s) is not done", operation)
+	}
+
+	// Also return an error if the result is an error
+	if op.GetError() != nil {
+		return fmt.Errorf("%d: %s", op.GetError().GetCode(), op.GetError().GetMessage())
+	}
+
 	return nil
 }
