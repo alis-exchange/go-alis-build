@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func Example_NewOperation() {
+func ExampleNewOperation() {
 	// Create a global context object.
 	ctx := context.Background()
 
@@ -42,7 +42,7 @@ func Example_NewOperation() {
 	_, _ = exampleRpcMethod(ctx, nil)
 }
 
-func Example_NewResumableOperation() {
+func ExampleNewResumableOperation() {
 	// Create a global context object.
 	ctx := context.Background()
 
