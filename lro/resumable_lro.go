@@ -311,6 +311,8 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFreq
 }
 
 // Wait polls the provided operation and waits until done.
+// The underlying polling is using the same client configured for the ResumableOpertion instance.  If a different client is required
+// for polloing use the lro.Wait() method instead.
 func (o *ResumableOperation[T]) Wait(ctx context.Context, operation string, timeout time.Duration) (*longrunningpb.Operation, error) {
 	// Set the default timeout
 	if timeout == 0 {

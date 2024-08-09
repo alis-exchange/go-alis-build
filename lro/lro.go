@@ -5,14 +5,11 @@ import (
 	"fmt"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	"cloud.google.com/go/spanner"
 	"github.com/google/uuid"
-	"go.alis.build/lro/internal/validate"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Operation is the object used to manage the relevant LROs activties.
@@ -70,28 +67,6 @@ func (o *Operation) create() error {
 // Get returns a long-running operation
 func (o *Operation) Get() (*longrunningpb.Operation, error) {
 	return o.client.Get(o.ctx, "operations/"+o.id)
-}
-
-// Delete deletes the LRO (including )
-func (o *Operation) Delete() (*emptypb.Empty, error) {
-	// validate operation name
-	err := validate.Argument("name", "operations/"+o.id, validate.OperationRegex)
-	if err != nil {
-		return nil, err
-	}
-
-	// validate existence of operation
-	_, err = o.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	// delete operation
-	err = o.client.spanner.DeleteRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id})
-	if err != nil {
-		return nil, fmt.Errorf("delete operation (operations/%s): %w", o.id, err)
-	}
-	return &emptypb.Empty{}, nil
 }
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
