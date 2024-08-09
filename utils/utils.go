@@ -221,10 +221,10 @@ func (o *OrderedMap[K, V]) Values() []V {
 
 // Range iterates over the OrderedMap in the order of insertion and applies a callback function.
 // If the callback function returns false, the iteration stops.
-func (o *OrderedMap[K, V]) Range(cb func(K, V) bool) {
-	for _, key := range o.keys {
+func (o *OrderedMap[K, V]) Range(cb func(int, K, V) bool) {
+	for i, key := range o.keys {
 		value := o.values[key]
-		if !cb(key, value) {
+		if !cb(i, key, value) {
 			break
 		}
 	}
