@@ -3,6 +3,7 @@ package flows
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/pubsub"
 	"github.com/google/uuid"
@@ -15,14 +16,15 @@ import (
 )
 
 const (
-	DefaultTopic    = "flows"
-	FlowIdHeaderKey = "x-alis-flows-id"
+	DefaultTopic        = "flows"
+	FlowParentHeaderKey = "x-alis-flow-parent"
 )
 
 // Client object to manage Publishing to a Pub/Sub topic.
 type Client struct {
-	pubsub *pubsub.Client
-	topic  string
+	pubsub       *pubsub.Client
+	topic        string
+	awaitPublish bool
 }
 
 // Options for the NewClient method.
@@ -32,6 +34,10 @@ type Options struct {
 	//
 	// Defaults to 'progress' if not specified.
 	Topic string
+	// Indicates whether the pubsub client should block until the message is published.
+	// If set to true, the client will block until the message is published or the context is done.
+	// If set to false, the client will return immediately after the message is published.
+	AwaitPublish bool
 }
 
 // Option is a functional option for the NewClient method.
@@ -43,6 +49,14 @@ type Option func(*Options)
 func WithTopic(topic string) Option {
 	return func(opts *Options) {
 		opts.Topic = topic
+	}
+}
+
+// WithAwaitPublish instructs the client to block until the flow is finished publishing.
+// This causes the client to block until the Publish call completes or the context is done.
+func WithAwaitPublish() Option {
+	return func(opts *Options) {
+		opts.AwaitPublish = true
 	}
 }
 
@@ -72,8 +86,9 @@ func NewClient(project string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		pubsub: pubsubClient,
-		topic:  topic,
+		pubsub:       pubsubClient,
+		topic:        topic,
+		awaitPublish: options.AwaitPublish,
 	}, nil
 }
 
@@ -97,11 +112,13 @@ type Step struct {
 //
 // The parent id is inferred from the x-alis-flows-id header.
 // This can be overridden by calling WithParentId.
-func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
-	id, err := uuid.NewRandom()
+func (c *Client) NewFlow(ctx context.Context) (*Flow, context.Context, error) {
+	uid, err := uuid.NewRandom()
 	if err != nil {
-		return nil, err
+		return nil, ctx, err
 	}
+	// Remove hyphens from the UUID
+	id := strings.ReplaceAll(uid.String(), "-", "")
 
 	// Potentially use interceptors to pass method and parent id
 	source := "" // retrieve from grpc.Method
@@ -112,15 +129,18 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 	var parentId string // retrieve from x-alis-flows-id
 	// We check if the context has a special header x-alis-flows-id
 	// and if it does then we use that as the parent id
-	if md, ok := metadata.FromIncomingContext(ctx); ok && len(md.Get(FlowIdHeaderKey)) > 0 {
+	if md, ok := metadata.FromIncomingContext(ctx); ok && len(md.Get(FlowParentHeaderKey)) > 0 {
 		// We found a special header x-alis-flows-id, it suggests that the flow has a parent
-		parentId = md.Get(FlowIdHeaderKey)[0]
+		parentId = md.Get(FlowParentHeaderKey)[0]
 	}
 
+	// Create new context with the parent id set
+	outgoingCtx := metadata.AppendToOutgoingContext(ctx, FlowParentHeaderKey, id)
+
 	return &Flow{
-		ctx: ctx,
+		ctx: outgoingCtx,
 		data: &flows.Flow{
-			Id:         id.String(),
+			Id:         id,
 			Source:     source,
 			ParentId:   parentId,
 			Steps:      []*flows.Flow_Step{},
@@ -128,7 +148,7 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 		},
 		client: c,
 		steps:  alUtils.NewOrderedMap[string, *Step](),
-	}, nil
+	}, outgoingCtx, nil
 }
 
 // Publish the Flow as an event.
@@ -158,14 +178,19 @@ func (f *Flow) Publish() error {
 
 	topic := f.client.pubsub.Topic(f.client.topic)
 	defer topic.Stop()
-	topic.Publish(f.ctx, &pubsub.Message{
+	result := topic.Publish(f.ctx, &pubsub.Message{
 		Data:       data,
 		Attributes: attributes,
 		// OrderingKey: opts.OrderingKey,
 	})
 
-	// Use the Get method to block until the Publish call completes or the context is done
-	// _, err = result.Get(ctx)
+	if f.client.awaitPublish {
+		// Use the Get method to block until the Publish call completes or the context is done
+		_, err := result.Get(f.ctx)
+		if err != nil {
+			return fmt.Errorf("failed to publish message: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -173,6 +198,7 @@ func (f *Flow) Publish() error {
 //
 // This overrides the inferred source from the invoking method.
 func (f *Flow) WithSource(source string) *Flow {
+	f.data.UpdateTime = timestamppb.Now()
 	f.data.Source = source
 	return f
 }
@@ -181,6 +207,7 @@ func (f *Flow) WithSource(source string) *Flow {
 //
 // This overrides the inferred parent id from the x-alis-flows-id header.
 func (f *Flow) WithParentId(parentId string) *Flow {
+	f.data.UpdateTime = timestamppb.Now()
 	f.data.ParentId = parentId
 	return f
 }
@@ -188,28 +215,38 @@ func (f *Flow) WithParentId(parentId string) *Flow {
 // NewStep adds a step to the flow and returns a Step object.
 //
 // The initial state of the step is Queued.
-func (f *Flow) NewStep(id string, displayName string) *Step {
+func (f *Flow) NewStep(id string, title string) *Step {
 	step := &Step{
 		f: f,
 		data: &flows.Flow_Step{
-			Id:          id,
-			DisplayName: displayName,
-			State:       flows.Flow_Step_QUEUED,
+			Id:         id,
+			Title:      title,
+			State:      flows.Flow_Step_QUEUED,
+			CreateTime: timestamppb.Now(),
 		},
 	}
 	f.steps.Set(id, step)
 	return step
 }
 
-// WithDisplayName sets the display name of the step.
-func (s *Step) WithDisplayName(displayName string) *Step {
+// WithTitle sets the title of the step.
+func (s *Step) WithTitle(title string) *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.DisplayName = displayName
+	s.data.Title = title
+	return s
+}
+
+func (s *Step) WithDescription(description string) *Step {
+	s.data.UpdateTime = timestamppb.Now()
+	s.f.data.UpdateTime = timestamppb.Now()
+	s.data.Description = description
 	return s
 }
 
 // Queued marks the state of the step as Queued.
 func (s *Step) Queued() *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_QUEUED
 	return s
@@ -217,6 +254,7 @@ func (s *Step) Queued() *Step {
 
 // InProgress marks the state of the step as In Progress.
 func (s *Step) InProgress() *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_IN_PROGRESS
 	return s
@@ -224,6 +262,7 @@ func (s *Step) InProgress() *Step {
 
 // Cancelled marks the state of the step as Queued.
 func (s *Step) Cancelled() *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_CANCELLED
 	return s
@@ -231,6 +270,7 @@ func (s *Step) Cancelled() *Step {
 
 // Done marks the state of the step as done.
 func (s *Step) Done() *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_COMPLETED
 	return s
@@ -238,6 +278,7 @@ func (s *Step) Done() *Step {
 
 // Failed marks the lasted step as Failed with the specified error.
 func (s *Step) Failed(err error) *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_FAILED
 	return s
@@ -245,6 +286,7 @@ func (s *Step) Failed(err error) *Step {
 
 // AwaitingInput marks the state of the step as Awaiting Input.
 func (s *Step) AwaitingInput() *Step {
+	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()
 	s.data.State = flows.Flow_Step_AWAITING_INPUT
 	return s

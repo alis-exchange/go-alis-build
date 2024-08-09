@@ -25,12 +25,12 @@ func Test_Client(t *testing.T) {
 	ctx := context.Background()
 	if parentFlow != "" {
 		ctx = metadata.NewIncomingContext(ctx, metadata.MD{
-			FlowIdHeaderKey: []string{parentFlow},
+			FlowParentHeaderKey: []string{parentFlow},
 		})
 	}
 
 	// Create new client
-	client, err := NewClient(project, WithTopic(topic))
+	client, err := NewClient(project, WithTopic(topic), WithAwaitPublish())
 	if err != nil {
 		t.Errorf("NewClient() error = %v", err)
 		return
@@ -57,7 +57,7 @@ func Test_Client(t *testing.T) {
 	}
 
 	// Create new flow
-	flow, err := client.NewFlow(ctx)
+	flow, _, err := client.NewFlow(ctx)
 	if err != nil {
 		t.Errorf("NewFlow() error = %v", err)
 		return
@@ -94,8 +94,8 @@ func Test_Client(t *testing.T) {
 
 	// Create a new steps
 	step1Id := "1.0"
-	step1DisplayName := "Step 1"
-	step1 := flow.NewStep(step1Id, step1DisplayName)
+	step1Title := "Step 1"
+	step1 := flow.NewStep(step1Id, step1Title)
 
 	// Ensure length of steps is 1
 	if !assert.Len(t, flow.steps.Keys(), 1, "Expected flow steps to have a length of 1") {
@@ -112,9 +112,9 @@ func Test_Client(t *testing.T) {
 		t.Errorf("NewStep().data.id = %v, want %v", step1.data.GetId(), step1Id)
 	}
 
-	// Ensure step display name is set correctly
-	if !assert.Equalf(t, step1DisplayName, step1.data.GetDisplayName(), fmt.Sprintf("Expected(%s), Got(%s)", step1DisplayName, step1.data.GetDisplayName())) {
-		t.Errorf("NewStep().data.display_name = %v, want %v", step1.data.GetDisplayName(), step1DisplayName)
+	// Ensure step title is set correctly
+	if !assert.Equalf(t, step1Title, step1.data.GetTitle(), fmt.Sprintf("Expected(%s), Got(%s)", step1Title, step1.data.GetTitle())) {
+		t.Errorf("NewStep().data.title = %v, want %v", step1.data.GetTitle(), step1Title)
 	}
 
 	// Change state to Queued

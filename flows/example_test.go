@@ -12,13 +12,15 @@ func ExampleNew() {
 	client, _ := NewClient("your-google-project")
 
 	// Within your RPC method, instantiate a new flow, and typically defer publishing it.
-	flow, _ := client.NewFlow(ctx)
+	flow, _, err := client.NewFlow(ctx)
+	if err != nil {
+	}
 	defer flow.Publish()
 
 	step := flow.NewStep("1.1", "Some description")
 
 	// Failed example
-	err := errors.New("some error")
+	err = errors.New("some error")
 	step.Failed(err)
 
 	// State Changes
@@ -30,5 +32,5 @@ func ExampleNew() {
 	_ = step.AwaitingInput().Publish()
 
 	// Updating the Display name of a step
-	step.WithDisplayName("A New display name of the step")
+	step.WithTitle("A New title for the step")
 }

@@ -9,7 +9,7 @@ require (
 	go.alis.build/utils v0.0.5
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2
-	open.alis.services/protobuf v1.39.0
+	open.alis.services/protobuf v1.40.0
 )
 
 require (
