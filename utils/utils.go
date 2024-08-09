@@ -147,3 +147,85 @@ func GroupBy[T any, K comparable](arr []T, fn func(T) K) map[K][]T {
 	}
 	return result
 }
+
+// OrderedMap structure that maintains the insertion order
+type OrderedMap[K comparable, V any] struct {
+	keys   []K
+	values map[K]V
+}
+
+// NewOrderedMap creates a new instance of OrderedMap
+func NewOrderedMap[K comparable, V any]() *OrderedMap[K, V] {
+	return &OrderedMap[K, V]{
+		keys:   []K{},
+		values: make(map[K]V),
+	}
+}
+
+// Len returns the number of key-value pairs in the OrderedMap
+func (o *OrderedMap[K, V]) Len() int {
+	return len(o.keys)
+}
+
+// Clear removes all key-value pairs from the OrderedMap
+func (o *OrderedMap[K, V]) Clear() {
+	o.keys = []K{}
+	o.values = make(map[K]V)
+}
+
+// Set adds or updates a key-value pair in the OrderedMap
+func (o *OrderedMap[K, V]) Set(key K, value V) {
+	// Check if the key already exists in the map
+	if _, exists := o.values[key]; !exists {
+		// If the key does not exist, add it to the keys slice
+		o.keys = append(o.keys, key)
+	}
+	// Set the value in the map
+	o.values[key] = value
+}
+
+// Get retrieves the value associated with a key
+func (o *OrderedMap[K, V]) Get(key K) (V, bool) {
+	value, exists := o.values[key]
+	return value, exists
+}
+
+// Delete removes a key-value pair from the OrderedMap
+func (o *OrderedMap[K, V]) Delete(key K) {
+	if _, exists := o.values[key]; exists {
+		// Delete the key from the map
+		delete(o.values, key)
+		// Remove the key from the keys slice
+		for i, k := range o.keys {
+			if k == key {
+				o.keys = append(o.keys[:i], o.keys[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// Keys returns the keys in the order they were added
+func (o *OrderedMap[K, V]) Keys() []K {
+	return o.keys
+}
+
+// Values returns the values in the order they were added
+func (o *OrderedMap[K, V]) Values() []V {
+	orderedValues := make([]V, len(o.keys))
+	for i, key := range o.keys {
+		orderedValues[i] = o.values[key]
+	}
+	return orderedValues
+}
+
+// Range iterates over the OrderedMap in the order of insertion and applies a callback function.
+// If the callback function returns false, the iteration stops.
+func (o *OrderedMap[K, V]) Range(cb func(K, V) bool) {
+	for _, key := range o.keys {
+		value := o.values[key]
+		if !cb(key, value) {
+			break
+		}
+	}
+}
