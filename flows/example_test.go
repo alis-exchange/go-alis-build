@@ -9,7 +9,7 @@ func ExampleNew() {
 	ctx := context.Background()
 
 	// Create a new client -
-	client, _ := NewClient("your-google-project", nil)
+	client, _ := NewClient("your-google-project")
 
 	// Within your RPC method, instantiate a new flow, and typically defer publishing it.
 	flow, _ := client.NewFlow(ctx)
