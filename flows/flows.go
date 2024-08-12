@@ -112,10 +112,10 @@ type Step struct {
 //
 // The parent id is inferred from the x-alis-flows-id header.
 // This can be overridden by calling WithParentId.
-func (c *Client) NewFlow(ctx context.Context) (*Flow, context.Context, error) {
+func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 	uid, err := uuid.NewRandom()
 	if err != nil {
-		return nil, ctx, err
+		return nil, err
 	}
 	// Remove hyphens from the UUID
 	id := strings.ReplaceAll(uid.String(), "-", "")
@@ -124,7 +124,7 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, context.Context, error) {
 	source := "" // retrieve from grpc.Method
 	// Retrieve the fully qualified method name
 	if invokingMethod, ok := grpc.Method(ctx); ok {
-		source = invokingMethod
+		source = strings.TrimPrefix(invokingMethod, "/")
 	}
 	var parentId string // retrieve from x-alis-flows-id
 	// We check if the context has a special header x-alis-flows-id
@@ -134,11 +134,8 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, context.Context, error) {
 		parentId = md.Get(FlowParentHeaderKey)[0]
 	}
 
-	// Create new context with the parent id set
-	outgoingCtx := metadata.AppendToOutgoingContext(ctx, FlowParentHeaderKey, id)
-
 	return &Flow{
-		ctx: outgoingCtx,
+		ctx: ctx,
 		data: &flows.Flow{
 			Id:         id,
 			Source:     source,
@@ -148,7 +145,7 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, context.Context, error) {
 		},
 		client: c,
 		steps:  alUtils.NewOrderedMap[string, *Step](),
-	}, outgoingCtx, nil
+	}, nil
 }
 
 // Publish the Flow as an event.
@@ -215,7 +212,7 @@ func (f *Flow) WithParentId(parentId string) *Flow {
 // NewStep adds a step to the flow and returns a Step object.
 //
 // The initial state of the step is Queued.
-func (f *Flow) NewStep(id string, title string) *Step {
+func (f *Flow) NewStep(id string, title string) (*Step, context.Context) {
 	step := &Step{
 		f: f,
 		data: &flows.Flow_Step{
@@ -226,7 +223,12 @@ func (f *Flow) NewStep(id string, title string) *Step {
 		},
 	}
 	f.steps.Set(id, step)
-	return step
+
+	parentId := fmt.Sprintf("%s-%s", f.data.Id, id)
+
+	// Create new context with the parent id set
+	outgoingCtx := metadata.AppendToOutgoingContext(f.ctx, FlowParentHeaderKey, parentId)
+	return step, outgoingCtx
 }
 
 // WithTitle sets the title of the step.
