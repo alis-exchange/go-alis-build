@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"go.alis.build/lro/internal/validate"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -27,6 +28,30 @@ const (
 	// OperationIdHeaderKey is use to indicate the the LRO already exists, and does not need to be created
 	OperationIdHeaderKey = "x-alis-operation-id"
 )
+
+type Options struct {
+	ResumeEndpoint string
+	Host           string
+}
+
+// Option is a functional option for the NewResumableOperation method.
+type Option func(*Options)
+
+// WithResumeEndpoint sets the resume endpoint for the resumable operation.
+// If not provided, NewResumableOperation will infer the resume endpoint from the Host option and the context.
+func WithResumeEndpoint(endpoint string) Option {
+	return func(opts *Options) {
+		opts.ResumeEndpoint = endpoint
+	}
+}
+
+// WithHost sets the host for the resumable operation.
+// This is used to infer the resume endpoint if not provided.
+func WithHost(host string) Option {
+	return func(opts *Options) {
+		opts.Host = host
+	}
+}
 
 // ResumableOperation is the object used to manage the relevant LROs activties.
 type ResumableOperation[T Checkpoint] struct {
@@ -58,13 +83,30 @@ Example (with Checkpoint):
 			ApprovalLRO string
 	}
 	var checkpoint *CheckPoint
-	op, checkpoint, err := lro.Create[CheckPoint](ctx, lroClient, "https://...../RequestReview")
+	op, checkpoint, err := lro.Create[CheckPoint](ctx, lroClient, lro.WithHost("https://.....a.run.app"))
 
 Example (without a Checkpoint):
 
 	op, _, err := lro.Create[interface{}](ctx, lroClient)
 */
-func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, resumeEndpoint string) (op *ResumableOperation[T], checkpoint *T, err error) {
+func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, opts ...Option) (op *ResumableOperation[T], checkpoint *T, err error) {
+	options := &Options{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Get the method from the context
+	method, ok := grpc.Method(ctx)
+	// Construct the resume endpoint from the host and method
+	var resumeEndpoint string
+	if options.Host != "" && ok && method != "" {
+		resumeEndpoint = options.Host + method
+	}
+	// If the resume endpoint is provided, use it
+	if options.ResumeEndpoint != "" {
+		resumeEndpoint = options.ResumeEndpoint
+	}
+
 	op = &ResumableOperation[T]{
 		ctx:            context.WithoutCancel(ctx),
 		client:         client,
@@ -75,7 +117,7 @@ func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, re
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
 		if len(md.Get(OperationIdHeaderKey)) > 0 {
-			// We found a special header x-alis-operation-id, it suggest that the LRO is an existing one.
+			// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
 			// No need to create one
 			op.id = md.Get(OperationIdHeaderKey)[0]
 
