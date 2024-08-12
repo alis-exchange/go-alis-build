@@ -248,6 +248,11 @@ func (r *Authorizer) AsyncFetchAllPolicies(ctx context.Context, resources ...str
 		return
 	}
 
+	// skip if this authorizer's rpc is an open rpc
+	if _, ok := r.authorizer.openRpcs[r.method]; ok {
+		return
+	}
+
 	for _, resource := range resources {
 		policySources := r.authorizer.policySourceResolver(ctx, resource)
 		for _, source := range policySources {
@@ -262,6 +267,11 @@ func (r *Authorizer) AsyncFetchAllPolicies(ctx context.Context, resources ...str
 
 func (r *Authorizer) AsyncFetchExternalPolicies(ctx context.Context, resources ...string) {
 	if !r.requireAuth {
+		return
+	}
+
+	// return if this authorizer's rpc is an open rpc
+	if _, ok := r.authorizer.openRpcs[r.method]; ok {
 		return
 	}
 
