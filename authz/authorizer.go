@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"go.alis.build/alog"
 	"golang.org/x/exp/maps"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -121,14 +122,8 @@ func (s *ServerAuthorizer) WithPolicySourceResolver(policySourceResolver func(ct
 type ctxKey string
 
 const (
-	claimdKey ctxKey = "authz-claimed"
-	rpcKey    ctxKey = "authz-rpc"
+	claimdKey ctxKey = "x-alis-authz-claimed"
 )
-
-func AddRpcToIncomingCtx(ctx context.Context, rpcMethod string) context.Context {
-	ctx = context.WithValue(ctx, rpcKey, rpcMethod)
-	return context.WithValue(ctx, claimdKey, false)
-}
 
 type Authorizer struct {
 	// The server authorizer
@@ -166,28 +161,21 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 		requireAuth = false
 	}
 
-	// extract method from context
-	method, ok := ctx.Value(rpcKey).(string)
+	// claim if not claimed, otherwise do not require auth
+	_, ok := ctx.Value(claimdKey).(bool)
 	if !ok {
-		if requireAuth {
-			alog.Fatalf(ctx, "rpc method not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
-		}
-	}
-	// check if already claimed
-	claimed, ok := ctx.Value(claimdKey).(bool)
-	if !ok {
-		if requireAuth {
-			alog.Fatalf(ctx, "authz-claimed not found in context. Use authz.AddRpcToIncomingCtx to add the rpc method to the context in your grpc serverInterceptor.")
-		}
-	}
-
-	// if claimed, super admin or open rpc, do not require auth
-	if claimed {
+		ctx = context.WithValue(ctx, claimdKey, true)
+	} else {
 		requireAuth = false
 	}
 
-	// claim the request
-	ctx = context.WithValue(ctx, claimdKey, true)
+	// extract method from context
+	method, ok := grpc.Method(ctx)
+	if !ok {
+		if requireAuth {
+			alog.Fatalf(ctx, "rpc method not found in context")
+		}
+	}
 
 	return &Authorizer{
 		authorizer:  s,

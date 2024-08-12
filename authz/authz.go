@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	AuthzForwardingHeader = "authz-forwarded-authorization"
+	AuthzForwardingHeader = "x-alis-forwarded-authorization"
 	ProxyForwardingHeader = "x-forwarded-authorization" // The header used by ESPv2 gateways and other neurons to forward the JWT token
 	IAPJWTAssertionHeader = "x-goog-iap-jwt-assertion"  // The header used by IAP to forward the JWT token
 	AuthorizationHeader   = "Authorization"             // The header used by clients to send the JWT token directly to cloudrun (without ESPv2 or IAP)
