@@ -3,6 +3,7 @@ package lro
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
@@ -21,7 +22,7 @@ type Operation struct {
 }
 
 /*
-NewOperation creates a Long-Running Operation (LRO)
+NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
 
 Example:
 
@@ -39,6 +40,24 @@ func NewOperation(ctx context.Context, client *Client) (op *Operation, err error
 	}
 
 	return op, err
+}
+
+// NewExistingOperation creates a new Operation object from an existing LRO.
+func NewExistingOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
+	op = &Operation{
+		ctx:    context.WithoutCancel(ctx),
+		client: client,
+	}
+
+	// Get a copy of the current LRO
+	lro, err := op.client.Get(op.ctx, operation)
+	if err != nil {
+		return nil, err
+	}
+	op.id = strings.Split(lro.GetName(), "/")[1]
+	op.operation = lro
+
+	return op, nil
 }
 
 // create stores a new long-running operation in spanner, with done=false
