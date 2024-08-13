@@ -9,15 +9,15 @@ func ExampleNew() {
 	ctx := context.Background()
 
 	// Create a new client -
-	client, _ := NewClient("your-google-project")
+	client, _ := NewClient("your-google-project", WithTopic("flows"))
 
 	// Within your RPC method, instantiate a new flow, and typically defer publishing it.
-	flow, _, err := client.NewFlow(ctx)
+	flow, err := client.NewFlow(ctx)
 	if err != nil {
 	}
 	defer flow.Publish()
 
-	step := flow.NewStep("1.1", "Some description")
+	step, ctx, err := flow.NewStep("1.1", "Some title")
 
 	// Failed example
 	err = errors.New("some error")

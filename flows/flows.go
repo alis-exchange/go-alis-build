@@ -124,20 +124,20 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 	source := "" // retrieve from grpc.Method
 	// Retrieve the fully qualified method name
 	if invokingMethod, ok := grpc.Method(ctx); ok {
-		source = strings.TrimPrefix(invokingMethod, "/")
+		source = invokingMethod
 	}
-	var parentId string // retrieve from x-alis-flows-id
-	// We check if the context has a special header x-alis-flows-id
+	var parentId string // retrieve from x-alis-flow-parent
+	// We check if the context has a special header x-alis-flow-parent
 	// and if it does then we use that as the parent id
 	if md, ok := metadata.FromIncomingContext(ctx); ok && len(md.Get(FlowParentHeaderKey)) > 0 {
-		// We found a special header x-alis-flows-id, it suggests that the flow has a parent
+		// We found a special header x-alis-flow-parent, it suggests that the flow has a parent
 		parentId = md.Get(FlowParentHeaderKey)[0]
 	}
 
 	return &Flow{
 		ctx: ctx,
 		data: &flows.Flow{
-			Id:         id,
+			Name:       "flows/" + id,
 			Source:     source,
 			ParentId:   parentId,
 			Steps:      []*flows.Flow_Step{},
@@ -178,7 +178,7 @@ func (f *Flow) Publish() error {
 	result := topic.Publish(f.ctx, &pubsub.Message{
 		Data:       data,
 		Attributes: attributes,
-		// OrderingKey: opts.OrderingKey,
+		// OrderingKey: opts.OrderingKey, // TODO: Add ordering key
 	})
 
 	if f.client.awaitPublish {
@@ -202,17 +202,29 @@ func (f *Flow) WithSource(source string) *Flow {
 
 // WithParentId sets the parent id of the flow.
 //
-// This overrides the inferred parent id from the x-alis-flows-id header.
-func (f *Flow) WithParentId(parentId string) *Flow {
+// This overrides the inferred parent id from the x-alis-flow-parent header.
+//
+// The parent id is of the format: <flow-id>-<step-id>.
+// For example: 0af7651916cd43dd8448eb211c80319c-0
+func (f *Flow) WithParentId(parentId string) (*Flow, error) {
+	if !ParentIdRegex.MatchString(parentId) {
+		return nil, fmt.Errorf("invalid parent id (%s). parent id must be in the format <flow-id>-<step-id>", parentId)
+	}
+
 	f.data.UpdateTime = timestamppb.Now()
 	f.data.ParentId = parentId
-	return f
+	return f, nil
 }
 
 // NewStep adds a step to the flow and returns a Step object.
 //
 // The initial state of the step is Queued.
-func (f *Flow) NewStep(id string, title string) (*Step, context.Context) {
+func (f *Flow) NewStep(id string, title string) (*Step, context.Context, error) {
+	// Validate Id
+	if !StepIdRegex.MatchString(id) {
+		return nil, nil, fmt.Errorf("invalid step id (%s). step id must not contain hyphens", id)
+	}
+
 	step := &Step{
 		f: f,
 		data: &flows.Flow_Step{
@@ -224,11 +236,17 @@ func (f *Flow) NewStep(id string, title string) (*Step, context.Context) {
 	}
 	f.steps.Set(id, step)
 
-	parentId := fmt.Sprintf("%s-%s", f.data.Id, id)
+	// Get flow id from the flow name
+	flowId := strings.TrimPrefix(f.data.Name, "flows/")
+
+	parentId := fmt.Sprintf("%s-%s", flowId, id)
 
 	// Create new context with the parent id set
-	outgoingCtx := metadata.AppendToOutgoingContext(f.ctx, FlowParentHeaderKey, parentId)
-	return step, outgoingCtx
+	if err := grpc.SetHeader(f.ctx, metadata.Pairs(FlowParentHeaderKey, parentId)); err != nil {
+		return nil, nil, fmt.Errorf("failed to set parent id in context: %w", err)
+	}
+	//outgoingCtx := metadata.AppendToOutgoingContext(f.ctx, FlowParentHeaderKey, parentId)
+	return step, f.ctx, nil
 }
 
 // WithTitle sets the title of the step.

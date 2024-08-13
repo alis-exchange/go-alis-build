@@ -6,10 +6,10 @@ require (
 	cloud.google.com/go/pubsub v1.41.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.9.0
-	go.alis.build/utils v0.0.5
+	go.alis.build/utils v0.0.7
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2
-	open.alis.services/protobuf v1.40.0
+	open.alis.services/protobuf v1.45.0
 )
 
 require (
