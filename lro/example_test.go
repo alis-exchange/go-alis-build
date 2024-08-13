@@ -56,7 +56,7 @@ func ExampleNewResumableOperation() {
 			Next string
 			Lro2 string
 		}
-		op, checkpoint, err := NewResumableOperation[MyCheckpoint](ctx, client, "")
+		op, checkpoint, err := NewResumableOperation[MyCheckpoint](ctx, client)
 		if err != nil {
 			return nil, err
 		}
