@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// ErrNotFound is returned when the requested operation does not exist in bigtable
+// ErrNotFound is returned when the requested operation does not exist.
 type ErrNotFound struct {
 	Operation string // unavailable locations
 }
