@@ -165,8 +165,7 @@ avoid cross-instance dependencies. Ensure that operations on different OrderedMa
 independent and do not inadvertently depend on each other.
 Take the following example:
 
-var o1, o2 OrderedMap[int, string]
-
+	var o1, o2 OrderedMap[int, string]
 	go func() {
 		o1.Set(1, "one")
 		o2.Get(1)  // Waits on o1 indirectly
