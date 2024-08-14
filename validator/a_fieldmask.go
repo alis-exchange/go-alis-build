@@ -92,6 +92,32 @@ func (f *fieldmask) OnlyContains(allowedFields []string) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures the fieldmask contains all of the specified fields
+// Also violated if the fieldmask is empty
+func (f *fieldmask) ContainsAll(requiredFields []string) *Rule {
+	id := "fm-ca"
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must contain %s", f.description, strings.Join(requiredFields, ", ")),
+		notRule:      fmt.Sprintf("%s must not contain %s", f.description, strings.Join(requiredFields, ", ")),
+		condition:    fmt.Sprintf("%s contains %s", f.description, strings.Join(requiredFields, ", ")),
+		notCondition: fmt.Sprintf("%s does not contain %s", f.description, strings.Join(requiredFields, ", ")),
+	}
+	args := []argI{f}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		fm := f.getValues(f.getValidator(), msg)[0]
+		if fm == nil {
+			return true, nil
+		}
+		for _, path := range requiredFields {
+			if !slices.Contains(fm.GetPaths(), path) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures the fieldmask does not contain the disallowed fields
 func (f *fieldmask) DoesNotContain(disallowedFields []string) *Rule {
 	id := "fm-dnc"
