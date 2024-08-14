@@ -40,9 +40,14 @@ type (
 		options *ValidatorOptions
 	}
 
-	// set IgnoreWarnings to true to suppress warnings about missing getters
+	// Set IgnoreWarnings to true to suppress warnings about missing getters
+	// Provide ServiceName if the message type is a request message for more than one service that your server is implementing
 	ValidatorOptions struct {
+		// Set to true to suppress warnings about missing getters
 		IgnoreWarnings bool
+		// Format: pkg.ServiceName
+		// E.g myorg.myapp.v1.MyService
+		ServiceName string
 	}
 
 	// Both PathsToValidate and ValidateFieldsSpecifiedIn can be set, but none are required. Example of setting both is ValidateFieldPathsSpecifiedIn = "update_mask" and PathsToValidate = []string{"name"}
@@ -69,7 +74,14 @@ func NewValidator(protoMsg proto.Message, options *ValidatorOptions) *Validator 
 		protoMsg:   protoMsg,
 		options:    options,
 	}
-	validators[msgType] = v
+	if validators[msgType] == nil {
+		validators[msgType] = make(map[string]*Validator)
+	}
+	serviceName := options.ServiceName
+	if serviceName == "" {
+		serviceName = "*"
+	}
+	validators[msgType][serviceName] = v
 	return v
 }
 

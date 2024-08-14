@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	// ExampleValidator()
+	ExampleValidator()
 }
 
 func ExampleValidator() {
@@ -69,9 +69,10 @@ func ExampleValidate() {
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"display_name"}},
 	}
 	request := updateBook.ProtoReflect().Interface()
+	ctx := context.Background() // normally the ctx would come from the grpc server interceptor
 
 	// normally the following would be called in the server interceptor of your grpc server
-	err, found := validator.Validate(request)
+	err, found := validator.Validate(ctx, request)
 	if err != nil {
 		fmt.Printf("Update book validator errors: %v\n", err)
 	}
@@ -85,7 +86,8 @@ func ExampleRetrieveRulesRpc() {
 	retrieveCreateBookRulesReq := &pbOpen.RetrieveRulesRequest{
 		MsgType: "alis.open.validation.v1.CreateBookRequest",
 	}
-	resp, err := validator.RetrieveRulesRpc(retrieveCreateBookRulesReq)
+	ctx := context.Background() // normally the ctx would come from the grpc server interceptor
+	resp, err := validator.RetrieveRulesRpc(ctx, retrieveCreateBookRulesReq)
 	if err != nil {
 		fmt.Printf("Retrieve create book rules errors: %v\n", err)
 	}
