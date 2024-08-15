@@ -54,7 +54,7 @@ func WithHost(host string) Option {
 }
 
 // ResumableOperation is the object used to manage the relevant LROs activties.
-type ResumableOperation[T Checkpoint] struct {
+type ResumableOperation[T State] struct {
 	ctx            context.Context
 	client         *Client
 	id             string
@@ -63,33 +63,29 @@ type ResumableOperation[T Checkpoint] struct {
 	devMode        bool
 }
 
-// A Checkpoint object of any type.
-type Checkpoint interface{}
+// A State object of any type.
+type State interface{}
 
 /*
-NewResumableOperation initialises a Long-Running Operation (LRO) with the provided Checkpoint type (T).
+NewResumableOperation initialises a Long-Running Operation (LRO) with the provided State type (T).
 
 This function intelligently checks for an existing LRO by looking for the 'alis-x-operation-id' header.
 If found, it reconnects to the existing operation; otherwise, it creates a new LRO.
 
-Example (with Checkpoint):
+Example (with State):
 
-	// CheckPoint is a custom object which will be stored alongside the LRO
-	type CheckPoint struct {
+	// State is a custom object which will be stored alongside the LRO
+	type State struct {
 			Next        string
 			Review      string
 			Rating      int32
 			ApprovedBy  string
 			ApprovalLRO string
 	}
-	var checkpoint *CheckPoint
-	op, checkpoint, err := lro.Create[CheckPoint](ctx, lroClient, lro.WithHost("https://.....a.run.app"))
-
-Example (without a Checkpoint):
-
-	op, _, err := lro.Create[interface{}](ctx, lroClient)
+	var state *State
+	op, state, err := lro.Create[State](ctx, lroClient, lro.WithHost("https://.....a.run.app"))
 */
-func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, opts ...Option) (op *ResumableOperation[T], checkpoint *T, err error) {
+func NewResumableOperation[T State](ctx context.Context, client *Client, opts ...Option) (op *ResumableOperation[T], state *T, err error) {
 	options := &Options{}
 	for _, opt := range opts {
 		opt(options)
@@ -121,11 +117,11 @@ func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, op
 			// No need to create one
 			op.id = md.Get(OperationIdHeaderKey)[0]
 
-			checkpoint, err = op.loadCheckpoint()
+			state, err = op.loadState()
 			if err != nil {
 				return nil, nil, err
 			}
-			return op, checkpoint, nil
+			return op, state, nil
 		} else {
 			err = op.create()
 			if err != nil {
@@ -145,7 +141,7 @@ func NewResumableOperation[T Checkpoint](ctx context.Context, client *Client, op
 		return nil, nil, err
 	}
 
-	return op, nil, err
+	return op, new(T), err
 }
 
 // SetLocal could be used to switch off any resumable features and should only be used for local testing purposes
@@ -272,20 +268,20 @@ WaitAsync orchestrates the pausing and resumption of an LRO using a Google Cloud
 
 This function performs the following steps:
 
- 1. Saves the current checkpoint for the operation.
+ 1. Saves the current state for the operation.
  2. Triggers a Google Cloud Workflow that polls the provided list of operations.
  3. Once all operations are complete, the workflow re-invokes the same method,
-    passing a special header `x-alis-operation-id` to resume the original business logic using the saved checkpoint.
+    passing a special header `x-alis-operation-id` to resume the original business logic using the saved state.
 
 Parameters:
   - operations: A slice of operation IDs to monitor.
   - timeout: The overal time out for the polling.
   - pollFrequency: How oftern the LRO needs to be polled for status
-  - checkpoint: The current state data to be saved for later resumption.
+  - state: The current state data to be saved for later resumption.
   - pollEndpoint: The RESTFull endpoint used for polling the status of the provided LROs
     for example: https://.../.../GetOperation
 */
-func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFrequency time.Duration, pollEndpoint string, checkpoint *T) error {
+func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFrequency time.Duration, pollEndpoint string, state *T) error {
 	if o.devMode {
 		return fmt.Errorf("unable to run WaitAsync while in development mode")
 	}
@@ -294,8 +290,8 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFreq
 		return fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
 	}
 
-	// First it saves the checkpoint
-	err := o.saveCheckpoint("operations/"+o.id, checkpoint)
+	// First it saves the state
+	err := o.saveState("operations/"+o.id, state)
 	if err != nil {
 		return err
 	}
@@ -411,17 +407,17 @@ func (o *ResumableOperation[T]) SetMetadata(metadata proto.Message) (*longrunnin
 	return op, nil
 }
 
-// SaveCheckpoint saves a current checkpoint with the LRO resource
-func (o *ResumableOperation[T]) saveCheckpoint(operation string, checkpoint *T) error {
+// SaveState saves a current state with the LRO resource
+func (o *ResumableOperation[T]) saveState(operation string, state *T) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
-	if err := enc.Encode(checkpoint); err != nil {
+	if err := enc.Encode(state); err != nil {
 		return err
 	}
 
 	err := o.client.spanner.UpdateRow(o.ctx, o.client.spannerConfig.Table, map[string]interface{}{
-		"key":        operation,
-		"Checkpoint": buffer.Bytes(),
+		"key":   operation,
+		"State": buffer.Bytes(),
 	})
 	if err != nil {
 		return err
@@ -430,22 +426,22 @@ func (o *ResumableOperation[T]) saveCheckpoint(operation string, checkpoint *T) 
 	return nil
 }
 
-// LoadCheckpoint loads the current checkpoint stored with the LRO resource
-func (o *ResumableOperation[T]) loadCheckpoint() (*T, error) {
+// loadState loads the current state stored with the LRO resource
+func (o *ResumableOperation[T]) loadState() (*T, error) {
 	var data T
-	row, err := o.client.spanner.ReadRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id}, []string{CheckpointColumnName}, nil)
+	row, err := o.client.spanner.ReadRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id}, []string{StateColumnName}, nil)
 	if err != nil {
 		return &data, err
 	}
-	if row[CheckpointColumnName] != nil {
+	if row[StateColumnName] != nil {
 
-		checkpointString, ok := row[CheckpointColumnName].(string)
+		stateString, ok := row[StateColumnName].(string)
 		if !ok {
-			return &data, fmt.Errorf("checkpoint data is not string")
+			return &data, fmt.Errorf("state data is not string")
 		}
 
 		// Decode from base643
-		decodedData, err := base64.StdEncoding.DecodeString(checkpointString)
+		decodedData, err := base64.StdEncoding.DecodeString(stateString)
 		if err != nil {
 			fmt.Println("Error decoding:", err)
 			return &data, err

@@ -51,7 +51,7 @@ resource "alis_google_spanner_table" "operations" {
         required      = true
       },
       {
-        name          = "Checkpoint"
+        name          = "State"
         type          = "BYTES"
         required      = false
       },
