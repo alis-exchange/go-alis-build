@@ -30,11 +30,11 @@ func init() {
 			Database: "",
 			Table:    "",
 			Role:     "",
-		}, &WorkflowsConfig{
+		}, WithWorkflows(&WorkflowsConfig{
 			Project:  "",
 			Location: "",
 			Workflow: "",
-		})
+		}))
 	if err != nil {
 		log.Fatal(err)
 	}

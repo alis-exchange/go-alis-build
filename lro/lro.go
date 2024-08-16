@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -86,6 +87,15 @@ func (o *Operation) create() error {
 // Get returns a long-running operation
 func (o *Operation) Get() (*longrunningpb.Operation, error) {
 	return o.client.Get(o.ctx, "operations/"+o.id)
+}
+
+// ReturnRPC is mostly used by gRPC methods required to return gRPC compliant error codes.
+func (o *Operation) ReturnRPC() (*longrunningpb.Operation, error) {
+	op, err := o.client.Get(o.ctx, "operations/"+o.id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "retrieve operation: %s", err)
+	}
+	return op, nil
 }
 
 // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the

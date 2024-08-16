@@ -22,6 +22,8 @@ type LroService interface {
 //   - operation: The full LRO resource name, of the format 'operations/*'
 //   - service: The service from which the operation originates
 //   - timeout: The period after which the method time outs and returns an error.
+//
+// Before using this method consider using the op.Wait() method with the lro.WithClient() option to use a custom LRO client.
 func WaitOperation(ctx context.Context, operation string, service LroService, timeout time.Duration,
 ) (*longrunningpb.Operation, error) {
 	// Set the default timeout
