@@ -47,7 +47,7 @@ func ExampleNewResumableOperation() {
 	ctx := context.Background()
 
 	// create client (preferably only once at a global level in the init function of your package/service)
-	client, _ := NewClient(ctx, &SpannerConfig{}, &WorkflowsConfig{})
+	client, _ := NewClient(ctx, &SpannerConfig{}, WithWorkflows(&WorkflowsConfig{}))
 
 	// An illustration of using a resumable LRO
 	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
@@ -65,7 +65,7 @@ func ExampleNewResumableOperation() {
 		// op.ActivateDevMode()
 
 		// 2. We'll ship the business logic to a go routine to run as a background task
-		go func() error {
+		go func() {
 			// Set the context for this background task, to avoid context.Cancel events from the parent ctx.
 			ctx := context.WithoutCancel(ctx)
 			_ = ctx
@@ -93,9 +93,14 @@ func ExampleNewResumableOperation() {
 
 				// In development mode, simply wait for the relevant LRO(s) to complete.
 				if op.DevMode() {
-					client.Wait(ctx, lro2.Name, time.Minute*3)
+					op.Wait(lro2.Name)
 				} else {
-					return op.WaitAsync([]string{lro2.GetName()}, time.Hour*7, time.Minute*7, "", checkpoint)
+					pollEndpoint := "https://..."
+					err = op.WaitAsync([]string{lro2.GetName()}, checkpoint, WithPollEndpoint(pollEndpoint))
+					if err != nil {
+						op.Error(err)
+						return
+					}
 				}
 			}
 
@@ -107,12 +112,17 @@ func ExampleNewResumableOperation() {
 				var lro2Metadata proto.Message = nil // replace with actual non-nil types
 				err := client.UnmarshalOperation(ctx, checkpoint.Lro2, lro2Response, lro2Metadata)
 				if err != nil {
-					return op.Error(err)
+					op.Error(err)
+					return
 				}
 			}
 
 			var res proto.Message // replace with actual Response definition.
-			return op.Done(res)
+			err = op.Done(res)
+			if err != nil {
+				// Alert, this should never happen
+				return
+			}
 		}()
 
 		// 3. Return the LRO to the caller
