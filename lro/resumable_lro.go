@@ -53,6 +53,54 @@ func WithHost(host string) Option {
 	}
 }
 
+// WaitOptions manages additional functionality with the relevant Wait methods.
+type WaitOptions struct {
+	Client        *Client
+	Timeout       time.Duration
+	PollFrequency time.Duration
+	PollEndpoint  string
+}
+
+// WaitOption is a functional option for the relevant Wait methods.
+type WaitOption func(*WaitOptions)
+
+// WithClient specifies a custom Client for polling the Long-Running Operation (LRO).
+// Use this when the polling client differs from the one used for the initial operation.
+func WithClient(client *Client) WaitOption {
+	return func(opts *WaitOptions) {
+		opts.Client = client
+	}
+}
+
+/*
+WithTimeout sets the Timeout for polling the underlying LRO.
+
+Timeout defaults to 7 minutes if not provided.
+*/
+func WithTimeout(timeout time.Duration) WaitOption {
+	return func(opts *WaitOptions) {
+		opts.Timeout = timeout
+	}
+}
+
+// WithPollFrequency configures how often the operation checks for completion.
+// For time-critical tasks, use a lower value (e.g., 7 seconds).
+// Note: Frequent polling increases API calls, potentially impacting costs.
+// Defaults to 7 seconds if not provided.
+func WithPollFrequency(pollFrequency time.Duration) WaitOption {
+	return func(opts *WaitOptions) {
+		opts.PollFrequency = pollFrequency
+	}
+}
+
+// WithPollEndpoint sets the specific REST API endpoint for Google Cloud Workflows to poll
+// when checking the Long-Running Operation(s) status.
+func WithPollEndpoint(pollEndpoint string) WaitOption {
+	return func(opts *WaitOptions) {
+		opts.PollEndpoint = pollEndpoint
+	}
+}
+
 // ResumableOperation is the object used to manage the relevant LROs activties.
 type ResumableOperation[T State] struct {
 	ctx            context.Context
@@ -144,7 +192,14 @@ func NewResumableOperation[T State](ctx context.Context, client *Client, opts ..
 	return op, new(T), err
 }
 
-// SetLocal could be used to switch off any resumable features and should only be used for local testing purposes
+/*
+ActivateDevMode could be used to switch off any resumable features and should only be used for local testing purposes.
+
+For example:
+
+	// Enable Development mode
+	op.ActivateDevMode()
+*/
 func (o *ResumableOperation[T]) ActivateDevMode() {
 	o.devMode = true
 }
@@ -275,13 +330,17 @@ This function performs the following steps:
 
 Parameters:
   - operations: A slice of operation IDs to monitor.
-  - timeout: The overal time out for the polling.
-  - pollFrequency: How oftern the LRO needs to be polled for status
   - state: The current state data to be saved for later resumption.
   - pollEndpoint: The RESTFull endpoint used for polling the status of the provided LROs
     for example: https://.../.../GetOperation
 */
-func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFrequency time.Duration, pollEndpoint string, state *T) error {
+func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ...WaitOption) error {
+	// Add all the provided options to the WaitOptions object
+	options := &WaitOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	if o.devMode {
 		return fmt.Errorf("unable to run WaitAsync while in development mode")
 	}
@@ -294,6 +353,35 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFreq
 	err := o.saveState("operations/"+o.id, state)
 	if err != nil {
 		return err
+	}
+
+	// Ensure operations is not nil, needs to be an array for Google Cloud Workflows
+	if operations == nil {
+		operations = []string{}
+	}
+
+	// Set the Timeout
+	var pollEndpoint string
+	if options.PollEndpoint != "" {
+		pollEndpoint = options.PollEndpoint
+	} else {
+		return fmt.Errorf("polling endpoint is required but not specified, please add the lro.WithPollEndpoint() option to your WaitAsync method")
+	}
+
+	// Set the Timeout
+	var timeout time.Duration
+	if options.Timeout != 0 {
+		timeout = options.Timeout
+	} else {
+		timeout = 7 * time.Minute
+	}
+
+	// Set the Polling frequency
+	var pollFrequency time.Duration
+	if options.PollFrequency != 0 {
+		pollFrequency = options.PollFrequency
+	} else {
+		pollFrequency = time.Second * 7
 	}
 
 	// Prepare the Google Cloud Workflow argument
@@ -348,10 +436,49 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, timeout, pollFreq
 	return nil
 }
 
-// Wait polls the provided operation and waits until done.
-// The underlying polling is using the same client configured for the ResumableOpertion instance.  If a different client is required
-// for polloing use the lro.Wait() method instead.
-func (o *ResumableOperation[T]) Wait(ctx context.Context, operation string, timeout time.Duration) (*longrunningpb.Operation, error) {
+/*
+Wait blocks until the provided long-running operation completes or times out.
+
+Optional configuration using 'opts':
+
+  - Timeout: Maximum duration to wait (default: 7 minutes).
+  - PollFrequency: How often to check operation status (default: 7 seconds).
+  - Client: Custom client for polling (default: client used to create ResumableOperation).
+
+Returns the final operation status or an error if timeout is exceeded or another issue occurs.
+*/
+func (o *ResumableOperation[T]) Wait(operation string, opts ...WaitOption) (*longrunningpb.Operation, error) {
+	// Add all the provided options to the WaitOptions object
+	options := &WaitOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Use the specified Client if provided
+	var client *Client
+	if options.Client != nil {
+		client = options.Client
+	} else {
+		// use the client specified with NewResumableOption
+		client = o.client
+	}
+
+	// Set the Timeout
+	var timeout time.Duration
+	if options.Timeout != 0 {
+		timeout = options.Timeout
+	} else {
+		timeout = 7 * time.Minute
+	}
+
+	// Set the Polling frequency
+	var pollFrequency time.Duration
+	if options.PollFrequency != 0 {
+		pollFrequency = options.PollFrequency
+	} else {
+		pollFrequency = time.Second * 7
+	}
+
 	// Set the default timeout
 	if timeout == 0 {
 		timeout = time.Second * 77
@@ -362,7 +489,8 @@ func (o *ResumableOperation[T]) Wait(ctx context.Context, operation string, time
 	var op *longrunningpb.Operation
 	var err error
 	for {
-		op, err = o.client.Get(o.ctx, operation)
+
+		op, err = client.Get(o.ctx, operation)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +505,7 @@ func (o *ResumableOperation[T]) Wait(ctx context.Context, operation string, time
 					operation, timeout.Seconds()),
 			}
 		}
-		time.Sleep(777 * time.Millisecond)
+		time.Sleep(pollFrequency)
 	}
 }
 

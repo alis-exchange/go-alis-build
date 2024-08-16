@@ -22,6 +22,21 @@ const (
 	StateColumnName = "State"
 )
 
+type ClientOptions struct {
+	SpannerConfig   *SpannerConfig
+	WorkflowsConfig *WorkflowsConfig
+}
+
+// ClientOption is a functional option for the NewClient method.
+type ClientOption func(*ClientOptions)
+
+// WithWorkflows enables Google Cloud Workflows integration for handling resumable Long-Running Operations (LROs).
+func WithWorkflows(workflowsConfig *WorkflowsConfig) ClientOption {
+	return func(opts *ClientOptions) {
+		opts.WorkflowsConfig = workflowsConfig
+	}
+}
+
 type Client struct {
 	spanner         *sproto.Client
 	workflows       *executions.Client
@@ -63,7 +78,13 @@ NewClient creates a new lro Client object. The function takes five arguments:
   - spannerConfig: The configuration to setup the underlying Google Spanner client
   - workflowsConfig: The (optional) configuration to setup the underlyging Google Cloud Workflows client
 */
-func NewClient(ctx context.Context, spannerConfig *SpannerConfig, workflowsConfig *WorkflowsConfig) (*Client, error) {
+func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...ClientOption) (*Client, error) {
+	// Add all the provided options to the ClientOptions object
+	options := &ClientOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	// Create a new Client object
 	client := &Client{
 		spannerConfig: spannerConfig,
@@ -82,10 +103,10 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, workflowsConfi
 	}
 
 	// Instantiate a new Workflows client if provided
-	if workflowsConfig != nil {
-		workflowsConfig.name = fmt.Sprintf("projects/%s/locations/%s/workflows/%s",
-			workflowsConfig.Project, workflowsConfig.Location, workflowsConfig.Workflow)
-		client.workflowsConfig = workflowsConfig
+	if options.WorkflowsConfig != nil {
+		options.WorkflowsConfig.name = fmt.Sprintf("projects/%s/locations/%s/workflows/%s",
+			options.WorkflowsConfig.Project, options.WorkflowsConfig.Location, options.WorkflowsConfig.Workflow)
+		client.workflowsConfig = options.WorkflowsConfig
 		c, err := executions.NewClient(ctx)
 		if err != nil {
 			return nil, err
