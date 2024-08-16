@@ -129,9 +129,11 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 	var parentId string // retrieve from x-alis-flow-parent
 	// We check if the context has a special header x-alis-flow-parent
 	// and if it does then we use that as the parent id
-	if md, ok := metadata.FromIncomingContext(ctx); ok && len(md.Get(FlowParentHeaderKey)) > 0 {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok && len(md.Get(FlowParentHeaderKey)) > 0 {
+		parentIds := md.Get(FlowParentHeaderKey)
 		// We found a special header x-alis-flow-parent, it suggests that the flow has a parent
-		parentId = md.Get(FlowParentHeaderKey)[0]
+		parentId = parentIds[len(parentIds)-1]
 	}
 
 	return &Flow{
@@ -168,7 +170,7 @@ func (f *Flow) Publish() error {
 
 	// Set the Type of event
 	attributes := map[string]string{
-		"type":   "alis.open.flows.v1.Flow",
+		"type":   string((&flows.Flow{}).ProtoReflect().Descriptor().FullName()),
 		"source": f.data.Source,
 		"parent": f.data.ParentId,
 	}
@@ -241,12 +243,22 @@ func (f *Flow) NewStep(id string, title string) (*Step, context.Context, error) 
 
 	parentId := fmt.Sprintf("%s-%s", flowId, id)
 
-	// Create new context with the parent id set
+	// Add the parent id to the context
 	if err := grpc.SetHeader(f.ctx, metadata.Pairs(FlowParentHeaderKey, parentId)); err != nil {
 		return nil, nil, fmt.Errorf("failed to set parent id in context: %w", err)
 	}
-	//outgoingCtx := metadata.AppendToOutgoingContext(f.ctx, FlowParentHeaderKey, parentId)
-	return step, f.ctx, nil
+	// Create new context with the parent id set
+	outgoingMd, ok := metadata.FromOutgoingContext(f.ctx)
+	// If the metadata is not present, create a new one,
+	// otherwise update the existing metadata with the parent id
+	if !ok || outgoingMd == nil {
+		outgoingMd = metadata.MD{FlowParentHeaderKey: []string{parentId}}
+	} else {
+		outgoingMd.Set(FlowParentHeaderKey, parentId)
+	}
+	outgoingCtx := metadata.NewIncomingContext(f.ctx, outgoingMd)
+
+	return step, outgoingCtx, nil
 }
 
 // WithTitle sets the title of the step.
