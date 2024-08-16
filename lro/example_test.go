@@ -37,7 +37,7 @@ func ExampleNewOperation() {
 		}()
 
 		// 3. Return the LRO to the caller
-		return op.Get()
+		return op.ReturnRPC()
 	}
 	_, _ = exampleRpcMethod(ctx, nil)
 }
@@ -82,7 +82,7 @@ func ExampleNewResumableOperation() {
 			{
 				// Make a hit to a method requiring us to wait for a short period.
 				lro1 := &longrunningpb.Operation{}
-				client.Wait(ctx, lro1.GetName(), time.Minute*3)
+				client.Wait(ctx, lro1.GetName(), time.Minute*3, nil, nil)
 
 				// Make a heit to a method requiring us to wait for a long period
 				lro2 := &longrunningpb.Operation{}

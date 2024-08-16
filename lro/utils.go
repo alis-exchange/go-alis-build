@@ -7,6 +7,8 @@ import (
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // origin is an interface that wraps the GetOperation method. This allows us
@@ -51,4 +53,45 @@ func WaitOperation(ctx context.Context, operation string, service LroService, ti
 		}
 		time.Sleep(777 * time.Millisecond)
 	}
+}
+
+// UnmarshalOperation retrieves the underlying long-running operation (LRO) and unmarshals its response and metadata
+// into the provided protocol buffer messages.
+//
+// Parameters:
+//   - operation: The resource name of the operation in the format `operations/*`.
+//   - response: The protocol buffer message into which the response of the LRO should be unmarshalled. Can be nil.
+//   - metadata: The protocol buffer message into which the metadata of the LRO should be unmarshalled. Can be nil.
+//
+// Returns:
+//   - An error if the operation is not done, the operation resulted in an error, or there was an issue unmarshalling
+//     the response or metadata. Nil otherwise.
+func UnmarshalOperation(operation *longrunningpb.Operation, response, metadata proto.Message) error {
+	// Unmarshal the Response
+	if response != nil && operation.GetResponse() != nil {
+		err := anypb.UnmarshalTo(operation.GetResponse(), response, proto.UnmarshalOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Unmarshal the Metadata
+	if metadata != nil && operation.GetMetadata() != nil {
+		err := anypb.UnmarshalTo(operation.GetMetadata(), metadata, proto.UnmarshalOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Return an error if not done
+	if !operation.Done {
+		return fmt.Errorf("operation (%s) is not done", operation)
+	}
+
+	// Also return an error if the result is an error
+	if operation.GetError() != nil {
+		return fmt.Errorf("%d: %s", operation.GetError().GetCode(), operation.GetError().GetMessage())
+	}
+
+	return nil
 }

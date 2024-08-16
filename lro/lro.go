@@ -85,7 +85,7 @@ func (o *Operation) create() error {
 }
 
 // Get returns a long-running operation
-func (o *Operation) Get() (*longrunningpb.Operation, error) {
+func (o *Operation) GetOperation() (*longrunningpb.Operation, error) {
 	return o.client.Get(o.ctx, "operations/"+o.id)
 }
 
@@ -102,7 +102,7 @@ func (o *Operation) ReturnRPC() (*longrunningpb.Operation, error) {
 // metadata if provided.
 func (o *Operation) Done(response proto.Message) error {
 	// get operation
-	op, err := o.Get()
+	op, err := o.GetOperation()
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (o *Operation) Done(response proto.Message) error {
 // Error updates an existing long-running operation's done field to true.
 func (o *Operation) Error(error error) error {
 	// get operation
-	op, err := o.Get()
+	op, err := o.GetOperation()
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (o *Operation) Error(error error) error {
 // contains progress information and common metadata such as create time.
 func (o *Operation) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
 	// get operation
-	op, err := o.Get()
+	op, err := o.GetOperation()
 	if err != nil {
 		return nil, err
 	}
@@ -181,4 +181,9 @@ func (o *Operation) SetMetadata(metadata proto.Message) (*longrunningpb.Operatio
 	}
 
 	return op, nil
+}
+
+// Name returns the Long-running Operation resource name in the format 'operations/*'
+func (o *Operation) GetName() string {
+	return o.operation.GetName()
 }

@@ -10,7 +10,6 @@ import (
 	executions "cloud.google.com/go/workflows/executions/apiv1"
 	"go.alis.build/lro/internal/validate"
 	"go.alis.build/sproto"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -151,7 +150,7 @@ func (c *Client) Get(ctx context.Context, operation string) (*longrunningpb.Oper
 }
 
 // Wait polls the provided operation and waits until done.
-func (c *Client) Wait(ctx context.Context, operation string, timeout time.Duration) (*longrunningpb.Operation, error) {
+func (c *Client) Wait(ctx context.Context, operation string, timeout time.Duration, response, metadata proto.Message) (err error) {
 	// Set the default timeout
 	if timeout == 0 {
 		timeout = time.Second * 77
@@ -160,19 +159,22 @@ func (c *Client) Wait(ctx context.Context, operation string, timeout time.Durati
 
 	// start loop to check if operation is done or timeout has passed
 	var op *longrunningpb.Operation
-	var err error
 	for {
 		op, err = c.Get(ctx, operation)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if op.Done {
-			return op, nil
+			err := UnmarshalOperation(op, response, metadata)
+			if err != nil {
+				return err
+			}
+			return nil
 		}
 
 		timePassed := time.Since(startTime)
 		if timePassed.Seconds() > timeout.Seconds() {
-			return nil, ErrWaitDeadlineExceeded{
+			return ErrWaitDeadlineExceeded{
 				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
 					operation, timeout.Seconds()),
 			}
@@ -181,37 +183,37 @@ func (c *Client) Wait(ctx context.Context, operation string, timeout time.Durati
 	}
 }
 
-// BatchWait is a batch version of the WaitOperation method.
-// Takes three agruments:
-//   - ctx: The Context header
-//   - operations: An array of LRO names, for example: []string{"operations/123", "operations/456", ...}
-//   - timeoute: the timeout duration to apply with each operation
-func (c *Client) BatchWait(ctx context.Context, operations []string, timeout time.Duration) ([]*longrunningpb.Operation, error) {
-	// iterate through the requests
-	errs, ctx := errgroup.WithContext(ctx)
-	results := make([]*longrunningpb.Operation, len(operations))
-	for i, operation := range operations {
-		i := i
-		errs.Go(func() error {
-			op, err := c.Wait(ctx, operation, timeout)
-			if err != nil {
-				return err
-			}
-			results[i] = op
+// // BatchWait is a batch version of the WaitOperation method.
+// // Takes three agruments:
+// //   - ctx: The Context header
+// //   - operations: An array of LRO names, for example: []string{"operations/123", "operations/456", ...}
+// //   - timeoute: the timeout duration to apply with each operation
+// func (c *Client) BatchWait(ctx context.Context, operations []string, timeout time.Duration) ([]*longrunningpb.Operation, error) {
+// 	// iterate through the requests
+// 	errs, ctx := errgroup.WithContext(ctx)
+// 	results := make([]*longrunningpb.Operation, len(operations))
+// 	for i, operation := range operations {
+// 		i := i
+// 		errs.Go(func() error {
+// 			op, err := c.Wait(ctx, operation, timeout)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			results[i] = op
 
-			return nil
-		})
-		// Add some spacing between the api hits.
-		time.Sleep(time.Millisecond * 77)
-	}
+// 			return nil
+// 		})
+// 		// Add some spacing between the api hits.
+// 		time.Sleep(time.Millisecond * 77)
+// 	}
 
-	err := errs.Wait()
-	if err != nil {
-		return nil, err
-	}
+// 	err := errs.Wait()
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return results, nil
-}
+// 	return results, nil
+// }
 
 // SetResponse retrieves the underlying LRO and unmarshals the Response into the provided response object.
 // It takes three arguments
