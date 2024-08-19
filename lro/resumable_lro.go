@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -235,6 +236,15 @@ func (o *ResumableOperation[T]) create() error {
 // Get returns a long-running operation
 func (o *ResumableOperation[T]) Get() (*longrunningpb.Operation, error) {
 	return o.client.Get(o.ctx, "operations/"+o.id)
+}
+
+// ReturnRPC is mostly used by gRPC methods required to return gRPC compliant error codes.
+func (o *ResumableOperation[T]) ReturnRPC() (*longrunningpb.Operation, error) {
+	op, err := o.client.Get(o.ctx, "operations/"+o.id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "retrieve operation: %s", err)
+	}
+	return op, nil
 }
 
 // Delete deletes the LRO (including )
