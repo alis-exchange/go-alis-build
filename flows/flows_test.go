@@ -133,7 +133,7 @@ func Test_Client(t *testing.T) {
 	// Create a new steps
 	step1Id := "1.0"
 	step1Title := "Step 1"
-	step1, ctx, err := flow.NewStep(step1Id, step1Title)
+	step1, ctx, err := flow.NewStep(step1Id, WithTitle(step1Title), WithExistingId())
 	if err != nil {
 		t.Errorf("NewStep() error = %v", err)
 		return
@@ -197,7 +197,7 @@ func Test_Client(t *testing.T) {
 
 	step2Id := "2.0"
 	step2Title := "Step 2"
-	step2, ctx, err := flow.NewStep(step2Id, step2Title)
+	step2, ctx, err := flow.NewStep(step2Id, WithTitle(step2Title))
 	if err != nil {
 		t.Errorf("NewStep() error = %v", err)
 		return
@@ -219,7 +219,7 @@ func Test_Client(t *testing.T) {
 		return
 	}
 
-	flow2Step1, ctx, err := flow2.NewStep("1.0", "Step 1")
+	flow2Step1, ctx, err := flow2.NewStep("1.0", WithTitle("Step 1"))
 	if err != nil {
 		t.Errorf("NewStep() error = %v", err)
 		return
@@ -242,7 +242,7 @@ func Test_Client(t *testing.T) {
 	eg.SetLimit(10)
 	for i := range 100 {
 		eg.Go(func() error {
-			step, _, err := concurrentFlow.NewStep(fmt.Sprintf("%d", i), fmt.Sprintf("Step %d", i))
+			step, _, err := concurrentFlow.NewStep(fmt.Sprintf("Step%d", i), WithTitle(fmt.Sprintf("Step %d", i)))
 			if err != nil {
 				return err
 			}
@@ -262,4 +262,20 @@ func Test_Client(t *testing.T) {
 	if !assert.Len(t, concurrentFlow.steps.Keys(), 100, "Expected flow steps to have a length of 100") {
 		t.Errorf("NewFlow().steps = %v, want length of 100", concurrentFlow.steps)
 	}
+
+	// Test Steps()
+	stepsMap := make(map[string]*Step, flow.Steps().Len())
+	concurrentFlow.Steps().Range(func(idx int, key string, value *Step) bool {
+		stepsMap[key] = value
+		return true
+	})
+	stepsMap["Step1"].Done()
+
+	// Test New Step with existing ID
+	stepWithExistingId, _, err := concurrentFlow.NewStep("Step1", WithTitle("Step 1"), WithExistingId())
+	if err != nil {
+		t.Errorf("NewStep() error = %v", err)
+		return
+	}
+	stepWithExistingId.Done()
 }

@@ -32,7 +32,7 @@ type Options struct {
 	// The Pub/Sub Topic
 	// For example: 'flows'
 	//
-	// Defaults to 'progress' if not specified.
+	// Defaults to 'flows' if not specified.
 	Topic string
 	// Indicates whether the pubsub client should block until the message is published.
 	// If set to true, the client will block until the message is published or the context is done.
@@ -60,10 +60,43 @@ func WithAwaitPublish() Option {
 	}
 }
 
+// StepOptions for the NewStep method.
+type StepOptions struct {
+	existingId  bool
+	title       string
+	description string
+}
+
+// StepOption is a functional option for the NewStep method.
+type StepOption func(*StepOptions)
+
+// WithTitle sets the title of the step.
+func WithTitle(title string) StepOption {
+	return func(opts *StepOptions) {
+		opts.title = title
+	}
+}
+
+// WithDescription sets the description of the step.
+func WithDescription(description string) StepOption {
+	return func(opts *StepOptions) {
+		opts.description = description
+	}
+}
+
+// WithExistingId gets the step with the specified id.
+// If the step does not exist, it assumes normal behaviour and creates a new step with the specified id.
+func WithExistingId() StepOption {
+	return func(opts *StepOptions) {
+		opts.existingId = true
+	}
+}
+
 // NewClient creates a new instance of the Client object.
+// A valid Google Cloud project id is required.
 //
 // Multiple Option functions can be provided to customize the client.
-// For example: WithTopic("flows")
+// For example: WithTopic("flows"), WithAwaitPublish()
 func NewClient(project string, opts ...Option) (*Client, error) {
 	// Validate arguments
 	if project == "" {
@@ -110,7 +143,7 @@ type Step struct {
 // The source is inferred from the invoking method.
 // This can be overridden by calling WithSource.
 //
-// The parent id is inferred from the x-alis-flows-id header.
+// The parent id is inferred from the x-alis-flow-parent header.
 // This can be overridden by calling WithParentId.
 func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 	uid, err := uuid.NewRandom()
@@ -221,22 +254,42 @@ func (f *Flow) WithParentId(parentId string) (*Flow, error) {
 // NewStep adds a step to the flow and returns a Step object.
 //
 // The initial state of the step is Queued.
-func (f *Flow) NewStep(id string, title string) (*Step, context.Context, error) {
+//
+// If the WithExistingId option is provided, the step with the specified id is returned.
+// If the step does not exist, a new step is created with the specified id.
+func (f *Flow) NewStep(id string, opts ...StepOption) (*Step, context.Context, error) {
 	// Validate Id
 	if !StepIdRegex.MatchString(id) {
 		return nil, nil, fmt.Errorf("invalid step id (%s). step id must not contain hyphens", id)
 	}
 
-	step := &Step{
-		f: f,
-		data: &flows.Flow_Step{
-			Id:         id,
-			Title:      title,
-			State:      flows.Flow_Step_QUEUED,
-			CreateTime: timestamppb.Now(),
-		},
+	options := &StepOptions{}
+	for _, opt := range opts {
+		opt(options)
 	}
-	f.steps.Set(id, step)
+
+	// Create a new step
+	var step *Step
+	// If the step already exists, get the step
+	if options.existingId {
+		if existingStep, ok := f.steps.Get(id); ok {
+			step = existingStep
+		}
+	}
+	// Create a new step if it does not exist
+	if step == nil {
+		step = &Step{
+			f: f,
+			data: &flows.Flow_Step{
+				Id:          id,
+				Title:       options.title,
+				Description: options.description,
+				State:       flows.Flow_Step_QUEUED,
+				CreateTime:  timestamppb.Now(),
+			},
+		}
+		f.steps.Set(id, step)
+	}
 
 	// Get flow id from the flow name
 	flowId := strings.TrimPrefix(f.data.Name, "flows/")
@@ -261,6 +314,23 @@ func (f *Flow) NewStep(id string, title string) (*Step, context.Context, error) 
 	return step, outgoingCtx, nil
 }
 
+/*
+Steps returns the steps of the flow.
+The steps are returned in an [OrderedMap](https://pkg.go.dev/go.alis.build/utils#OrderedMap)
+
+Example Usage:
+
+	stepsMap := make(map[string]*Step, flow.Steps().Len())
+	flow.Steps().Range(func(idx int, key string, value *Step) bool {
+		stepsMap[key] = value
+		return true
+	})
+	stepsMap["step1"].Done()
+*/
+func (f *Flow) Steps() *alUtils.OrderedMap[string, *Step] {
+	return f.steps
+}
+
 // WithTitle sets the title of the step.
 func (s *Step) WithTitle(title string) *Step {
 	s.data.UpdateTime = timestamppb.Now()
@@ -269,6 +339,7 @@ func (s *Step) WithTitle(title string) *Step {
 	return s
 }
 
+// WithDescription sets the description of the step.
 func (s *Step) WithDescription(description string) *Step {
 	s.data.UpdateTime = timestamppb.Now()
 	s.f.data.UpdateTime = timestamppb.Now()

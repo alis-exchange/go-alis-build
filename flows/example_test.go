@@ -17,7 +17,7 @@ func ExampleNew() {
 	}
 	defer flow.Publish()
 
-	step, ctx, err := flow.NewStep("1.1", "Some title")
+	step, ctx, err := flow.NewStep("1.1", WithTitle("Some title"))
 
 	// Failed example
 	err = errors.New("some error")
