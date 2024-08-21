@@ -22,6 +22,22 @@ type Operation struct {
 	operation *longrunningpb.Operation
 }
 
+// Options are used to configure options with the Operation object.
+type Options struct {
+	existingOperation string
+}
+
+// Option is a functional option for the NewOperation method.
+type Option func(*Options)
+
+// WithExistingOperation allows one to instantiate a new Operation object from an
+// existing LRO.
+func WithExistingOperation(operation string) Option {
+	return func(opts *Options) {
+		opts.existingOperation = operation
+	}
+}
+
 /*
 NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
 
@@ -29,36 +45,34 @@ Example:
 
 	op, err := lro.NewOperation(ctx, lroClient)
 */
-func NewOperation(ctx context.Context, client *Client) (op *Operation, err error) {
+func NewOperation(ctx context.Context, client *Client, opts ...Option) (op *Operation, err error) {
+	options := &Options{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	op = &Operation{
 		ctx:    context.WithoutCancel(ctx),
 		client: client,
 	}
 
-	err = op.create()
-	if err != nil {
-		return nil, err
+	// If an existing LRO has been provided, simply retrieve one
+	if options.existingOperation != "" {
+		// Get a copy of the current LRO
+		lro, err := op.client.Get(op.ctx, options.existingOperation)
+		if err != nil {
+			return nil, err
+		}
+		op.id = strings.Split(lro.GetName(), "/")[1]
+		op.operation = lro
+	} else {
+		err = op.create()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return op, err
-}
-
-// NewExistingOperation creates a new Operation object from an existing LRO.
-func NewExistingOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
-	op = &Operation{
-		ctx:    context.WithoutCancel(ctx),
-		client: client,
-	}
-
-	// Get a copy of the current LRO
-	lro, err := op.client.Get(op.ctx, operation)
-	if err != nil {
-		return nil, err
-	}
-	op.id = strings.Split(lro.GetName(), "/")[1]
-	op.operation = lro
-
-	return op, nil
 }
 
 // create stores a new long-running operation in spanner, with done=false

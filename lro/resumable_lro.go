@@ -30,26 +30,27 @@ const (
 	OperationIdHeaderKey = "x-alis-operation-id"
 )
 
-type Options struct {
+// ResumableOptions are used to configure options with the ResumableOperation object.
+type ResumableOptions struct {
 	ResumeEndpoint string
 	Host           string
 }
 
-// Option is a functional option for the NewResumableOperation method.
-type Option func(*Options)
+// ResumableOption is a functional option for the NewResumableOperation method.
+type ResumableOption func(*ResumableOptions)
 
 // WithResumeEndpoint sets the resume endpoint for the resumable operation.
 // If not provided, NewResumableOperation will infer the resume endpoint from the Host option and the context.
-func WithResumeEndpoint(endpoint string) Option {
-	return func(opts *Options) {
+func WithResumeEndpoint(endpoint string) ResumableOption {
+	return func(opts *ResumableOptions) {
 		opts.ResumeEndpoint = endpoint
 	}
 }
 
 // WithHost sets the host for the resumable operation.
 // This is used to infer the resume endpoint if not provided.
-func WithHost(host string) Option {
-	return func(opts *Options) {
+func WithHost(host string) ResumableOption {
+	return func(opts *ResumableOptions) {
 		opts.Host = host
 	}
 }
@@ -134,8 +135,8 @@ Example (with State):
 	var state *State
 	op, state, err := lro.Create[State](ctx, lroClient, lro.WithHost("https://.....a.run.app"))
 */
-func NewResumableOperation[T State](ctx context.Context, client *Client, opts ...Option) (op *ResumableOperation[T], state *T, err error) {
-	options := &Options{}
+func NewResumableOperation[T State](ctx context.Context, client *Client, opts ...ResumableOption) (op *ResumableOperation[T], state *T, err error) {
+	options := &ResumableOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
