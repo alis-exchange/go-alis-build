@@ -22,7 +22,7 @@ func HandleValidateRpc(ctx context.Context, req *pbOpen.ValidateMessageRequest) 
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "could not unmarshal message into %s", v.msgType)
 	}
-	viols, err := v.GetViolations(msg, []string{})
+	viols, err := v.GetViolations(msg, req.FieldPaths, []string{})
 	if err != nil {
 		return nil, err
 	}

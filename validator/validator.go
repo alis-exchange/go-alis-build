@@ -50,9 +50,10 @@ type (
 		ServiceName string
 	}
 
-	// Both PathsToValidate and ValidateFieldsSpecifiedIn can be set, but none are required. Example of setting both is ValidateFieldPathsSpecifiedIn = "update_mask" and PathsToValidate = []string{"name"}
+	// Cannot set PathsToValidate and PathsToIgnore at the same time. When setting PathsToIgnore and ValidateFieldPathsSpecifiedIn, the paths in PathsToIgnore will be ignored even if they are specified in the field indicated by ValidateFieldPathsSpecifiedIn
 	SubMsgOptions struct {
 		PathsToValidate               []string
+		PathsToIgnore                 []string
 		ValidateFieldPathsSpecifiedIn string
 		IsRepeated                    bool
 		MayBeEmpty                    bool
@@ -109,6 +110,9 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 	if options == nil {
 		options = &SubMsgOptions{}
 	} else {
+		if len(options.PathsToValidate) > 0 && len(options.PathsToIgnore) > 0 {
+			alog.Fatalf(context.Background(), "cannot set PathsToValidate and PathsToIgnore at the same time")
+		}
 		if options.ValidateFieldPathsSpecifiedIn != "" {
 			fd, err := v.getFieldDescriptor(v.protoMsg, options.ValidateFieldPathsSpecifiedIn)
 			if err != nil {
@@ -117,7 +121,15 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 			if fd.Kind() == protoreflect.StringKind && fd.Cardinality() == protoreflect.Repeated {
 				fieldPathsGetter = func(v *Validator, msg protoreflect.ProtoMessage) []string {
 					result := v.getStringList(msg, options.ValidateFieldPathsSpecifiedIn)
-					return append(result, options.PathsToValidate...)
+					for _, p := range options.PathsToValidate {
+						if !slices.Contains(result, p) {
+							result = append(result, p)
+						}
+					}
+					result = slices.DeleteFunc(result, func(s string) bool {
+						return slices.Contains(options.PathsToIgnore, s)
+					})
+					return result
 				}
 			} else if fd.Kind() == protoreflect.MessageKind && fd.Cardinality() != protoreflect.Repeated {
 				// ensure type of msg is google.protobuf.FieldMask
@@ -210,7 +222,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 					}
 					continue
 				}
-				viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg))
+				viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg), options.PathsToIgnore)
 				if err != nil {
 					return nil, err
 				}
@@ -244,7 +256,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 			}
 
 			// get violations
-			viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg))
+			viols, err := subMsgValidator.GetViolations(subM, fieldPathsGetter(v, msg), options.PathsToIgnore)
 			if err != nil {
 				return nil, err
 			}
@@ -273,7 +285,7 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 }
 
 // Get violations for a proto message. If fieldPaths are provided, only rules with fieldPaths that are in the list will be run.
-func (v *Validator) GetViolations(msg protoreflect.ProtoMessage, fieldPaths []string) ([]*pbOpen.Rule, error) {
+func (v *Validator) GetViolations(msg protoreflect.ProtoMessage, fieldPaths []string, ignorePaths []string) ([]*pbOpen.Rule, error) {
 	if msg == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "message cannot be nil")
 	}
@@ -285,6 +297,20 @@ func (v *Validator) GetViolations(msg protoreflect.ProtoMessage, fieldPaths []st
 			skip := false
 			for _, ruleFieldPath := range rule.openRule.FieldPaths {
 				if !slices.Contains(fieldPaths, ruleFieldPath) {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
+
+		// if ignorePaths are provided, skip rules with fieldPaths that are in the list
+		if len(ignorePaths) > 0 {
+			skip := false
+			for _, ruleFieldPath := range rule.openRule.FieldPaths {
+				if slices.Contains(ignorePaths, ruleFieldPath) {
 					skip = true
 					break
 				}
@@ -322,7 +348,7 @@ func (v *Validator) GetRules() []*pbOpen.Rule {
 }
 
 func (v *Validator) Validate(msg protoreflect.ProtoMessage, fieldPaths []string) error {
-	violations, err := v.GetViolations(msg, fieldPaths)
+	violations, err := v.GetViolations(msg, fieldPaths, []string{})
 	if err != nil {
 		return err
 	}
