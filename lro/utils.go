@@ -8,7 +8,6 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // origin is an interface that wraps the GetOperation method. This allows us
@@ -69,7 +68,8 @@ func WaitOperation(ctx context.Context, operation string, service LroService, ti
 func UnmarshalOperation(operation *longrunningpb.Operation, response, metadata proto.Message) error {
 	// Unmarshal the Response
 	if response != nil && operation.GetResponse() != nil {
-		err := anypb.UnmarshalTo(operation.GetResponse(), response, proto.UnmarshalOptions{})
+
+		err := operation.GetResponse().UnmarshalTo(response)
 		if err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func UnmarshalOperation(operation *longrunningpb.Operation, response, metadata p
 
 	// Unmarshal the Metadata
 	if metadata != nil && operation.GetMetadata() != nil {
-		err := anypb.UnmarshalTo(operation.GetMetadata(), metadata, proto.UnmarshalOptions{})
+		err := operation.GetMetadata().UnmarshalTo(metadata)
 		if err != nil {
 			return err
 		}

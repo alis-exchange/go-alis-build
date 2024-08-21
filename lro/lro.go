@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // Operation is the object used to manage the relevant LROs activties.
@@ -124,11 +123,12 @@ func (o *Operation) Done(response proto.Message) error {
 	// update done and result
 	op.Done = true
 	if response != nil {
-		resultAny, err := anypb.New(response)
+
+		// Save the Reponse into the Any type required by the LRO response.
+		err := op.GetResponse().MarshalFrom(response)
 		if err != nil {
 			return err
 		}
-		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
 
 	//  write operation and parent to respective spanner columns
@@ -180,12 +180,10 @@ func (o *Operation) SetMetadata(metadata proto.Message) (*longrunningpb.Operatio
 		return nil, err
 	}
 
-	// update metadata if required
-	metaAny, err := anypb.New(metadata)
+	err = op.Metadata.MarshalFrom(metadata)
 	if err != nil {
 		return nil, err
 	}
-	op.Metadata = metaAny
 
 	// write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
