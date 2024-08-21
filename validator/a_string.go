@@ -222,7 +222,7 @@ func (s *str) MatchesRegex(str *str) *Rule {
 			for _, val2 := range str.getValues(str.v, msg) {
 				matched, err := regexp.MatchString(val2, val1)
 				if err != nil {
-					return false, err
+					return true, err
 				}
 				if !matched {
 					return true, nil
@@ -230,6 +230,42 @@ func (s *str) MatchesRegex(str *str) *Rule {
 			}
 		}
 		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) MatchesOneOf(str ...*str) *Rule {
+	strDescriptions := make([]string, len(str))
+	for i, str := range str {
+		strDescriptions[i] = str.getDescription()
+	}
+	commaSeperatedStrs := strings.Join(strDescriptions, ", ")
+	id := fmt.Sprintf("s-mo(%s,%s)", s.description, commaSeperatedStrs)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must match one of %s", s.getDescription(), commaSeperatedStrs),
+		notRule:      fmt.Sprintf("%s must not match one of %s", s.getDescription(), commaSeperatedStrs),
+		condition:    fmt.Sprintf("%s matches one of %s", s.getDescription(), commaSeperatedStrs),
+		notCondition: fmt.Sprintf("%s does not match one of %s", s.getDescription(), commaSeperatedStrs),
+	}
+	args := []argI{s}
+	for _, str := range str {
+		args = append(args, str)
+	}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, str := range str {
+				for _, val2 := range str.getValues(str.v, msg) {
+					matched, err := regexp.MatchString(val2, val1)
+					if err != nil {
+						return true, err
+					}
+					if matched {
+						return false, nil
+					}
+				}
+			}
+		}
+		return true, nil
 	}
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
