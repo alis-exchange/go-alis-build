@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -281,11 +282,11 @@ func (o *ResumableOperation[T]) Done(response proto.Message) error {
 	// update done and result
 	op.Done = true
 	if response != nil {
-		// Save the Reponse into the Any type required by the LRO response.
-		err := op.GetResponse().MarshalFrom(response)
+		resultAny, err := anypb.New(response)
 		if err != nil {
 			return err
 		}
+		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
 
 	//  write operation and parent to respective spanner columns
@@ -529,10 +530,11 @@ func (o *ResumableOperation[T]) SetMetadata(metadata proto.Message) (*longrunnin
 	}
 
 	// update metadata if required
-	err = op.Metadata.MarshalFrom(metadata)
+	metaAny, err := anypb.New(metadata)
 	if err != nil {
 		return nil, err
 	}
+	op.Metadata = metaAny
 
 	// write operation and parent to respective spanner columns
 	row := map[string]interface{}{"Operation": op}
