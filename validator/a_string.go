@@ -270,6 +270,48 @@ func (s *str) MatchesOneOf(str ...*str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+func (s *str) IsValidDomain() *Rule {
+	id := fmt.Sprintf("domian(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid domain", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid domain", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid domain", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid domain", s.getDescription()),
+	}
+	args := []argI{s}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			domainRegex := `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(domainRegex).MatchString(val) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) IsValidEmail() *Rule {
+	id := fmt.Sprintf("email(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid email", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid email", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid email", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid email", s.getDescription()),
+	}
+	args := []argI{s}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			emailRegex := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(emailRegex).MatchString(val) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Returns the length of s
 func (s *str) Length() *integer {
 	if s.repeated {
