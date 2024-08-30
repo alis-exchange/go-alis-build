@@ -109,6 +109,7 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	resourceRow := &ResourceRow{
 		RowKey:   rowKey,
 		Resource: resource,
+		tbl:      rt.tbl,
 	}
 	if rt.hasIamPolicy {
 		if policy.Etag == nil {
