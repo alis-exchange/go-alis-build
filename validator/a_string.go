@@ -123,6 +123,10 @@ func (s *str) EqualsOneOf(strs ...*str) *Rule {
 		args = append(args, str)
 	}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
 		for _, val1 := range s.getValues(s.v, msg) {
 			for _, str := range strs {
 				for _, val2 := range str.getValues(str.v, msg) {
@@ -252,6 +256,10 @@ func (s *str) MatchesOneOf(str ...*str) *Rule {
 		args = append(args, str)
 	}
 	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
 		for _, val1 := range s.getValues(s.v, msg) {
 			for _, str := range str {
 				for _, val2 := range str.getValues(str.v, msg) {
