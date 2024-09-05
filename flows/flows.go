@@ -18,6 +18,7 @@ import (
 const (
 	DefaultTopic        = "flows"
 	FlowParentHeaderKey = "x-alis-flow-parent"
+	FlowHeaderKey       = "x-alis-flow-id"
 )
 
 // Client object to manage Publishing to a Pub/Sub topic.
@@ -169,6 +170,11 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 		parentId = parentIds[len(parentIds)-1]
 	}
 
+	// Add the parent id to the context
+	if err := grpc.SetHeader(ctx, metadata.Pairs(FlowHeaderKey, id)); err != nil {
+		return nil, fmt.Errorf("failed to set flow id (%s) in context: %w", parentId, err)
+	}
+
 	return &Flow{
 		ctx: ctx,
 		data: &flows.Flow{
@@ -293,13 +299,8 @@ func (f *Flow) NewStep(id string, opts ...StepOption) (*Step, context.Context, e
 
 	// Get flow id from the flow name
 	flowId := strings.TrimPrefix(f.data.Name, "flows/")
-
 	parentId := fmt.Sprintf("%s-%s", flowId, id)
 
-	// Add the parent id to the context
-	if err := grpc.SetHeader(f.ctx, metadata.Pairs(FlowParentHeaderKey, parentId)); err != nil {
-		return nil, nil, fmt.Errorf("failed to set parent id in context: %w", err)
-	}
 	// Create new context with the parent id set
 	outgoingMd, ok := metadata.FromOutgoingContext(f.ctx)
 	// If the metadata is not present, create a new one,
