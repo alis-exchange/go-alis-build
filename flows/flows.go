@@ -66,6 +66,7 @@ type StepOptions struct {
 	existingId  bool
 	title       string
 	description string
+	state       flows.Flow_Step_State
 }
 
 // StepOption is a functional option for the NewStep method.
@@ -90,6 +91,13 @@ func WithDescription(description string) StepOption {
 func WithExistingId() StepOption {
 	return func(opts *StepOptions) {
 		opts.existingId = true
+	}
+}
+
+// WithState sets the initial state of the step.
+func WithState(state flows.Flow_Step_State) StepOption {
+	return func(opts *StepOptions) {
+		opts.state = state
 	}
 }
 
@@ -191,7 +199,6 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 
 // Publish the Flow as an event.
 func (f *Flow) Publish() error {
-	// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
 
 	// Using the data object add all the steps
 	steps := make([]*flows.Flow_Step, f.steps.Len())
@@ -202,6 +209,7 @@ func (f *Flow) Publish() error {
 	f.data.Steps = steps
 	f.data.PublishTime = timestamppb.Now()
 
+	// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
 	data, err := proto.Marshal(f.data)
 	if err != nil {
 		return fmt.Errorf("marshal the message to bytes: %w", err)
@@ -217,11 +225,12 @@ func (f *Flow) Publish() error {
 	topic := f.client.pubsub.Topic(f.client.topic)
 	defer topic.Stop()
 	result := topic.Publish(f.ctx, &pubsub.Message{
-		Data:       data,
-		Attributes: attributes,
-		// OrderingKey: opts.OrderingKey, // TODO: Add ordering key
+		Data:        data,
+		Attributes:  attributes,
+		OrderingKey: f.data.Name, // This ensures that messages published at the step level are delivered in order
 	})
 
+	// If the awaitPublish option is set, block until the message is published
 	if f.client.awaitPublish {
 		// Use the Get method to block until the Publish call completes or the context is done
 		_, err := result.Get(f.ctx)
@@ -229,6 +238,7 @@ func (f *Flow) Publish() error {
 			return fmt.Errorf("failed to publish message: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -259,7 +269,7 @@ func (f *Flow) WithParentId(parentId string) (*Flow, error) {
 
 // NewStep adds a step to the flow and returns a Step object.
 //
-// The initial state of the step is Queued.
+// The initial state of the step is Queued. This can be overridden by passing the WithState option.
 //
 // If the WithExistingId option is provided, the step with the specified id is returned.
 // If the step does not exist, a new step is created with the specified id.
@@ -284,13 +294,19 @@ func (f *Flow) NewStep(id string, opts ...StepOption) (*Step, context.Context, e
 	}
 	// Create a new step if it does not exist
 	if step == nil {
+		// Get initial state
+		state := flows.Flow_Step_QUEUED
+		if options.state != flows.Flow_Step_STATE_UNSPECIFIED {
+			state = options.state
+		}
+
 		step = &Step{
 			f: f,
 			data: &flows.Flow_Step{
 				Id:          id,
 				Title:       options.title,
 				Description: options.description,
-				State:       flows.Flow_Step_QUEUED,
+				State:       state,
 				CreateTime:  timestamppb.Now(),
 			},
 		}
