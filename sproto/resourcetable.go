@@ -169,6 +169,7 @@ func (rt *ResourceClient) UpdatePolicy(ctx context.Context, name string, policy 
 	return rt.tbl.Update(ctx, spanner.Key{rowKey}, policy)
 }
 
+// Batch read resources. The names must be of the same resource type.
 func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMaskPaths ...string) ([]*ResourceRow, []string, error) {
 	rowKeys := make([]spanner.Key, len(names))
 	for i, name := range names {
@@ -268,4 +269,31 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 		resourceRows[i] = resourceRow
 	}
 	return resourceRows, nextToken, nil
+}
+
+// Batch update resources. The rows must have the same resource type.
+func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*ResourceRow) error {
+	tblRows := make([]*Row, len(rows))
+	for i, row := range rows {
+		tblRows[i] = &Row{
+			Key:      spanner.Key{row.RowKey},
+			Messages: []proto.Message{row.Resource},
+		}
+	}
+	return rt.tbl.BatchUpdate(ctx, tblRows)
+}
+
+// Batch update policies. The rows must have the same resource type.
+func (rt *ResourceClient) BatchUpdatePolicies(ctx context.Context, rows []*ResourceRow) error {
+	if !rt.hasIamPolicy {
+		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	tblRows := make([]*Row, len(rows))
+	for i, row := range rows {
+		tblRows[i] = &Row{
+			Key:      spanner.Key{row.RowKey},
+			Messages: []proto.Message{row.Policy},
+		}
+	}
+	return rt.tbl.BatchUpdate(ctx, tblRows)
 }
