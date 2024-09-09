@@ -265,3 +265,28 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 	}
 	return resourceRows, nextToken, nil
 }
+
+func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*ResourceRow) error {
+	tblRows := make([]*Row, len(rows))
+	for i, row := range rows {
+		tblRows[i] = &Row{
+			Key:      spanner.Key{row.RowKey},
+			Messages: []proto.Message{row.Resource},
+		}
+	}
+	return rt.tbl.BatchUpdate(ctx, tblRows)
+}
+
+func (rt *ResourceClient) BatchUpdatePolicies(ctx context.Context, rows []*ResourceRow) error {
+	if !rt.hasIamPolicy {
+		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	tblRows := make([]*Row, len(rows))
+	for i, row := range rows {
+		tblRows[i] = &Row{
+			Key:      spanner.Key{row.RowKey},
+			Messages: []proto.Message{row.Policy},
+		}
+	}
+	return rt.tbl.BatchUpdate(ctx, tblRows)
+}
