@@ -109,7 +109,6 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	resourceRow := &ResourceRow{
 		RowKey:   rowKey,
 		Resource: resource,
-		tbl:      rt.tbl,
 	}
 	if rt.hasIamPolicy {
 		if policy.Etag == nil {
@@ -170,12 +169,12 @@ func (rt *ResourceClient) UpdatePolicy(ctx context.Context, name string, policy 
 	return rt.tbl.Update(ctx, spanner.Key{rowKey}, policy)
 }
 
-func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMaskPaths ...string) ([]*ResourceRow, error) {
+func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMaskPaths ...string) ([]*ResourceRow, []string, error) {
 	rowKeys := make([]spanner.Key, len(names))
 	for i, name := range names {
 		rowKey, err := rt.RowKeyConv.GetRowKey(name)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+			return nil, nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
 		}
 		rowKeys[i] = spanner.Key{rowKey}
 	}
@@ -187,15 +186,20 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			if rt.returnPermissionDeniedForNotFound {
-				return nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access one of these resources or it does not exist")
+				return nil, nil, status.Errorf(codes.PermissionDenied, "you do not have the required permission to access one of these resources or it does not exist")
 			} else {
-				return nil, status.Errorf(codes.NotFound, "one of the resources not found")
+				return nil, nil, status.Errorf(codes.NotFound, "one of the resources not found")
 			}
 		}
-		return nil, err
+		return nil, nil, err
 	}
-	resourceRows := make([]*ResourceRow, len(names))
+	resourceRows := []*ResourceRow{}
+	notFound := []string{}
 	for i, row := range rows {
+		if row == nil {
+			notFound = append(notFound, names[i])
+			continue
+		}
 		resourceRow := &ResourceRow{
 			RowKey:   rowKeys[i].String(),
 			Resource: row.Messages[0],
@@ -204,9 +208,9 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
 		}
-		resourceRows[i] = resourceRow
+		resourceRows = append(resourceRows, resourceRow)
 	}
-	return resourceRows, nil
+	return resourceRows, notFound, nil
 }
 
 func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOptions) ([]*ResourceRow, string, error) {
@@ -264,29 +268,4 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 		resourceRows[i] = resourceRow
 	}
 	return resourceRows, nextToken, nil
-}
-
-func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*ResourceRow) error {
-	tblRows := make([]*Row, len(rows))
-	for i, row := range rows {
-		tblRows[i] = &Row{
-			Key:      spanner.Key{row.RowKey},
-			Messages: []proto.Message{row.Resource},
-		}
-	}
-	return rt.tbl.BatchUpdate(ctx, tblRows)
-}
-
-func (rt *ResourceClient) BatchUpdatePolicies(ctx context.Context, rows []*ResourceRow) error {
-	if !rt.hasIamPolicy {
-		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
-	}
-	tblRows := make([]*Row, len(rows))
-	for i, row := range rows {
-		tblRows[i] = &Row{
-			Key:      spanner.Key{row.RowKey},
-			Messages: []proto.Message{row.Policy},
-		}
-	}
-	return rt.tbl.BatchUpdate(ctx, tblRows)
 }
