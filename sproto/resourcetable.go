@@ -119,6 +119,50 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	return resourceRow, nil
 }
 
+func (rt *ResourceClient) BatchCreate(ctx context.Context, names []string, resources []proto.Message, policies []*iampb.Policy) ([]*ResourceRow, error) {
+	if len(resources) != len(names) {
+		return nil, status.Error(codes.InvalidArgument, "names and resources must be of the same length")
+	}
+	if rt.hasIamPolicy && len(policies) != len(names) {
+		return nil, status.Error(codes.InvalidArgument, "policies must be of the same length as names")
+	}
+	rows := []*Row{}
+	for i, name := range names {
+		rowKey, err := rt.RowKeyConv.GetRowKey(name)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+		}
+		row := &Row{
+			Key: spanner.Key{rowKey},
+			Messages: []proto.Message{
+				resources[i],
+			},
+		}
+		if rt.hasIamPolicy {
+			row.Messages = append(row.Messages, policies[i])
+		}
+		rows = append(rows, row)
+	}
+
+	err := rt.tbl.BatchCreate(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	resourceRows := make([]*ResourceRow, len(names))
+	for i, row := range rows {
+		resourceRow := &ResourceRow{
+			RowKey:   row.Key.String(),
+			Resource: row.Messages[0],
+			tbl:      rt.tbl,
+		}
+		if rt.hasIamPolicy {
+			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
+		}
+		resourceRows[i] = resourceRow
+	}
+	return resourceRows, nil
+}
+
 func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths ...string) (*ResourceRow, error) {
 	rowKey, err := rt.RowKeyConv.GetRowKey(name)
 	if err != nil {
