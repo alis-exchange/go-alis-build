@@ -65,9 +65,15 @@ func (r *RowKeyConverter) GetRowKeyPrefix(parentResource string) (string, error)
 }
 
 func abbreviateCollectionIdentifiers(resource string) string {
+	if resource == "" {
+		return ""
+	}
 	parts := strings.Split(resource, "/")
 	for i := 0; i < len(parts); i++ {
 		if i%2 == 0 {
+			if len(parts[i]) == 0 {
+				continue
+			}
 			// use first letter of each collection identifier
 			parts[i] = string(parts[i][0])
 		}
