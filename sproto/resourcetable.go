@@ -245,8 +245,12 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 			notFound = append(notFound, names[i])
 			continue
 		}
+		key, ok := rowKeys[i][0].(string)
+		if !ok {
+			return nil, nil, status.Errorf(codes.Internal, "Failed to convert row key to string: %v", err)
+		}
 		resourceRow := &ResourceRow{
-			RowKey:   rowKeys[i].String(),
+			RowKey:   key,
 			Resource: row.Messages[0],
 			tbl:      rt.tbl,
 		}
@@ -316,11 +320,26 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 }
 
 // Batch update resources. The rows must have the same resource type.
-func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*ResourceRow) error {
+// Pass in names if the rows were retrieved from a list/query operation, meaning the keys are not set.
+// No need for names from Read or BatchRead operations.
+func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*ResourceRow, names ...string) error {
+	if len(names) != 0 {
+		if len(rows) != len(names) {
+			return status.Error(codes.InvalidArgument, "names and rows must be of the same length if names are provided")
+		}
+	}
 	tblRows := make([]*Row, len(rows))
 	for i, row := range rows {
+		key := row.RowKey
+		if len(names) != 0 {
+			var err error
+			key, err = rt.RowKeyConv.GetRowKey(names[i])
+			if err != nil {
+				return status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+			}
+		}
 		tblRows[i] = &Row{
-			Key:      spanner.Key{row.RowKey},
+			Key:      spanner.Key{key},
 			Messages: []proto.Message{row.Resource},
 		}
 	}
@@ -328,16 +347,43 @@ func (rt *ResourceClient) BatchUpdateResources(ctx context.Context, rows []*Reso
 }
 
 // Batch update policies. The rows must have the same resource type.
-func (rt *ResourceClient) BatchUpdatePolicies(ctx context.Context, rows []*ResourceRow) error {
+// Pass in names if the rows were retrieved from a list/query operation, meaning the keys are not set.
+// No need for names from Read or BatchRead operations.
+func (rt *ResourceClient) BatchUpdatePolicies(ctx context.Context, rows []*ResourceRow, names ...string) error {
+	if len(names) != 0 {
+		if len(rows) != len(names) {
+			return status.Error(codes.InvalidArgument, "names and rows must be of the same length if names are provided")
+		}
+	}
 	if !rt.hasIamPolicy {
 		return status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
 	}
 	tblRows := make([]*Row, len(rows))
 	for i, row := range rows {
+		key := row.RowKey
+		if len(names) != 0 {
+			var err error
+			key, err = rt.RowKeyConv.GetRowKey(names[i])
+			if err != nil {
+				return status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+			}
+		}
 		tblRows[i] = &Row{
-			Key:      spanner.Key{row.RowKey},
+			Key:      spanner.Key{key},
 			Messages: []proto.Message{row.Policy},
 		}
 	}
 	return rt.tbl.BatchUpdate(ctx, tblRows)
+}
+
+func (rt *ResourceClient) BatchDelete(ctx context.Context, names []string) error {
+	rowKeys := make([]spanner.Key, len(names))
+	for i, name := range names {
+		rowKey, err := rt.RowKeyConv.GetRowKey(name)
+		if err != nil {
+			return status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+		}
+		rowKeys[i] = spanner.Key{rowKey}
+	}
+	return rt.tbl.BatchDelete(ctx, rowKeys)
 }
