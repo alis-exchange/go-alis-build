@@ -141,6 +141,44 @@ func (s *str) EqualsOneOf(strs ...*str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s is not equal to any of the provided strings
+func (s *str) EqualsNoneOf(strs ...*str) *Rule {
+	strDescriptions := make([]string, len(strs))
+	for i, str := range strs {
+		strDescriptions[i] = str.getDescription()
+	}
+	commaSeperatedStrs := strings.Join(strDescriptions, ", ")
+	id := fmt.Sprintf("s-en(%s,%s)", s.description, commaSeperatedStrs)
+
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not be equal to any of %s", s.getDescription(), commaSeperatedStrs),
+		notRule:      fmt.Sprintf("%s must be equal to any of %s", s.getDescription(), commaSeperatedStrs),
+		condition:    fmt.Sprintf("%s does not equal any of %s", s.getDescription(), commaSeperatedStrs),
+		notCondition: fmt.Sprintf("%s equals any of %s", s.getDescription(), commaSeperatedStrs),
+	}
+	args := []argI{s}
+	for _, str := range strs {
+		args = append(args, str)
+	}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, str := range strs {
+				for _, val2 := range str.getValues(str.v, msg) {
+					if val1 == val2 {
+						return true, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures s starts with s2
 func (s *str) StartsWith(str *str) *Rule {
 	id := fmt.Sprintf("s-sw(%s,%s)", s.description, str.description)
