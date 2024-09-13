@@ -24,6 +24,7 @@ const (
 	Lb          Host = "lb"
 	InternalGw  Host = "internal-gw"
 	ConsumersGw Host = "consumers-gw"
+	Local8080   Host = "localhost:8080"
 )
 
 type GrpcServiceTester struct {
@@ -85,6 +86,8 @@ func (t *GrpcServiceTester) Test(ctx context.Context, req proto.Message, resp pr
 		return t.callViaInternalGw(ctx, req, resp)
 	case ConsumersGw:
 		return t.callViaConsumersGw(ctx, req, resp)
+	case Local8080:
+		return t.callCustomHost(string(t.hostToCall), ctx, req, resp)
 	case None:
 		return t.callLocally(ctx, req, resp)
 	default:
@@ -162,7 +165,11 @@ func (t *GrpcServiceTester) callCustomHost(host string, ctx context.Context, req
 	ctx = t.AddTestUserToCtx(ctx, true)
 	msgNameParts := strings.Split(string(req.ProtoReflect().Descriptor().FullName()), ".")
 	shortMethodName := strings.TrimSuffix(msgNameParts[len(msgNameParts)-1], "Request")
-	conn, err := client.NewConnWithRetry(context.Background(), host, false)
+	insecure := false
+	if strings.HasPrefix(host, "localhost") {
+		insecure = true
+	}
+	conn, err := client.NewConnWithRetry(context.Background(), host, insecure)
 	if err != nil {
 		alog.Fatal(context.Background(), err.Error())
 	}
