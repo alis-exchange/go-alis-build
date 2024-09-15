@@ -202,6 +202,29 @@ func (s *str) StartsWith(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s does not start with s2
+func (s *str) DoesNotStartWith(str *str) *Rule {
+	id := fmt.Sprintf("s-dnsw(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not start with %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must start with %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not start with %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s starts with %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.HasPrefix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures s ends with s2
 func (s *str) EndsWith(str *str) *Rule {
 	id := fmt.Sprintf("s-ew(%s,%s)", s.description, str.description)
@@ -226,6 +249,29 @@ func (s *str) EndsWith(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s does not end with s2
+func (s *str) DoesNotEndWith(str *str) *Rule {
+	id := fmt.Sprintf("s-dnsw(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not end with %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must end with %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not end with %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s ends with %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.HasSuffix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures s contains s2
 func (s *str) Contains(str *str) *Rule {
 	id := fmt.Sprintf("s-c(%s,%s)", s.description, str.description)
@@ -240,6 +286,29 @@ func (s *str) Contains(str *str) *Rule {
 		for _, val1 := range s.getValues(s.v, msg) {
 			for _, val2 := range str.getValues(str.v, msg) {
 				if !strings.Contains(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures s does not contain s2
+func (s *str) DoesNotContain(str *str) *Rule {
+	id := fmt.Sprintf("s-dnc(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not contain %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must contain %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not contain %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s contains %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.Contains(val1, val2) {
 					return true, nil
 				}
 			}
