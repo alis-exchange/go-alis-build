@@ -7,6 +7,8 @@ import (
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/alog"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // A source of an IAM policy, consisting of the resource name and a function to get the policy
@@ -113,4 +115,12 @@ func (s *PolicyFetcher) GetPolicies() []*iampb.Policy {
 	}
 	s.wg.Wait()
 	return s.policies
+}
+
+// Returns a grpc error with the PermissionDenied code and an appropriate message.
+func PermissionDeniedError(method string, resource string, roles []string) error {
+	if len(roles) == 0 {
+		return status.Errorf(codes.PermissionDenied, "%s is an internal method", method)
+	}
+	return status.Errorf(codes.PermissionDenied, "missing one of the following roles to call %s on %s: %v", method, resource, roles)
 }
