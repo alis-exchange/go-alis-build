@@ -47,7 +47,7 @@ type PolicySourcer struct {
 }
 
 // Creates a new PolicySourcer for the given authorizer and policy sources.
-func (s *Authorizer) NewPolicySourcer(policySources []*PolicySource) *PolicySourcer {
+func (s *Authorizer) NewPolicySourcer(policySources ...*PolicySource) *PolicySourcer {
 	return &PolicySourcer{
 		policySources: policySources,
 	}

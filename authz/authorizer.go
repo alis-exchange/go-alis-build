@@ -168,6 +168,18 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 	}, ctx
 }
 
+// Checks if requester has access to the current method based on the provided policies.
+func (s *Authorizer) HasMethodAccess(policies []*iampb.Policy) bool {
+	roles := s.authorizer.GetRolesThatGrantAccess(s.Method)
+	return s.Requester.HasRole(roles.ids, policies)
+}
+
+// Checks if the requester has the specified permission in the provided policies.
+func (s *Authorizer) HasPermission(permission string, policies []*iampb.Policy) bool {
+	roles := s.authorizer.GetRolesThatGrantAccess(permission)
+	return s.Requester.HasRole(roles.ids, policies)
+}
+
 // Get the cached policy (if any) for the given resource in this authorizer.
 func (r *Authorizer) cachedPolicy(resource string) *iampb.Policy {
 	if policy, ok := r.policyCache.Load(resource); ok {
