@@ -1,0 +1,242 @@
+package authz
+
+import (
+	"context"
+	"encoding/base64"
+	"strings"
+	"sync"
+
+	"cloud.google.com/go/iam/apiv1/iampb"
+	"go.alis.build/alog"
+	"go.alis.build/authz/internal/jwt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	openIam "open.alis.services/protobuf/alis/open/iam/v1"
+)
+
+const (
+	// One of the headers that cloudrun uses to send the JWT token of the authorized requester
+	AuthHeader = "authorization"
+	// One of the headers that cloudrun uses to send the JWT token of the authorized requester
+	ServerlessAuthHeader = "x-serverless-authorization"
+	// The header that this package uses to forward the JWT token of the authorized requester
+	AuthzForwardingHeader = "x-alis-forwarded-authorization"
+	// The header that Google Cloud ESPv2 proxy uses to forward the JWT token of the authorized requester
+	ProxyForwardingHeader = "x-forwarded-authorization"
+	// The header that Google Cloud IAP uses to forward the JWT token of the authorized requester
+	IAPJWTAssertionHeader = "x-goog-iap-jwt-assertion"
+)
+
+type Requester struct {
+	// The original jwt token
+	Jwt string
+	// The requester id e.g. 123456789, m-0000-0000-9245-2134
+	Id string
+	// The requester email e.g. john@gmail.com or alis-build@...gserviceaccount.com
+	Email string
+
+	// Whether the requester is a super admin
+	IsSuperAdmin bool
+
+	// The iam policy on the user resource of the requester.
+	// Not applicable for service accounts
+	Policy *iampb.Policy
+
+	// The authorizer that is used to authorize the requester
+	az *Authorizer
+
+	// A cache to store the result of the member resolver function
+	memberCache *sync.Map
+}
+
+func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
+	for _, policy := range policies {
+		for _, binding := range policy.Bindings {
+			for _, roleId := range roleIds {
+				if binding.Role == roleId {
+					if r.az.authorizer.openRoles[roleId] {
+						return true
+					} else {
+						for _, member := range binding.Members {
+							if r.IsMember(member) {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (r *Requester) IsMember(member string) bool {
+	if member == r.PolicyMember() {
+		return true
+	}
+	parts := strings.Split(member, ":")
+	groupType := parts[0]
+	groupId := ""
+	if len(parts) > 1 {
+		groupId = parts[1]
+	}
+	if resolver, ok := r.az.authorizer.memberResolver[groupType]; ok {
+		if isMember, ok := r.memberCache.Load(member); ok {
+			return isMember.(bool)
+		}
+		isMember := resolver(r.az.ctx, groupType, groupId, r.az)
+		r.memberCache.Store(member, isMember)
+		return isMember
+	}
+	return false
+}
+
+// Returns the PolicySource of the requester.
+// If usersClient is not nil, it will be used to fetch the policy from the Users service.
+// If the user's provided JWT token is issued by this deployment and contains a policy claim, it will be used instead of fetching it from the Users service.
+func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient) *PolicySource {
+	if r.IsServiceAccount() {
+		return nil
+	} else if r.Policy != nil {
+		return &PolicySource{
+			Resource: r.UserName(),
+			Getter: func(ctx context.Context) (*iampb.Policy, error) {
+				return r.Policy, nil
+			},
+		}
+	} else {
+		getter := func(ctx context.Context) (*iampb.Policy, error) {
+			return usersClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+				Resource: r.UserName(),
+			})
+		}
+		return &PolicySource{
+			Resource: r.UserName(),
+			Getter:   getter,
+		}
+	}
+}
+
+// Returns whether the requester used a google identity to authenticate.
+func (r *Requester) IsGoogleIdentity() bool {
+	// if first char of id is a number, it is a google identity
+	return '0' <= r.Id[0] && r.Id[0] <= '9'
+}
+
+// Returns whether the requester is a service account.
+func (r *Requester) IsServiceAccount() bool {
+	return strings.HasSuffix(r.Email, "@gserviceaccount.com")
+}
+
+// Returns the policy member string of the requester.
+// E.g. user:123456789 or serviceAccount:alis-build@...
+func (r *Requester) PolicyMember() string {
+	if r.IsServiceAccount() {
+		return "serviceAccount:" + r.Email
+	} else {
+		return "user:" + r.Id
+	}
+}
+
+// Returns the user name of the requester.
+// Format: users/{userId}
+func (r *Requester) UserName() string {
+	return "users/" + r.Id
+}
+
+// Returns the requester making the request or for whom the request is being forwarded by a super admin.
+func getRequester(ctx context.Context, deploymentServiceAccountEmail string) *Requester {
+	// first get the principal in one of the non-forwarded auth headers
+	principal, err := getRequesterFromJwtHeader(ctx, AuthHeader, deploymentServiceAccountEmail)
+	if principal == nil && err == nil {
+		principal, err = getRequesterFromJwtHeader(ctx, ServerlessAuthHeader, deploymentServiceAccountEmail)
+	}
+	if err != nil {
+		alog.Alertf(ctx, "unable to retrieve metadata from the request header: %s", err)
+		return nil
+	}
+	if principal == nil {
+		return nil
+	}
+
+	// if principal is a service account ending on "@gcp-sa-iap.iam.gserviceaccount.com", trust IAPJWTAssertionHeader
+	if principal.IsServiceAccount() && strings.HasSuffix(principal.Email, "@gcp-sa-iap.iam.gserviceaccount.com") {
+		principal, err = getRequesterFromJwtHeader(ctx, IAPJWTAssertionHeader, deploymentServiceAccountEmail)
+		if err != nil {
+			alog.Alertf(ctx, "unable to retrieve forwarded principal from the IAP request header: %s", err)
+			return nil
+		}
+		return principal
+	}
+
+	// if principal is a super admin, check for forwarded principal
+	if principal.IsSuperAdmin {
+		for _, header := range []string{AuthzForwardingHeader, ProxyForwardingHeader} {
+			forwardedPrincipal, err := getRequesterFromJwtHeader(ctx, header, deploymentServiceAccountEmail)
+			if err != nil {
+				alog.Alertf(ctx, "unable to retrieve forwarded principal from the request header: %s", err)
+				return nil
+			}
+			if forwardedPrincipal != nil {
+				return forwardedPrincipal
+			}
+		}
+	}
+
+	return principal
+}
+
+// Looks in the specified header for a JWT token and extracts the requester from it.
+// Returns nil if no JWT token was found in the header.
+// Returns an error if the JWT token is invalid.
+func getRequesterFromJwtHeader(ctx context.Context, header string, deploymentServiceAccountEmail string) (*Requester, error) {
+	requester := &Requester{}
+
+	// Retrieve the metadata from the context.
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, nil
+	}
+
+	if len(md.Get(header)) > 0 {
+		// Get token from header
+		token := strings.TrimPrefix(md.Get(header)[0], "Bearer ")
+		token = strings.TrimPrefix(token, "bearer ")
+
+		// Extract token payload
+		payload, err := jwt.ParsePayload(token)
+		if err != nil {
+			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+		}
+
+		requester.Jwt = token
+		requester.Id = payload.Subject
+		requester.Email = payload.Email
+
+		if !requester.IsServiceAccount() {
+			// policy is base64 encoded version of the bytes of the policy
+			policyString, ok := payload.Claims["iam_policy"].(string)
+			if ok && payload.Issuer == "alis.build" {
+				policyBytes, err := base64.StdEncoding.DecodeString(policyString)
+				if err != nil {
+					return nil, status.Errorf(codes.Unauthenticated, "unable to decode jwt iam policy: %s", err)
+				}
+				if len(policyBytes) > 0 {
+					policy := &iampb.Policy{}
+					err = proto.Unmarshal(policyBytes, policy)
+					if err != nil {
+						return nil, status.Errorf(codes.Unauthenticated, "unable to unmarshal jwt iam policy: %s", err)
+					}
+				}
+			}
+		}
+		requester.IsSuperAdmin = requester.Email == deploymentServiceAccountEmail
+
+		return requester, nil
+
+	} else {
+		return nil, nil
+	}
+}
