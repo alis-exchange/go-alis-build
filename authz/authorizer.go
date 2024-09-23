@@ -80,15 +80,35 @@ func NewServerAuthorizer(roles []*openIam.Role, deploymentServiceAccountEmail st
 }
 
 // WithMemberResolver registers a function to resolve whether a requester is a member of a group.
-// There can be multiple different types of groups, e.g. "team:engineering" (groupType = "team",groupId="engineering") or "domain:example.com" (groupType = "domain",groupId="example.com").
-// A group always has a type, but does not always have an id, e.g. "allAuthenticatedUsers" or "allAlisBuilders".
-// Group type of "user" and "serviceAccount" are reserved and should not be used.
-// Results are cached per authorizer instance, so if you need to resolve the same group multiple times, it will only be resolved once.
+// There can be multiple different types of groups, e.g. "team:engineering" (groupType = "team",groupId="engineering")
+// A group always has a type, but does not always have an id, e.g. "team:engineering" (groupType = "team",groupId="engineering") vs "all" (groupType = "all",groupId="").
+// "user" and "serviceAccounts" are not allowed as group types.
+// "domain" is a builtin group type that is resolved by checking if the requester's email ends with the group id.
+// Results are cached per Authorizer.
 func (s *ServerAuthorizer) WithMemberResolver(groupTypes []string, resolver func(ctx context.Context, groupType string, groupId string, principal *Authorizer) bool) *ServerAuthorizer {
 	for _, groupType := range groupTypes {
+		if groupType == "user" || groupType == "serviceAccount" || groupType == "domain" {
+			alog.Fatalf(context.Background(), "cannot register builtin group type %s", groupType)
+		}
 		s.memberResolver[groupType] = resolver
 	}
 	return s
+}
+
+// Returns the roles that grant access to the given permission.
+// The returned object contains the role ids and the resource types where the roles could be stored in policies.
+func (s *ServerAuthorizer) GetRolesThatGrantAccess(permission string) *Roles {
+	roles := s.permissionRoles[permission]
+	resourceTypes := map[string]bool{}
+	for _, role := range roles {
+		for _, resourceType := range s.roleResourceTypes[role] {
+			resourceTypes[resourceType] = true
+		}
+	}
+	return &Roles{
+		ids:           roles,
+		resourceTypes: maps.Keys(resourceTypes),
+	}
 }
 
 // An authorizer lives for the duration of a grpc method call and is used to authorize the requester while
@@ -101,30 +121,23 @@ type Authorizer struct {
 	Method string
 	// The Requester
 	Requester *Requester
-	// Whether authorization is required. No auth required is requester is super admin or the auth is already claimed.
+	// Whether authorization is required. No auth required if requester is super admin or the auth is already claimed.
 	requireAuth bool
 
 	// The policy cache
 	policyCache sync.Map
-	// The member cache
-	memberCache sync.Map
 
 	// The ctx
 	ctx context.Context
 }
 
+// Creates a new authorizer which will live for the duration of the grpc method call.
 func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context.Context) {
 	requireAuth := true
 
-	requester := getRequester(ctx, s.deploymentServiceAccountEmail)
-	// if principal is nil, assume super admin
-	if requester == nil {
-		requester = &Requester{
-			Email:        s.deploymentServiceAccountEmail,
-			IsSuperAdmin: true,
-		}
-	}
-	if requester.IsSuperAdmin {
+	requester := newRequesterFromCtx(ctx, s.deploymentServiceAccountEmail)
+
+	if requester.isSuperAdmin {
 		requireAuth = false
 	}
 
@@ -156,7 +169,7 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 }
 
 // Get the cached policy (if any) for the given resource in this authorizer.
-func (r *Authorizer) GetCachedPolicy(resource string) *iampb.Policy {
+func (r *Authorizer) cachedPolicy(resource string) *iampb.Policy {
 	if policy, ok := r.policyCache.Load(resource); ok {
 		return policy.(*iampb.Policy)
 	}
@@ -164,39 +177,6 @@ func (r *Authorizer) GetCachedPolicy(resource string) *iampb.Policy {
 }
 
 // Cache the policy for the given resource in this authorizer.
-func (r *Authorizer) CachePolicy(resource string, policy *iampb.Policy) {
+func (r *Authorizer) cachePolicy(resource string, policy *iampb.Policy) {
 	r.policyCache.Store(resource, policy)
-}
-
-// An object that contains the role ids and the resource types where the roles could be stored in policies.
-type Roles struct {
-	ids           []string
-	resourceTypes []string
-}
-
-// Returns the role ids that grant access to the given permission.
-func (r *Roles) GetIds() []string {
-	return r.ids
-}
-
-// Returns the resource types where the roles could be stored in policies.
-// E.g. alis.open.iam.v1.User and/or abc.de.library.v1.Book
-func (r *Roles) GetResourceTypes() []string {
-	return r.resourceTypes
-}
-
-// Returns the roles that grant access to the given permission.
-// The returned object contains the role ids and the resource types where the roles could be stored in policies.
-func (s *Authorizer) GetRolesThatGrantAccess(permission string) *Roles {
-	roles := s.authorizer.permissionRoles[permission]
-	resourceTypes := map[string]bool{}
-	for _, role := range roles {
-		for _, resourceType := range s.authorizer.roleResourceTypes[role] {
-			resourceTypes[resourceType] = true
-		}
-	}
-	return &Roles{
-		ids:           roles,
-		resourceTypes: maps.Keys(resourceTypes),
-	}
 }

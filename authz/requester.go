@@ -31,18 +31,18 @@ const (
 
 type Requester struct {
 	// The original jwt token
-	Jwt string
+	jwt string
 	// The requester id e.g. 123456789, m-0000-0000-9245-2134
-	Id string
+	id string
 	// The requester email e.g. john@gmail.com or alis-build@...gserviceaccount.com
-	Email string
+	email string
 
 	// Whether the requester is a super admin
-	IsSuperAdmin bool
+	isSuperAdmin bool
 
 	// The iam policy on the user resource of the requester.
 	// Not applicable for service accounts
-	Policy *iampb.Policy
+	policy *iampb.Policy
 
 	// The authorizer that is used to authorize the requester
 	az *Authorizer
@@ -51,7 +51,57 @@ type Requester struct {
 	memberCache *sync.Map
 }
 
+func (r *Requester) Id() string {
+	return r.id
+}
+
+func (r *Requester) Email() string {
+	return r.email
+}
+
+func (r *Requester) Jwt() string {
+	return r.jwt
+}
+
+func (r *Requester) IsSuperAdmin() bool {
+	return r.isSuperAdmin
+}
+
+func (r *Requester) Policy() *iampb.Policy {
+	return r.policy
+}
+
+// Returns whether the requester used a google identity to authenticate.
+func (r *Requester) IsGoogleIdentity() bool {
+	// if first char of id is a number, it is a google identity
+	return '0' <= r.id[0] && r.id[0] <= '9'
+}
+
+// Returns whether the requester is a service account.
+func (r *Requester) IsServiceAccount() bool {
+	return strings.HasSuffix(r.email, "@gserviceaccount.com")
+}
+
+// Returns the policy member string of the requester.
+// E.g. user:123456789 or serviceAccount:alis-build@...
+func (r *Requester) PolicyMember() string {
+	if r.IsServiceAccount() {
+		return "serviceAccount:" + r.email
+	} else {
+		return "user:" + r.id
+	}
+}
+
+// Returns the user name of the requester.
+// Format: users/{userId}
+func (r *Requester) UserName() string {
+	return "users/" + r.id
+}
+
 func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
+	if !r.az.requireAuth {
+		return true
+	}
 	for _, policy := range policies {
 		for _, binding := range policy.Bindings {
 			for _, roleId := range roleIds {
@@ -72,22 +122,34 @@ func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
 	return false
 }
 
-func (r *Requester) IsMember(member string) bool {
-	if member == r.PolicyMember() {
+// Returns whether the requester is the same as the specified policy member or is a member
+// of the specified policy member if its a group.
+func (r *Requester) IsMember(policyMember string) bool {
+	if policyMember == r.PolicyMember() {
 		return true
 	}
-	parts := strings.Split(member, ":")
+	parts := strings.Split(policyMember, ":")
 	groupType := parts[0]
+	if groupType == "user" || groupType == "serviceAccount" {
+		return false
+	}
 	groupId := ""
 	if len(parts) > 1 {
 		groupId = parts[1]
+
+		// builtin domain groups
+		if groupType == "domain" {
+			if strings.HasSuffix(r.email, "@"+parts[1]) {
+				return true
+			}
+		}
 	}
 	if resolver, ok := r.az.authorizer.memberResolver[groupType]; ok {
-		if isMember, ok := r.memberCache.Load(member); ok {
+		if isMember, ok := r.memberCache.Load(policyMember); ok {
 			return isMember.(bool)
 		}
 		isMember := resolver(r.az.ctx, groupType, groupId, r.az)
-		r.memberCache.Store(member, isMember)
+		r.memberCache.Store(policyMember, isMember)
 		return isMember
 	}
 	return false
@@ -99,14 +161,14 @@ func (r *Requester) IsMember(member string) bool {
 func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient) *PolicySource {
 	if r.IsServiceAccount() {
 		return nil
-	} else if r.Policy != nil {
+	} else if r.policy != nil {
 		return &PolicySource{
 			Resource: r.UserName(),
 			Getter: func(ctx context.Context) (*iampb.Policy, error) {
-				return r.Policy, nil
+				return r.policy, nil
 			},
 		}
-	} else {
+	} else if usersClient != nil {
 		getter := func(ctx context.Context) (*iampb.Policy, error) {
 			return usersClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
 				Resource: r.UserName(),
@@ -116,38 +178,13 @@ func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient) *Policy
 			Resource: r.UserName(),
 			Getter:   getter,
 		}
-	}
-}
-
-// Returns whether the requester used a google identity to authenticate.
-func (r *Requester) IsGoogleIdentity() bool {
-	// if first char of id is a number, it is a google identity
-	return '0' <= r.Id[0] && r.Id[0] <= '9'
-}
-
-// Returns whether the requester is a service account.
-func (r *Requester) IsServiceAccount() bool {
-	return strings.HasSuffix(r.Email, "@gserviceaccount.com")
-}
-
-// Returns the policy member string of the requester.
-// E.g. user:123456789 or serviceAccount:alis-build@...
-func (r *Requester) PolicyMember() string {
-	if r.IsServiceAccount() {
-		return "serviceAccount:" + r.Email
 	} else {
-		return "user:" + r.Id
+		return nil
 	}
-}
-
-// Returns the user name of the requester.
-// Format: users/{userId}
-func (r *Requester) UserName() string {
-	return "users/" + r.Id
 }
 
 // Returns the requester making the request or for whom the request is being forwarded by a super admin.
-func getRequester(ctx context.Context, deploymentServiceAccountEmail string) *Requester {
+func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail string) *Requester {
 	// first get the principal in one of the non-forwarded auth headers
 	principal, err := getRequesterFromJwtHeader(ctx, AuthHeader, deploymentServiceAccountEmail)
 	if principal == nil && err == nil {
@@ -158,11 +195,15 @@ func getRequester(ctx context.Context, deploymentServiceAccountEmail string) *Re
 		return nil
 	}
 	if principal == nil {
-		return nil
+		// if no principal is found, return a super admin
+		return &Requester{
+			email:        deploymentServiceAccountEmail,
+			isSuperAdmin: true,
+		}
 	}
 
 	// if principal is a service account ending on "@gcp-sa-iap.iam.gserviceaccount.com", trust IAPJWTAssertionHeader
-	if principal.IsServiceAccount() && strings.HasSuffix(principal.Email, "@gcp-sa-iap.iam.gserviceaccount.com") {
+	if principal.IsServiceAccount() && strings.HasSuffix(principal.email, "@gcp-sa-iap.iam.gserviceaccount.com") {
 		principal, err = getRequesterFromJwtHeader(ctx, IAPJWTAssertionHeader, deploymentServiceAccountEmail)
 		if err != nil {
 			alog.Alertf(ctx, "unable to retrieve forwarded principal from the IAP request header: %s", err)
@@ -172,7 +213,7 @@ func getRequester(ctx context.Context, deploymentServiceAccountEmail string) *Re
 	}
 
 	// if principal is a super admin, check for forwarded principal
-	if principal.IsSuperAdmin {
+	if principal.isSuperAdmin {
 		for _, header := range []string{AuthzForwardingHeader, ProxyForwardingHeader} {
 			forwardedPrincipal, err := getRequesterFromJwtHeader(ctx, header, deploymentServiceAccountEmail)
 			if err != nil {
@@ -211,9 +252,9 @@ func getRequesterFromJwtHeader(ctx context.Context, header string, deploymentSer
 			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
 		}
 
-		requester.Jwt = token
-		requester.Id = payload.Subject
-		requester.Email = payload.Email
+		requester.jwt = token
+		requester.id = payload.Subject
+		requester.email = payload.Email
 
 		if !requester.IsServiceAccount() {
 			// policy is base64 encoded version of the bytes of the policy
@@ -232,7 +273,7 @@ func getRequesterFromJwtHeader(ctx context.Context, header string, deploymentSer
 				}
 			}
 		}
-		requester.IsSuperAdmin = requester.Email == deploymentServiceAccountEmail
+		requester.isSuperAdmin = requester.email == deploymentServiceAccountEmail
 
 		return requester, nil
 

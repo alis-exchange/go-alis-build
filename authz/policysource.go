@@ -62,28 +62,34 @@ func (s *PolicySourcer) Skip(resources ...string) {
 	}
 }
 
-// Fetches all the policies (except the ones marked as skipped) asynchronously.
-func (s *PolicySourcer) RunAsync(ctx context.Context) {
+// Retrieves the policies (except the ones marked as skipped) asynchronously.
+func (s *PolicySourcer) RunAsync() {
 	s.wg = &sync.WaitGroup{}
+	if !s.az.requireAuth {
+		return
+	}
 	for _, source := range s.policySources {
+		if source == nil {
+			continue
+		}
 		if s.skip[source.Resource] {
 			continue
 		}
 		s.wg.Add(1)
 		go func(source *PolicySource) {
 			defer s.wg.Done()
-			policy := s.az.GetCachedPolicy(source.Resource)
+			policy := s.az.cachedPolicy(source.Resource)
 			if policy != nil {
 				s.policies = append(s.policies, policy)
 				return
 			}
 
-			policy, err := source.Getter(ctx)
+			policy, err := source.Getter(s.az.ctx)
 			if err != nil {
-				alog.Errorf(ctx, "could not get policy for resource %s: %v", source.Resource, err)
+				alog.Errorf(s.az.ctx, "could not get policy for resource %s: %v", source.Resource, err)
 			} else {
 				s.policies = append(s.policies, policy)
-				s.az.CachePolicy(source.Resource, policy)
+				s.az.cachePolicy(source.Resource, policy)
 			}
 		}(source)
 	}
@@ -93,14 +99,15 @@ func (s *PolicySourcer) RunAsync(ctx context.Context) {
 // Normally this was preceeded by a call to Skip(resource string) to avoid double fetching.
 func (s *PolicySourcer) AddPolicy(resource string, policy *iampb.Policy) {
 	s.policies = append(s.policies, policy)
-	s.az.CachePolicy(resource, policy)
+	s.az.cachePolicy(resource, policy)
 }
 
 // Get the all the policies fetched or added so far.
 // Will block if RunAsync has been called and not yet finished.
 func (s *PolicySourcer) GetPolicies() []*iampb.Policy {
-	if s.wg != nil {
-		s.wg.Wait()
+	if s.wg == nil {
+		s.RunAsync()
 	}
+	s.wg.Wait()
 	return s.policies
 }
