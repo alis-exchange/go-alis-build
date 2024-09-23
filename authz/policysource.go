@@ -37,8 +37,8 @@ func NewServerPolicySource(resource string, serverMethod func(ctx context.Contex
 	}
 }
 
-// A PolicySourcer is used to fetch/add policies that will be used for authorization.
-type PolicySourcer struct {
+// A PolicyFetcher is used to fetch/add policies that will be used for authorization.
+type PolicyFetcher struct {
 	az            *Authorizer
 	policySources []*PolicySource
 	wg            *sync.WaitGroup
@@ -46,9 +46,9 @@ type PolicySourcer struct {
 	policies      []*iampb.Policy
 }
 
-// Creates a new PolicySourcer for the given authorizer and policy sources.
-func (s *Authorizer) NewPolicySourcer(policySources ...*PolicySource) *PolicySourcer {
-	return &PolicySourcer{
+// Creates a new PolicyFetcher for the given authorizer and policy sources.
+func (s *Authorizer) NewPolicyFetcher(policySources ...*PolicySource) *PolicyFetcher {
+	return &PolicyFetcher{
 		policySources: policySources,
 	}
 }
@@ -56,7 +56,7 @@ func (s *Authorizer) NewPolicySourcer(policySources ...*PolicySource) *PolicySou
 // Marks one/more resources to be skipped when fetching policies.
 // This is useful if there is business logic that needs to read the resource with its policy
 // from the database and thus avoids double fetching.
-func (s *PolicySourcer) Skip(resources ...string) *PolicySourcer {
+func (s *PolicyFetcher) Skip(resources ...string) *PolicyFetcher {
 	for _, resource := range resources {
 		s.skip[resource] = true
 	}
@@ -64,7 +64,7 @@ func (s *PolicySourcer) Skip(resources ...string) *PolicySourcer {
 }
 
 // Retrieves the policies (except the ones marked as skipped) asynchronously.
-func (s *PolicySourcer) RunAsync() *PolicySourcer {
+func (s *PolicyFetcher) RunAsync() *PolicyFetcher {
 	s.wg = &sync.WaitGroup{}
 	if !s.az.requireAuth {
 		return s
@@ -99,7 +99,7 @@ func (s *PolicySourcer) RunAsync() *PolicySourcer {
 
 // Adds a policy that was fetched manually to the list of policies.
 // Normally this was preceeded by a call to Skip(resource string) to avoid double fetching.
-func (s *PolicySourcer) AddPolicy(resource string, policy *iampb.Policy) *PolicySourcer {
+func (s *PolicyFetcher) AddPolicy(resource string, policy *iampb.Policy) *PolicyFetcher {
 	s.policies = append(s.policies, policy)
 	s.az.cachePolicy(resource, policy)
 	return s
@@ -107,7 +107,7 @@ func (s *PolicySourcer) AddPolicy(resource string, policy *iampb.Policy) *Policy
 
 // Get the all the policies fetched or added so far.
 // Will block if RunAsync has been called and not yet finished.
-func (s *PolicySourcer) GetPolicies() []*iampb.Policy {
+func (s *PolicyFetcher) GetPolicies() []*iampb.Policy {
 	if s.wg == nil {
 		s.RunAsync()
 	}
