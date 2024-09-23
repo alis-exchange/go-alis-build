@@ -105,10 +105,8 @@ func (s *ServerAuthorizer) GetRolesThatGrantAccess(permission string) *Roles {
 }
 
 // Returns a grpc error for the specified permission with the PermissionDenied code and an appropriate message.
-func PermissionDeniedError(permission string, roles []string, resources ...string) error {
-	if len(roles) == 0 {
-		return status.Errorf(codes.PermissionDenied, "%s is an internal method", permission)
-	}
+func (s *ServerAuthorizer) PermissionDeniedError(permission string, resources ...string) error {
+	roles := s.permissionRoles[permission]
 	if len(resources) == 0 {
 		return status.Errorf(codes.PermissionDenied, "missing one of the following roles to call %s: %v", permission, strings.Join(roles, ", "))
 	} else if len(resources) == 1 {

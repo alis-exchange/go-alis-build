@@ -56,61 +56,61 @@ func (s *Authorizer) NewPolicyFetcher(policySources ...*PolicySource) *PolicyFet
 // Marks one/more resources to be skipped when fetching policies.
 // This is useful if there is business logic that needs to read the resource with its policy
 // from the database and thus avoids double fetching.
-func (s *PolicyFetcher) Skip(resources ...string) *PolicyFetcher {
+func (f *PolicyFetcher) Skip(resources ...string) *PolicyFetcher {
 	for _, resource := range resources {
-		s.skip[resource] = true
+		f.skip[resource] = true
 	}
-	return s
+	return f
 }
 
 // Retrieves the policies (except the ones marked as skipped) asynchronously.
-func (s *PolicyFetcher) RunAsync() *PolicyFetcher {
-	s.wg = &sync.WaitGroup{}
-	if !s.az.requireAuth {
-		return s
+func (f *PolicyFetcher) RunAsync() *PolicyFetcher {
+	f.wg = &sync.WaitGroup{}
+	if !f.az.requireAuth {
+		return f
 	}
-	for _, source := range s.policySources {
+	for _, source := range f.policySources {
 		if source == nil {
 			continue
 		}
-		if s.skip[source.Resource] {
+		if f.skip[source.Resource] {
 			continue
 		}
-		s.wg.Add(1)
+		f.wg.Add(1)
 		go func(source *PolicySource) {
-			defer s.wg.Done()
-			policy := s.az.cachedPolicy(source.Resource)
+			defer f.wg.Done()
+			policy := f.az.cachedPolicy(source.Resource)
 			if policy != nil {
-				s.policies = append(s.policies, policy)
+				f.policies = append(f.policies, policy)
 				return
 			}
 
-			policy, err := source.Getter(s.az.ctx)
+			policy, err := source.Getter(f.az.ctx)
 			if err != nil {
-				alog.Errorf(s.az.ctx, "could not get policy for resource %s: %v", source.Resource, err)
+				alog.Errorf(f.az.ctx, "could not get policy for resource %s: %v", source.Resource, err)
 			} else {
-				s.policies = append(s.policies, policy)
-				s.az.cachePolicy(source.Resource, policy)
+				f.policies = append(f.policies, policy)
+				f.az.cachePolicy(source.Resource, policy)
 			}
 		}(source)
 	}
-	return s
+	return f
 }
 
 // Adds a policy that was fetched manually to the list of policies.
 // Normally this was preceeded by a call to Skip(resource string) to avoid double fetching.
-func (s *PolicyFetcher) AddPolicy(resource string, policy *iampb.Policy) *PolicyFetcher {
-	s.policies = append(s.policies, policy)
-	s.az.cachePolicy(resource, policy)
-	return s
+func (f *PolicyFetcher) AddPolicy(resource string, policy *iampb.Policy) *PolicyFetcher {
+	f.policies = append(f.policies, policy)
+	f.az.cachePolicy(resource, policy)
+	return f
 }
 
 // Get the all the policies fetched or added so far.
 // Will block if RunAsync has been called and not yet finished.
-func (s *PolicyFetcher) GetPolicies() []*iampb.Policy {
-	if s.wg == nil {
-		s.RunAsync()
+func (f *PolicyFetcher) GetPolicies() []*iampb.Policy {
+	if f.wg == nil {
+		f.RunAsync()
 	}
-	s.wg.Wait()
-	return s.policies
+	f.wg.Wait()
+	return f.policies
 }

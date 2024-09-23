@@ -51,6 +51,105 @@ type Requester struct {
 	memberCache *sync.Map
 }
 
+// Returns the requester making the request or for whom the request is being forwarded by a super admin.
+func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail string) *Requester {
+	// Looks in the specified header for a JWT token and extracts the requester from it.
+	// Returns nil if no JWT token was found in the header.
+	// Returns an error if the JWT token is invalid.
+	getRequesterFromJwtHeader := func(ctx context.Context, header string, deploymentServiceAccountEmail string) (*Requester, error) {
+		requester := &Requester{}
+
+		// Retrieve the metadata from the context.
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, nil
+		}
+
+		if len(md.Get(header)) > 0 {
+			// Get token from header
+			token := strings.TrimPrefix(md.Get(header)[0], "Bearer ")
+			token = strings.TrimPrefix(token, "bearer ")
+
+			// Extract token payload
+			payload, err := jwt.ParsePayload(token)
+			if err != nil {
+				return nil, status.Errorf(codes.Unauthenticated, "%s", err)
+			}
+
+			requester.jwt = token
+			requester.id = payload.Subject
+			requester.email = payload.Email
+
+			if !requester.IsServiceAccount() {
+				// policy is base64 encoded version of the bytes of the policy
+				policyString, ok := payload.Claims["iam_policy"].(string)
+				if ok && payload.Issuer == "alis.build" {
+					policyBytes, err := base64.StdEncoding.DecodeString(policyString)
+					if err != nil {
+						return nil, status.Errorf(codes.Unauthenticated, "unable to decode jwt iam policy: %s", err)
+					}
+					if len(policyBytes) > 0 {
+						policy := &iampb.Policy{}
+						err = proto.Unmarshal(policyBytes, policy)
+						if err != nil {
+							return nil, status.Errorf(codes.Unauthenticated, "unable to unmarshal jwt iam policy: %s", err)
+						}
+					}
+				}
+			}
+			requester.isSuperAdmin = requester.email == deploymentServiceAccountEmail
+
+			return requester, nil
+
+		} else {
+			return nil, nil
+		}
+	}
+
+	// first get the principal in one of the non-forwarded auth headers
+	principal, err := getRequesterFromJwtHeader(ctx, AuthHeader, deploymentServiceAccountEmail)
+	if principal == nil && err == nil {
+		principal, err = getRequesterFromJwtHeader(ctx, ServerlessAuthHeader, deploymentServiceAccountEmail)
+	}
+	if err != nil {
+		alog.Alertf(ctx, "unable to retrieve metadata from the request header: %s", err)
+		return nil
+	}
+	if principal == nil {
+		// if no principal is found, return a super admin
+		return &Requester{
+			email:        deploymentServiceAccountEmail,
+			isSuperAdmin: true,
+		}
+	}
+
+	// if principal is a service account ending on "@gcp-sa-iap.iam.gserviceaccount.com", trust IAPJWTAssertionHeader
+	if principal.IsServiceAccount() && strings.HasSuffix(principal.email, "@gcp-sa-iap.iam.gserviceaccount.com") {
+		principal, err = getRequesterFromJwtHeader(ctx, IAPJWTAssertionHeader, deploymentServiceAccountEmail)
+		if err != nil {
+			alog.Alertf(ctx, "unable to retrieve forwarded principal from the IAP request header: %s", err)
+			return nil
+		}
+		return principal
+	}
+
+	// if principal is a super admin, check for forwarded principal
+	if principal.isSuperAdmin {
+		for _, header := range []string{AuthzForwardingHeader, ProxyForwardingHeader} {
+			forwardedPrincipal, err := getRequesterFromJwtHeader(ctx, header, deploymentServiceAccountEmail)
+			if err != nil {
+				alog.Alertf(ctx, "unable to retrieve forwarded principal from the request header: %s", err)
+				return nil
+			}
+			if forwardedPrincipal != nil {
+				return forwardedPrincipal
+			}
+		}
+	}
+
+	return principal
+}
+
 func (r *Requester) Id() string {
 	return r.id
 }
@@ -106,7 +205,7 @@ func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
 		for _, binding := range policy.Bindings {
 			for _, roleId := range roleIds {
 				if binding.Role == roleId {
-					if r.az.authorizer.openRoles[roleId] {
+					if r.az.server_authorizer.openRoles[roleId] {
 						return true
 					} else {
 						for _, member := range binding.Members {
@@ -144,7 +243,7 @@ func (r *Requester) IsMember(policyMember string) bool {
 			}
 		}
 	}
-	if resolver, ok := r.az.authorizer.memberResolver[groupType]; ok {
+	if resolver, ok := r.az.server_authorizer.memberResolver[groupType]; ok {
 		if isMember, ok := r.memberCache.Load(policyMember); ok {
 			return isMember.(bool)
 		}
@@ -180,104 +279,5 @@ func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient) *Policy
 		}
 	} else {
 		return nil
-	}
-}
-
-// Returns the requester making the request or for whom the request is being forwarded by a super admin.
-func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail string) *Requester {
-	// first get the principal in one of the non-forwarded auth headers
-	principal, err := getRequesterFromJwtHeader(ctx, AuthHeader, deploymentServiceAccountEmail)
-	if principal == nil && err == nil {
-		principal, err = getRequesterFromJwtHeader(ctx, ServerlessAuthHeader, deploymentServiceAccountEmail)
-	}
-	if err != nil {
-		alog.Alertf(ctx, "unable to retrieve metadata from the request header: %s", err)
-		return nil
-	}
-	if principal == nil {
-		// if no principal is found, return a super admin
-		return &Requester{
-			email:        deploymentServiceAccountEmail,
-			isSuperAdmin: true,
-		}
-	}
-
-	// if principal is a service account ending on "@gcp-sa-iap.iam.gserviceaccount.com", trust IAPJWTAssertionHeader
-	if principal.IsServiceAccount() && strings.HasSuffix(principal.email, "@gcp-sa-iap.iam.gserviceaccount.com") {
-		principal, err = getRequesterFromJwtHeader(ctx, IAPJWTAssertionHeader, deploymentServiceAccountEmail)
-		if err != nil {
-			alog.Alertf(ctx, "unable to retrieve forwarded principal from the IAP request header: %s", err)
-			return nil
-		}
-		return principal
-	}
-
-	// if principal is a super admin, check for forwarded principal
-	if principal.isSuperAdmin {
-		for _, header := range []string{AuthzForwardingHeader, ProxyForwardingHeader} {
-			forwardedPrincipal, err := getRequesterFromJwtHeader(ctx, header, deploymentServiceAccountEmail)
-			if err != nil {
-				alog.Alertf(ctx, "unable to retrieve forwarded principal from the request header: %s", err)
-				return nil
-			}
-			if forwardedPrincipal != nil {
-				return forwardedPrincipal
-			}
-		}
-	}
-
-	return principal
-}
-
-// Looks in the specified header for a JWT token and extracts the requester from it.
-// Returns nil if no JWT token was found in the header.
-// Returns an error if the JWT token is invalid.
-func getRequesterFromJwtHeader(ctx context.Context, header string, deploymentServiceAccountEmail string) (*Requester, error) {
-	requester := &Requester{}
-
-	// Retrieve the metadata from the context.
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, nil
-	}
-
-	if len(md.Get(header)) > 0 {
-		// Get token from header
-		token := strings.TrimPrefix(md.Get(header)[0], "Bearer ")
-		token = strings.TrimPrefix(token, "bearer ")
-
-		// Extract token payload
-		payload, err := jwt.ParsePayload(token)
-		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "%s", err)
-		}
-
-		requester.jwt = token
-		requester.id = payload.Subject
-		requester.email = payload.Email
-
-		if !requester.IsServiceAccount() {
-			// policy is base64 encoded version of the bytes of the policy
-			policyString, ok := payload.Claims["iam_policy"].(string)
-			if ok && payload.Issuer == "alis.build" {
-				policyBytes, err := base64.StdEncoding.DecodeString(policyString)
-				if err != nil {
-					return nil, status.Errorf(codes.Unauthenticated, "unable to decode jwt iam policy: %s", err)
-				}
-				if len(policyBytes) > 0 {
-					policy := &iampb.Policy{}
-					err = proto.Unmarshal(policyBytes, policy)
-					if err != nil {
-						return nil, status.Errorf(codes.Unauthenticated, "unable to unmarshal jwt iam policy: %s", err)
-					}
-				}
-			}
-		}
-		requester.isSuperAdmin = requester.email == deploymentServiceAccountEmail
-
-		return requester, nil
-
-	} else {
-		return nil, nil
 	}
 }
