@@ -56,17 +56,18 @@ func (s *Authorizer) NewPolicySourcer(policySources []*PolicySource) *PolicySour
 // Marks one/more resources to be skipped when fetching policies.
 // This is useful if there is business logic that needs to read the resource with its policy
 // from the database and thus avoids double fetching.
-func (s *PolicySourcer) Skip(resources ...string) {
+func (s *PolicySourcer) Skip(resources ...string) *PolicySourcer {
 	for _, resource := range resources {
 		s.skip[resource] = true
 	}
+	return s
 }
 
 // Retrieves the policies (except the ones marked as skipped) asynchronously.
-func (s *PolicySourcer) RunAsync() {
+func (s *PolicySourcer) RunAsync() *PolicySourcer {
 	s.wg = &sync.WaitGroup{}
 	if !s.az.requireAuth {
-		return
+		return s
 	}
 	for _, source := range s.policySources {
 		if source == nil {
@@ -93,13 +94,15 @@ func (s *PolicySourcer) RunAsync() {
 			}
 		}(source)
 	}
+	return s
 }
 
 // Adds a policy that was fetched manually to the list of policies.
 // Normally this was preceeded by a call to Skip(resource string) to avoid double fetching.
-func (s *PolicySourcer) AddPolicy(resource string, policy *iampb.Policy) {
+func (s *PolicySourcer) AddPolicy(resource string, policy *iampb.Policy) *PolicySourcer {
 	s.policies = append(s.policies, policy)
 	s.az.cachePolicy(resource, policy)
+	return s
 }
 
 // Get the all the policies fetched or added so far.
