@@ -199,20 +199,21 @@ func (r *Requester) UserName() string {
 }
 
 func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
-	if !r.az.requireAuth {
-		return true
+	// if any role is an open role, return true
+	for _, roleId := range roleIds {
+		if r.az.server_authorizer.openRoles[roleId] {
+			return true
+		}
 	}
+
+	// if the requester is a member of any of the roles, return true
 	for _, policy := range policies {
 		for _, binding := range policy.Bindings {
 			for _, roleId := range roleIds {
 				if binding.Role == roleId {
-					if r.az.server_authorizer.openRoles[roleId] {
-						return true
-					} else {
-						for _, member := range binding.Members {
-							if r.IsMember(member) {
-								return true
-							}
+					for _, member := range binding.Members {
+						if r.IsMember(member) {
+							return true
 						}
 					}
 				}

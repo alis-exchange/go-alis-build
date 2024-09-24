@@ -74,12 +74,24 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 
 // Checks if requester has access to the current method based on the provided policies.
 func (a *Authorizer) HasMethodAccess(policies []*iampb.Policy) bool {
+	// if no auth is required, return true
+	if !a.requireAuth {
+		return true
+	}
+
+	// check if users has a role that gives them the permission
 	roleIds := a.server_authorizer.permissionRoles[a.Method]
 	return a.Requester.HasRole(roleIds, policies)
 }
 
 // Checks if the requester has the specified permission in the provided policies.
 func (a *Authorizer) HasPermission(permission string, policies []*iampb.Policy) bool {
+	// if no auth is required, return true
+	if !a.requireAuth {
+		return true
+	}
+
+	// check if users has a role that gives them the permission
 	roleIds := a.server_authorizer.permissionRoles[permission]
 	return a.Requester.HasRole(roleIds, policies)
 }
