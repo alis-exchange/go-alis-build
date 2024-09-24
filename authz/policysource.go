@@ -89,6 +89,9 @@ func (f *PolicyFetcher) RunAsync() *PolicyFetcher {
 			if err != nil {
 				alog.Errorf(f.az.ctx, "could not get policy for resource %s: %v", source.Resource, err)
 			} else {
+				if policy == nil {
+					policy = &iampb.Policy{}
+				}
 				f.policies = append(f.policies, policy)
 				f.az.cachePolicy(source.Resource, policy)
 			}
@@ -99,7 +102,11 @@ func (f *PolicyFetcher) RunAsync() *PolicyFetcher {
 
 // Adds a policy that was fetched manually to the list of policies.
 // Normally this was preceeded by a call to Skip(resource string) to avoid double fetching.
+// The policy may be nil.
 func (f *PolicyFetcher) AddPolicy(resource string, policy *iampb.Policy) *PolicyFetcher {
+	if policy == nil {
+		policy = &iampb.Policy{}
+	}
 	f.policies = append(f.policies, policy)
 	f.az.cachePolicy(resource, policy)
 	return f

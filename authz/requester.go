@@ -208,6 +208,9 @@ func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
 
 	// if the requester is a member of any of the roles, return true
 	for _, policy := range policies {
+		if policy == nil {
+			continue
+		}
 		for _, binding := range policy.Bindings {
 			for _, roleId := range roleIds {
 				if binding.Role == roleId {
