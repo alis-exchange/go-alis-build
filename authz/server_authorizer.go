@@ -55,7 +55,7 @@ func NewServerAuthorizer(roles []*openIam.Role, deploymentServiceAccountEmail st
 			if _, ok := permissionsMap[perm]; !ok {
 				permissionsMap[perm] = make(map[string]bool)
 			}
-			permissionsMap[perm][role.Name] = true
+			permissionsMap[perm][roleId] = true
 		}
 		if role.AllUsers {
 			s.openRoles[roleId] = true

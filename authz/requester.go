@@ -58,7 +58,9 @@ func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail stri
 	// Returns nil if no JWT token was found in the header.
 	// Returns an error if the JWT token is invalid.
 	getRequesterFromJwtHeader := func(ctx context.Context, header string, deploymentServiceAccountEmail string) (*Requester, error) {
-		requester := &Requester{}
+		requester := &Requester{
+			memberCache: &sync.Map{},
+		}
 
 		// Retrieve the metadata from the context.
 		md, ok := metadata.FromIncomingContext(ctx)
