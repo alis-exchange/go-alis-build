@@ -50,6 +50,8 @@ type PolicyFetcher struct {
 func (s *Authorizer) NewPolicyFetcher(policySources []*PolicySource) *PolicyFetcher {
 	return &PolicyFetcher{
 		policySources: policySources,
+		skip:          make(map[string]bool),
+		az:            s,
 	}
 }
 

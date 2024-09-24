@@ -38,11 +38,18 @@ type Authorizer struct {
 // Creates a new authorizer which will live for the duration of the grpc method call.
 func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context.Context) {
 	requireAuth := true
+	a := &Authorizer{
+		server_authorizer: s,
+		requireAuth:       requireAuth,
+		policyCache:       sync.Map{},
+		ctx:               ctx,
+	}
 
 	requester := newRequesterFromCtx(ctx, s.deploymentServiceAccountEmail)
+	requester.az = a
 
 	if requester.isSuperAdmin {
-		requireAuth = false
+		a.requireAuth = false
 	}
 
 	// claim if not claimed, otherwise do not require auth
@@ -50,26 +57,19 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 	if !ok {
 		ctx = context.WithValue(ctx, claimdKey, true)
 	} else {
-		requireAuth = false
+		a.requireAuth = false
 	}
 
 	// extract method from context
 	method, ok := grpc.Method(ctx)
 	if !ok {
-		if requireAuth {
+		if a.requireAuth {
 			alog.Fatalf(ctx, "rpc method not found in context")
 		}
 	}
+	a.Method = method
 
-	return &Authorizer{
-		server_authorizer: s,
-		Method:            method,
-		Requester:         requester,
-		requireAuth:       requireAuth,
-		policyCache:       sync.Map{},
-
-		ctx: ctx,
-	}, ctx
+	return a, ctx
 }
 
 // Checks if requester has access to the current method based on the provided policies.
