@@ -254,10 +254,10 @@ func (r *Requester) IsMember(policyMember string) bool {
 	return false
 }
 
-// Returns the PolicySource of the requester.
+// Returns the PolicySource of the requester if resourceTypes contain "alis.open.iam.v1.User"
 // If usersClient is not nil, it will be used to fetch the policy from the Users service.
-// If the user's provided JWT token is issued by this deployment and contains a policy claim, it will be used instead of fetching it from the Users service.
-func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient) *PolicySource {
+// If the user's provided JWT token contains a valid policy claim, it will be used instead of fetching the policy.
+func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient, resourceTypes []string) *PolicySource {
 	if r.IsServiceAccount() {
 		return nil
 	} else if r.policy != nil {

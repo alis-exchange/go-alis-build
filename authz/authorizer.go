@@ -84,6 +84,11 @@ func (a *Authorizer) HasPermission(permission string, policies []*iampb.Policy) 
 	return a.Requester.HasRole(roleIds, policies)
 }
 
+// Returns a grpc error for this authorizer's method with the PermissionDenied code and an appropriate message.
+func (a *Authorizer) PermissionDeniedError(resources ...string) error {
+	return a.server_authorizer.PermissionDeniedError(a.Method, resources...)
+}
+
 // Get the cached policy (if any) for the given resource in this authorizer.
 func (a *Authorizer) cachedPolicy(resource string) *iampb.Policy {
 	if policy, ok := a.policyCache.Load(resource); ok {
@@ -95,9 +100,4 @@ func (a *Authorizer) cachedPolicy(resource string) *iampb.Policy {
 // Cache the policy for the given resource in this authorizer.
 func (a *Authorizer) cachePolicy(resource string, policy *iampb.Policy) {
 	a.policyCache.Store(resource, policy)
-}
-
-// Returns a grpc error for this authorizer's method with the PermissionDenied code and an appropriate message.
-func (a *Authorizer) PermissionDeniedError(resources ...string) error {
-	return a.server_authorizer.PermissionDeniedError(a.Method, resources...)
 }
