@@ -47,6 +47,7 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 
 	requester := newRequesterFromCtx(ctx, s.deploymentServiceAccountEmail)
 	requester.az = a
+	a.Requester = requester
 
 	if requester.isSuperAdmin {
 		a.requireAuth = false
