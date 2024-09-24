@@ -3,6 +3,7 @@ package authz
 import (
 	"context"
 	"encoding/base64"
+	"slices"
 	"strings"
 	"sync"
 
@@ -254,10 +255,10 @@ func (r *Requester) IsMember(policyMember string) bool {
 	return false
 }
 
-// Returns the PolicySource of the requester if resourceTypes contain "alis.open.iam.v1.User"
+// Returns the PolicySource of the requester.
 // If usersClient is not nil, it will be used to fetch the policy from the Users service.
 // If the user's provided JWT token contains a valid policy claim, it will be used instead of fetching the policy.
-func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient, resourceTypes []string) *PolicySource {
+func (r *Requester) policySource(usersClient openIam.UsersServiceClient) *PolicySource {
 	if r.IsServiceAccount() {
 		return nil
 	} else if r.policy != nil {
@@ -280,4 +281,18 @@ func (r *Requester) PolicySource(usersClient openIam.UsersServiceClient, resourc
 	} else {
 		return nil
 	}
+}
+
+// Returns the PolicySources of the requester if resourceTypes contain "alis.open.iam.v1.User"
+// If usersClient is not nil, it will be used to fetch the policy from the Users service.
+// If the user's provided JWT token contains a valid policy claim, it will be used instead of fetching the policy.
+func (r *Requester) PolicySources(usersClient openIam.UsersServiceClient, resourceTypes []string) []*PolicySource {
+	if !slices.Contains(resourceTypes, "alis.open.iam.v1.User") {
+		return []*PolicySource{}
+	}
+	policySource := r.policySource(usersClient)
+	if policySource != nil {
+		return []*PolicySource{policySource}
+	}
+	return []*PolicySource{}
 }

@@ -47,7 +47,7 @@ type PolicyFetcher struct {
 }
 
 // Creates a new PolicyFetcher for the given authorizer and policy sources.
-func (s *Authorizer) NewPolicyFetcher(policySources ...*PolicySource) *PolicyFetcher {
+func (s *Authorizer) NewPolicyFetcher(policySources []*PolicySource) *PolicyFetcher {
 	return &PolicyFetcher{
 		policySources: policySources,
 	}
