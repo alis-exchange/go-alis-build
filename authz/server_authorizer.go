@@ -44,7 +44,16 @@ func NewServerAuthorizer(roles []*openIam.Role, deploymentServiceAccountEmail st
 	permissionsMap := map[string]map[string]bool{}
 	resourceTypes := map[string]map[string]bool{}
 	for _, role := range roles {
-		roleId := strings.TrimPrefix(role.Name, "roles/")
+		roleNameParts := strings.Split(role.Name, "/")
+		roleId := ""
+		if strings.HasPrefix(role.Name, "roles/") {
+			roleId = roleNameParts[len(roleNameParts)-1]
+		} else {
+			if len(roleNameParts) < 6 {
+				alog.Fatalf(context.Background(), "role name is invalid. Must be organisations/{orgId}/products/{productId}/roles/{roleId}")
+			}
+			roleId = strings.Join(roleNameParts[5:], "/")
+		}
 		if _, ok := resourceTypes[roleId]; !ok {
 			resourceTypes[roleId] = make(map[string]bool)
 		}
