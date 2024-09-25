@@ -42,7 +42,6 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 		server_authorizer: s,
 		requireAuth:       requireAuth,
 		policyCache:       sync.Map{},
-		ctx:               ctx,
 	}
 
 	requester := newRequesterFromCtx(ctx, s.deploymentServiceAccountEmail)
@@ -60,6 +59,7 @@ func (s *ServerAuthorizer) Authorizer(ctx context.Context) (*Authorizer, context
 	} else {
 		a.requireAuth = false
 	}
+	a.ctx = ctx
 
 	// extract method from context
 	method, ok := grpc.Method(ctx)
