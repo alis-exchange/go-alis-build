@@ -57,7 +57,7 @@ func NewServerAuthorizer(roles []*openIam.Role, deploymentServiceAccountEmail st
 				alog.Fatalf(context.Background(), "role name is invalid. Must be organisations/{orgId}/products/{productId}/roles/{roleId}")
 			}
 			roleId = strings.Join(roleNameParts[5:], "/")
-			roleNamePrefix := strings.Join(roleNameParts[:5], "/")
+			roleNamePrefix := strings.Join(roleNameParts[:5], "/") + "/"
 			s.roleNamePrefix = roleNamePrefix
 		}
 		if _, ok := resourceTypes[roleId]; !ok {
