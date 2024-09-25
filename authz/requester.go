@@ -202,10 +202,13 @@ func (r *Requester) UserName() string {
 
 func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
 	// if any role is an open role, return true
+	trimmedRoleIds := map[string]bool{}
 	for _, roleId := range roleIds {
+		roleId = strings.TrimPrefix(roleId, r.az.server_authorizer.roleNamePrefix)
 		if r.az.server_authorizer.openRoles[roleId] {
 			return true
 		}
+		trimmedRoleIds[roleId] = true
 	}
 
 	// if the requester is a member of any of the roles, return true
@@ -214,12 +217,11 @@ func (r *Requester) HasRole(roleIds []string, policies []*iampb.Policy) bool {
 			continue
 		}
 		for _, binding := range policy.Bindings {
-			for _, roleId := range roleIds {
-				if binding.Role == roleId {
-					for _, member := range binding.Members {
-						if r.IsMember(member) {
-							return true
-						}
+			bindingRole := strings.TrimPrefix(binding.Role, r.az.server_authorizer.roleNamePrefix)
+			if trimmedRoleIds[bindingRole] {
+				for _, member := range binding.Members {
+					if r.IsMember(member) {
+						return true
 					}
 				}
 			}

@@ -25,6 +25,10 @@ type ServerAuthorizer struct {
 
 	// the function per group type that resolves whether a requester is a member of a group
 	memberResolver map[string](func(ctx context.Context, groupType string, groupId string, az *Authorizer) bool)
+
+	// the role name prefix that was stripped from all roles to get to role ids
+	// this field is used to help migrate from using full role names to only ids in policies
+	roleNamePrefix string
 }
 
 // Create a new server authorizer from the given roles and deployment service account email.
@@ -53,6 +57,8 @@ func NewServerAuthorizer(roles []*openIam.Role, deploymentServiceAccountEmail st
 				alog.Fatalf(context.Background(), "role name is invalid. Must be organisations/{orgId}/products/{productId}/roles/{roleId}")
 			}
 			roleId = strings.Join(roleNameParts[5:], "/")
+			roleNamePrefix := strings.Join(roleNameParts[:5], "/")
+			s.roleNamePrefix = roleNamePrefix
 		}
 		if _, ok := resourceTypes[roleId]; !ok {
 			resourceTypes[roleId] = make(map[string]bool)
