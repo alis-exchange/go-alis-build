@@ -3,6 +3,7 @@ package sproto
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
@@ -293,6 +294,70 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 		resourceRows[i] = resourceRow
 	}
 	return resourceRows, nextToken, nil
+}
+
+func (rt *ResourceClient) Stream(ctx context.Context, parent string, opts *QueryOptions) (*StreamResponse[ResourceRow], error) {
+	var err error
+	var spannerStatement spanner.Statement
+	if parent != "" {
+		spannerStatement = spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
+		spannerStatement.Params["prefix"], err = rt.RowKeyConv.GetRowKeyPrefix(parent)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
+		}
+	}
+
+	msgs := []proto.Message{proto.Clone(rt.resourceMsg)}
+	if rt.hasIamPolicy {
+		msgs = append(msgs, &iampb.Policy{})
+	}
+	var tblOpts *StreamOptions
+	if opts != nil {
+		tblOpts = &StreamOptions{
+			SortColumns: opts.SortColumns,
+			Limit:       opts.Limit,
+			ReadMasks:   opts.ReadMasks,
+		}
+	}
+
+	res := NewStreamResponse[ResourceRow]()
+	go func() {
+		ctx := context.WithoutCancel(ctx)
+		it, err := rt.tbl.Stream(ctx, msgs, &spannerStatement, tblOpts)
+		if err != nil {
+			res.setError(err)
+			return
+		}
+
+		for {
+			row, err := it.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			resourceRow := &ResourceRow{
+				RowKey:   row.Key.String(),
+				Resource: row.Messages[0],
+				tbl:      rt.tbl,
+			}
+			if rt.hasIamPolicy {
+				resourceRow.Policy = row.Messages[1].(*iampb.Policy)
+			}
+
+			res.addItem(resourceRow)
+		}
+
+		// Wait for wg
+		res.wait()
+		// Close channel
+		res.close()
+	}()
+
+	return res, nil
 }
 
 func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, opts *QueryOptions) ([]*ResourceRow, string, error) {
