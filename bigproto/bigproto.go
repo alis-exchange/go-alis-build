@@ -138,6 +138,30 @@ func (b *BigProto) WriteProto(ctx context.Context, rowKey string, columnFamily s
 	return nil
 }
 
+// WriteProtos writes the provided proto messages to Bigtable by marshaling them to bytes and storing the data at the given
+// row key, and column families.
+func (b *BigProto) WriteProtos(ctx context.Context, rowKey string, columnFamilies []string, messages []proto.Message) error {
+	timestamp := bigtable.Now()
+	mut := bigtable.NewMutation()
+	for i, message := range messages {
+		dataBytes, err := proto.Marshal(message)
+		if err != nil {
+			return err
+		}
+
+		mut.Set(columnFamilies[i], DefaultColumnName, timestamp, dataBytes)
+		err = b.table.Apply(ctx, rowKey, mut)
+		if err != nil {
+			return err
+		}
+	}
+	err := b.table.Apply(ctx, rowKey, mut)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // WriteProtoIamPolicy writes the provided IAM policy to Bigtable by marshaling it to bytes and storing the data at the
 // given row key, and column family.
 func (b *BigProto) WriteIamPolicy(ctx context.Context, rowKey string, policyColumnFamily string, policy *iampb.Policy) error {
@@ -477,6 +501,7 @@ func (b *BigProto) ListProtos(ctx context.Context, columnFamily string, messageT
 }
 
 type RowWithPolicy struct {
+	Key    string
 	Row    proto.Message
 	Policy *iampb.Policy
 }
@@ -523,15 +548,20 @@ func (b *BigProto) ListProtosWithPolicies(ctx context.Context, columnFamily stri
 
 				// get policy if any
 				policy := &iampb.Policy{}
-				policyColumns, ok := row[policyColumnFamily]
-				if ok {
-					policyColumn := policyColumns[0]
-					err = proto.Unmarshal(policyColumn.Value, policy)
-					if err != nil {
-						return false
+				if policyColumnFamily == "" {
+					policy = nil
+				} else {
+					policyColumns, ok := row[policyColumnFamily]
+					if ok {
+						policyColumn := policyColumns[0]
+						err = proto.Unmarshal(policyColumn.Value, policy)
+						if err != nil {
+							return false
+						}
 					}
 				}
 				rowWithPolicy := &RowWithPolicy{
+					Key:    row.Key(),
 					Row:    message,
 					Policy: policy,
 				}

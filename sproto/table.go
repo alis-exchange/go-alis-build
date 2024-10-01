@@ -11,7 +11,6 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/mennanov/fmutils"
-	"go.alis.build/alog"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
@@ -49,11 +48,20 @@ type QueryOptions struct {
 	ReadMasks []*fieldmaskpb.FieldMask
 }
 
+type StreamOptions struct {
+	// SortColumns is a map of column names and their respective sort order.
+	SortColumns map[string]SortOrder
+	// Limit is the maximum number of rows to read.
+	Limit int32
+	// Read masks for the proto messages
+	ReadMasks []*fieldmaskpb.FieldMask
+}
+
 /*
 NewClient creates a new Database Client instance with the provided Google Cloud Spanner configuration.
 Leave databaseRole empty if you are not using fine grained roles on the database.
 */
-func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) *DbClient {
+func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) (*DbClient, error) {
 	ctx := context.Background()
 	clientConfig := spanner.ClientConfig{}
 	if databaseRole != "" {
@@ -61,30 +69,31 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 	}
 	spannerClient, err := spanner.NewClientWithConfig(ctx, fmt.Sprintf("projects/%s/instances/%s/databases/%s", googleProject, spannerInstance, databaseName), clientConfig)
 	if err != nil {
-		alog.Fatalf(ctx, "Error creating Spanner client: %v", err)
+		return nil, err
 	}
 
 	return &DbClient{
 		client: spannerClient,
-	}
+	}, nil
 }
 
 // NewTableClient creates a new Table Client instance with the provided table name.
 // During setup, it queries the table to get the primary key columns and the mapping of proto message types to columns.
 // The defaultQueryRowLimit is used as the default limit for queries if not provided in the QueryOptions.
-func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *TableClient {
+func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) (*TableClient, error) {
 	ctx := context.Background()
 	// use go routines
 	var pkCols []*primaryKeyColumn
 	var msgTypeToColumn map[string]string
 	wg := sync.WaitGroup{}
+	errChannel := make(chan error, 2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		var err error
 		pkCols, err = getPrimaryKeyColumns(ctx, d.client, tableName)
 		if err != nil {
-			alog.Fatalf(ctx, "Error getting primary key columns for table %s: %v", tableName, err)
+			errChannel <- fmt.Errorf("Error getting primary key columns for table %s: %v", tableName, err)
 		}
 	}()
 	go func() {
@@ -92,10 +101,14 @@ func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *T
 		var err error
 		msgTypeToColumn, err = getProtoTypeToColumnMap(ctx, d.client, tableName)
 		if err != nil {
-			alog.Fatalf(ctx, "Error getting proto type to column map for table %s: %v", tableName, err)
+			errChannel <- fmt.Errorf("Error getting proto type to column map for table %s: %v", tableName, err)
 		}
 	}()
 	wg.Wait()
+	close(errChannel)
+	for err := range errChannel {
+		return nil, err
+	}
 
 	return &TableClient{
 		db:                d,
@@ -103,7 +116,7 @@ func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) *T
 		primaryKeyColumns: pkCols,
 		msgTypeToColumn:   msgTypeToColumn,
 		defaultLimit:      defaultQueryRowLimit,
-	}
+	}, nil
 }
 
 func (t *TableClient) getColNames(messages []proto.Message) ([]string, error) {
@@ -119,6 +132,119 @@ func (t *TableClient) getColNames(messages []proto.Message) ([]string, error) {
 		colNames = append(colNames, colName)
 	}
 	return colNames, nil
+}
+
+// Create a single row
+func (t *TableClient) Create(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
+	return t.BatchCreate(ctx, []*Row{
+		{
+			Key:      rowKey,
+			Messages: messages,
+		},
+	})
+}
+
+func (t *TableClient) BatchCreate(ctx context.Context, rows []*Row) error {
+	mutations := make([]*spanner.Mutation, len(rows))
+	for i, row := range rows {
+		keyValues := make([]interface{}, len(row.Key))
+		copy(keyValues, row.Key)
+		if len(t.primaryKeyColumns) != len(keyValues) {
+			return ErrInvalidArguments{
+				err:    fmt.Errorf("row key length does not match the primary key columns length"),
+				fields: []string{"rowKey"},
+			}
+		}
+
+		// Construct columns and values from the provided row
+		maxNrValues := len(keyValues) + len(row.Messages)
+		columns := make([]string, 0, maxNrValues)
+		values := make([]interface{}, 0, maxNrValues)
+		for i, keyCol := range t.primaryKeyColumns {
+			if keyCol.isGenerated || keyCol.isStored {
+				continue
+			}
+			columns = append(columns, keyCol.columnName)
+			values = append(values, keyValues[i])
+		}
+
+		for _, message := range row.Messages {
+			columnName, ok := t.msgTypeToColumn[string(proto.MessageName(message))]
+			if !ok {
+				return ErrInvalidArguments{
+					err:    fmt.Errorf("message type %s not found in table %s", proto.MessageName(message), t.tableName),
+					fields: []string{"messages"},
+				}
+			}
+			columns = append(columns, columnName)
+			values = append(values, message)
+		}
+
+		mutations[i] = spanner.Insert(t.tableName, columns, values)
+	}
+
+	_, err := t.db.client.Apply(ctx, mutations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *TableClient) Update(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
+	return t.BatchUpdate(ctx, []*Row{
+		{
+			Key:      rowKey,
+			Messages: messages,
+		},
+	})
+}
+
+func (t *TableClient) BatchUpdate(ctx context.Context, rows []*Row) error {
+	mutations := make([]*spanner.Mutation, len(rows))
+	for i, row := range rows {
+		keyValues := make([]interface{}, len(row.Key))
+		copy(keyValues, row.Key)
+		if len(t.primaryKeyColumns) != len(keyValues) {
+			return ErrInvalidArguments{
+				err:    fmt.Errorf("row key length does not match the primary key columns length"),
+				fields: []string{"rowKey"},
+			}
+		}
+
+		// Construct columns and values from the provided row
+		maxNrValues := len(keyValues) + len(row.Messages)
+		columns := make([]string, 0, maxNrValues)
+		values := make([]interface{}, 0, maxNrValues)
+		for i, keyCol := range t.primaryKeyColumns {
+			if keyCol.isGenerated || keyCol.isStored {
+				continue
+			}
+			columns = append(columns, keyCol.columnName)
+			values = append(values, keyValues[i])
+		}
+
+		for _, message := range row.Messages {
+			columnName, ok := t.msgTypeToColumn[string(proto.MessageName(message))]
+			if !ok {
+				return ErrInvalidArguments{
+					err:    fmt.Errorf("message type %s not found in table %s", proto.MessageName(message), t.tableName),
+					fields: []string{"messages"},
+				}
+			}
+			columns = append(columns, columnName)
+			values = append(values, message)
+		}
+
+		mutations[i] = spanner.Update(t.tableName, columns, values)
+	}
+
+	_, err := t.db.client.Apply(ctx, mutations)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Write one/more proto columns to a single row
@@ -476,4 +602,116 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 	}
 
 	return res, nextPageToken, nil
+}
+
+// Stream queries the table with the provided filter and options and return a stream of rows
+func (t *TableClient) Stream(ctx context.Context, messages []proto.Message, filter *spanner.Statement, opts *StreamOptions) (*StreamResponse[Row], error) {
+	colNames, err := t.getColNames(messages)
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct the query
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(colNames, ","), t.tableName)
+	params := map[string]interface{}{}
+	// Add filtering condition if provided
+	if filter != nil && filter.SQL != "" {
+		query += " WHERE " + filter.SQL
+		if filter.Params != nil && len(filter.Params) > 0 {
+			params = filter.Params
+		}
+	}
+	// Add sorting conditions if provided
+	if opts != nil && opts.SortColumns != nil && len(opts.SortColumns) > 0 {
+		query += " ORDER BY "
+
+		sortColumns := make([]string, 0, len(opts.SortColumns))
+		for column, order := range opts.SortColumns {
+			sortColumns = append(sortColumns, fmt.Sprintf("%s %s", column, order.String()))
+		}
+
+		query += strings.Join(sortColumns, ", ")
+	}
+	// Add limit if provided
+	limit := 100
+	if opts != nil && opts.Limit > 0 {
+		if opts.Limit > 0 {
+			limit = int(opts.Limit)
+		} else if t.defaultLimit > 0 {
+			limit = int(t.defaultLimit)
+		}
+	}
+	query += fmt.Sprintf(" LIMIT %v", limit)
+
+	// Create a map of column names and their respective proto messages
+	columnToMessage := make(map[string]proto.Message)
+	for i, columnName := range colNames {
+		columnToMessage[columnName] = messages[i]
+	}
+
+	stmt := spanner.Statement{
+		SQL:    query,
+		Params: params,
+	}
+
+	res := NewStreamResponse[Row]()
+	go func() {
+		it := t.db.client.Single().Query(ctx, stmt)
+		defer it.Stop()
+
+		// Iterate over the rows and send the results
+		for {
+			row, err := it.Next()
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				res.setError(err)
+				return
+			}
+
+			r := &Row{Messages: make([]proto.Message, len(messages))}
+			for i, col := range colNames {
+				var dataBytes []byte
+				err = row.ColumnByName(col, &dataBytes)
+				if err != nil {
+					res.setError(err)
+					return
+				}
+
+				// Unmarshal the bytes into the provided proto message
+				newMessage := newEmptyMessage(messages[i])
+				err = proto.Unmarshal(dataBytes, newMessage)
+				if err != nil {
+					res.setError(err)
+					return
+				}
+
+				// Apply Read Mask if provided
+				if opts != nil && opts.ReadMasks != nil && i < len(opts.ReadMasks) {
+					readMask := opts.ReadMasks[i]
+					if readMask != nil {
+						readMask.Normalize()
+						// Ensure readMask is valid
+						if !readMask.IsValid(newMessage) {
+							res.setError(ErrInvalidFieldMask)
+							return
+						}
+						// Redact the request according to the provided field mask.
+						fmutils.Filter(newMessage, readMask.GetPaths())
+					}
+				}
+				r.Messages[i] = newMessage
+			}
+
+			res.addItem(r)
+		}
+
+		// Wait for wg
+		res.wait()
+		// Close channel
+		res.close()
+	}()
+
+	return res, nil
 }

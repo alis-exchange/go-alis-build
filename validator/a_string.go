@@ -103,6 +103,82 @@ func (s *str) Equals(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s is equal to one of the provided strings
+func (s *str) EqualsOneOf(strs ...*str) *Rule {
+	strDescriptions := make([]string, len(strs))
+	for i, str := range strs {
+		strDescriptions[i] = str.getDescription()
+	}
+	commaSeperatedStrs := strings.Join(strDescriptions, ", ")
+	id := fmt.Sprintf("s-eqo(%s,%s)", s.description, commaSeperatedStrs)
+
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be equal to one of %s", s.getDescription(), commaSeperatedStrs),
+		notRule:      fmt.Sprintf("%s must not be equal to one of %s", s.getDescription(), commaSeperatedStrs),
+		condition:    fmt.Sprintf("%s equals one of %s", s.getDescription(), commaSeperatedStrs),
+		notCondition: fmt.Sprintf("%s does not equal one of %s", s.getDescription(), commaSeperatedStrs),
+	}
+	args := []argI{s}
+	for _, str := range strs {
+		args = append(args, str)
+	}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, str := range strs {
+				for _, val2 := range str.getValues(str.v, msg) {
+					if val1 == val2 {
+						return false, nil
+					}
+				}
+			}
+		}
+		return true, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures s is not equal to any of the provided strings
+func (s *str) EqualsNoneOf(strs ...*str) *Rule {
+	strDescriptions := make([]string, len(strs))
+	for i, str := range strs {
+		strDescriptions[i] = str.getDescription()
+	}
+	commaSeperatedStrs := strings.Join(strDescriptions, ", ")
+	id := fmt.Sprintf("s-en(%s,%s)", s.description, commaSeperatedStrs)
+
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not be equal to any of %s", s.getDescription(), commaSeperatedStrs),
+		notRule:      fmt.Sprintf("%s must be equal to any of %s", s.getDescription(), commaSeperatedStrs),
+		condition:    fmt.Sprintf("%s does not equal any of %s", s.getDescription(), commaSeperatedStrs),
+		notCondition: fmt.Sprintf("%s equals any of %s", s.getDescription(), commaSeperatedStrs),
+	}
+	args := []argI{s}
+	for _, str := range strs {
+		args = append(args, str)
+	}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, str := range strs {
+				for _, val2 := range str.getValues(str.v, msg) {
+					if val1 == val2 {
+						return true, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures s starts with s2
 func (s *str) StartsWith(str *str) *Rule {
 	id := fmt.Sprintf("s-sw(%s,%s)", s.description, str.description)
@@ -117,6 +193,29 @@ func (s *str) StartsWith(str *str) *Rule {
 		for _, val1 := range s.getValues(s.v, msg) {
 			for _, val2 := range str.getValues(str.v, msg) {
 				if !strings.HasPrefix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures s does not start with s2
+func (s *str) DoesNotStartWith(str *str) *Rule {
+	id := fmt.Sprintf("s-dnsw(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not start with %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must start with %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not start with %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s starts with %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.HasPrefix(val1, val2) {
 					return true, nil
 				}
 			}
@@ -150,6 +249,29 @@ func (s *str) EndsWith(str *str) *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+// Rule that ensures s does not end with s2
+func (s *str) DoesNotEndWith(str *str) *Rule {
+	id := fmt.Sprintf("s-dnsw(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not end with %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must end with %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not end with %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s ends with %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.HasSuffix(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 // Rule that ensures s contains s2
 func (s *str) Contains(str *str) *Rule {
 	id := fmt.Sprintf("s-c(%s,%s)", s.description, str.description)
@@ -164,6 +286,29 @@ func (s *str) Contains(str *str) *Rule {
 		for _, val1 := range s.getValues(s.v, msg) {
 			for _, val2 := range str.getValues(str.v, msg) {
 				if !strings.Contains(val1, val2) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+// Rule that ensures s does not contain s2
+func (s *str) DoesNotContain(str *str) *Rule {
+	id := fmt.Sprintf("s-dnc(%s,%s)", s.description, str.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must not contain %s", s.getDescription(), str.getDescription()),
+		notRule:      fmt.Sprintf("%s must contain %s", s.getDescription(), str.getDescription()),
+		condition:    fmt.Sprintf("%s does not contain %s", s.getDescription(), str.getDescription()),
+		notCondition: fmt.Sprintf("%s contains %s", s.getDescription(), str.getDescription()),
+	}
+	args := []argI{s, str}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, val2 := range str.getValues(str.v, msg) {
+				if strings.Contains(val1, val2) {
 					return true, nil
 				}
 			}
@@ -188,11 +333,93 @@ func (s *str) MatchesRegex(str *str) *Rule {
 			for _, val2 := range str.getValues(str.v, msg) {
 				matched, err := regexp.MatchString(val2, val1)
 				if err != nil {
-					return false, err
+					return true, err
 				}
 				if !matched {
 					return true, nil
 				}
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) MatchesOneOf(str ...*str) *Rule {
+	strDescriptions := make([]string, len(str))
+	for i, str := range str {
+		strDescriptions[i] = str.getDescription()
+	}
+	commaSeperatedStrs := strings.Join(strDescriptions, ", ")
+	id := fmt.Sprintf("s-mo(%s,%s)", s.description, commaSeperatedStrs)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must match one of %s", s.getDescription(), commaSeperatedStrs),
+		notRule:      fmt.Sprintf("%s must not match one of %s", s.getDescription(), commaSeperatedStrs),
+		condition:    fmt.Sprintf("%s matches one of %s", s.getDescription(), commaSeperatedStrs),
+		notCondition: fmt.Sprintf("%s does not match one of %s", s.getDescription(), commaSeperatedStrs),
+	}
+	args := []argI{s}
+	for _, str := range str {
+		args = append(args, str)
+	}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		sValues := s.getValues(s.v, msg)
+		if len(sValues) == 0 {
+			return false, nil
+		}
+		for _, val1 := range s.getValues(s.v, msg) {
+			for _, str := range str {
+				for _, val2 := range str.getValues(str.v, msg) {
+					matched, err := regexp.MatchString(val2, val1)
+					if err != nil {
+						return true, err
+					}
+					if matched {
+						return false, nil
+					}
+				}
+			}
+		}
+		return true, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) IsValidDomain() *Rule {
+	id := fmt.Sprintf("domian(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid domain", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid domain", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid domain", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid domain", s.getDescription()),
+	}
+	args := []argI{s}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			domainRegex := `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(domainRegex).MatchString(val) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) IsValidEmail() *Rule {
+	id := fmt.Sprintf("email(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid email", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid email", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid email", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid email", s.getDescription()),
+	}
+	args := []argI{s}
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			emailRegex := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(emailRegex).MatchString(val) {
+				return true, nil
 			}
 		}
 		return false, nil

@@ -6,53 +6,92 @@ import (
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	"google.golang.org/genproto/googleapis/longrunning"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/proto"
 )
 
 // origin is an interface that wraps the GetOperation method. This allows us
 // to use the GetOperation method of the service from which the operation originated,
 // which should implement this interface if it produces longrunning operations.
-type origin interface {
-	GetOperation(ctx context.Context, in *longrunning.GetOperationRequest, opts ...grpc.CallOption) (*longrunning.Operation, error)
+type LroService interface {
+	GetOperation(ctx context.Context, in *longrunningpb.GetOperationRequest, opts ...grpc.CallOption) (*longrunningpb.Operation, error)
 }
 
-// WaitOperation waits for the operation to complete. The metadataCallback parameter can be used to handle metadata
-// provided by the operation. The origin is the service from which the operation originates and should implement the
-// origin interface.
-func WaitOperation(ctx context.Context, op *longrunningpb.Operation, origin origin,
-	metadataCallback func(*anypb.Any) error,
-	pollingFrequency time.Duration,
+// Wait waits for the operation to complete.
+//
+// Arguments:
+//   - operation: The full LRO resource name, of the format 'operations/*'
+//   - service: The service from which the operation originates
+//   - timeout: The period after which the method time outs and returns an error.
+//
+// Before using this method consider using the op.Wait() method with the lro.WithClient() option to use a custom LRO client.
+func WaitOperation(ctx context.Context, operation string, service LroService, timeout time.Duration,
 ) (*longrunningpb.Operation, error) {
-	var err error
-	for !op.GetDone() {
-		time.Sleep(pollingFrequency)
-		op, err = origin.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.GetName()})
+	// Set the default timeout
+	if timeout == 0 {
+		timeout = time.Second * 77
+	}
+	startTime := time.Now()
+
+	// start loop to check if operation is done or timeout has passed
+	for {
+		op, err := service.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: operation})
 		if err != nil {
-			rpcErr, ok := status.FromError(err)
-			if !ok {
-				if rpcErr.Code() == codes.Unauthenticated {
-					return nil, fmt.Errorf("Your client connection may have reset before the long running operation completed.\nPlease follow the cloud build logs for completion status.")
-				}
-				return nil, fmt.Errorf(rpcErr.Message())
-			}
-			return nil, fmt.Errorf("%s", err.Error())
+			return nil, err
+		}
+		if op.Done {
+			return op, nil
 		}
 
-		if op.GetError() != nil {
-			return nil, fmt.Errorf(op.GetError().GetMessage())
-		} else {
-			// Marshal the anypb.Any metadata to RunDefineMetadata object
-			if metadataCallback != nil && op.GetMetadata() != nil {
-				err := metadataCallback(op.GetMetadata())
-				if err != nil {
-					return nil, err
-				}
+		timePassed := time.Since(startTime)
+		if timePassed.Seconds() > timeout.Seconds() {
+			return nil, ErrWaitDeadlineExceeded{
+				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+					operation, timeout.Seconds()),
 			}
 		}
+		time.Sleep(777 * time.Millisecond)
 	}
-	return op, nil
+}
+
+// UnmarshalOperation retrieves the underlying long-running operation (LRO) and unmarshals its response and metadata
+// into the provided protocol buffer messages.
+//
+// Parameters:
+//   - operation: The resource name of the operation in the format `operations/*`.
+//   - response: The protocol buffer message into which the response of the LRO should be unmarshalled. Can be nil.
+//   - metadata: The protocol buffer message into which the metadata of the LRO should be unmarshalled. Can be nil.
+//
+// Returns:
+//   - An error if the operation is not done, the operation resulted in an error, or there was an issue unmarshalling
+//     the response or metadata. Nil otherwise.
+func UnmarshalOperation(operation *longrunningpb.Operation, response, metadata proto.Message) error {
+	// Unmarshal the Response
+	if response != nil && operation.GetResponse() != nil {
+
+		err := operation.GetResponse().UnmarshalTo(response)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Unmarshal the Metadata
+	if metadata != nil && operation.GetMetadata() != nil {
+		err := operation.GetMetadata().UnmarshalTo(metadata)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Return an error if not done
+	if !operation.Done {
+		return fmt.Errorf("operation (%s) is not done", operation)
+	}
+
+	// Also return an error if the result is an error
+	if operation.GetError() != nil {
+		return fmt.Errorf("%d: %s", operation.GetError().GetCode(), operation.GetError().GetMessage())
+	}
+
+	return nil
 }

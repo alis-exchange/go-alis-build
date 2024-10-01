@@ -1,6 +1,8 @@
 package validator
 
 import (
+	"context"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -8,19 +10,19 @@ import (
 )
 
 // Helper function to implement your Validate rpc
-func HandleValidateRpc(req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMessageResponse, error) {
-	v, ok := validators[req.MsgType]
-	if !ok {
-		return nil, status.Errorf(codes.NotFound, "msgType not found")
+func HandleValidateRpc(ctx context.Context, req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMessageResponse, error) {
+	v, err := getValidator(ctx, req.MsgType)
+	if err != nil {
+		return nil, err
 	}
 	msgBytes := req.Msg
 	// clone v.protoMsg
 	msg := proto.Clone(v.protoMsg)
-	err := proto.Unmarshal(msgBytes, msg)
+	err = proto.Unmarshal(msgBytes, msg)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "could not unmarshal message into %s", v.msgType)
 	}
-	viols, err := v.GetViolations(msg, []string{})
+	viols, err := v.GetViolations(msg, req.FieldPaths, []string{})
 	if err != nil {
 		return nil, err
 	}
@@ -47,10 +49,10 @@ func HandleValidateRpc(req *pbOpen.ValidateMessageRequest) (*pbOpen.ValidateMess
 }
 
 // Helper function to implement your RetrieveRules rpc
-func RetrieveRulesRpc(req *pbOpen.RetrieveRulesRequest) (*pbOpen.RetrieveRulesResponse, error) {
-	v, ok := validators[req.MsgType]
-	if !ok {
-		return nil, status.Errorf(codes.Internal, "msgType not found")
+func RetrieveRulesRpc(ctx context.Context, req *pbOpen.RetrieveRulesRequest) (*pbOpen.RetrieveRulesResponse, error) {
+	v, err := getValidator(ctx, req.MsgType)
+	if err != nil {
+		return nil, err
 	}
 	rules := v.GetRules()
 	return &pbOpen.RetrieveRulesResponse{
