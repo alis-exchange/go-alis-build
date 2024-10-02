@@ -6,6 +6,7 @@ toolchain go1.22.3
 
 require (
 	cloud.google.com/go/iam v1.2.1
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	go.alis.build/alog v0.0.19
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	google.golang.org/grpc v1.67.0
