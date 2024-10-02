@@ -14,7 +14,7 @@ import (
 	"cloud.google.com/go/spanner"
 	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
 	"github.com/google/uuid"
-	"go.alis.build/lro/internal/validate"
+	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -23,6 +23,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	"go.alis.build/lro/internal/validate"
 )
 
 const (
@@ -57,10 +59,11 @@ func WithHost(host string) ResumableOption {
 
 // WaitOptions manages additional functionality with the relevant Wait methods.
 type WaitOptions struct {
-	Client        *Client
-	Timeout       time.Duration
-	PollFrequency time.Duration
-	PollEndpoint  string
+	Client               *Client
+	Timeout              time.Duration
+	PollFrequency        time.Duration
+	PollEndpoint         string
+	InitialSleepDuration time.Duration
 }
 
 // WaitOption is a functional option for the relevant Wait methods.
@@ -100,6 +103,13 @@ func WithPollFrequency(pollFrequency time.Duration) WaitOption {
 func WithPollEndpoint(pollEndpoint string) WaitOption {
 	return func(opts *WaitOptions) {
 		opts.PollEndpoint = pollEndpoint
+	}
+}
+
+// WithInitialSleep sets the sleep duration to be incurred in the first step of Google Cloud Workflow.
+func WithInitialSleepDuration(initialSleepDuration time.Duration) WaitOption {
+	return func(opts *WaitOptions) {
+		opts.InitialSleepDuration = initialSleepDuration
 	}
 }
 
@@ -335,7 +345,7 @@ WaitAsync orchestrates the pausing and resumption of an LRO using a Google Cloud
 This function performs the following steps:
 
  1. Saves the current state for the operation.
- 2. Triggers a Google Cloud Workflow that polls the provided list of operations.
+ 2. Triggers a Google Cloud Workflow that polls the provided list of operations. Waiting can be performed independent of operations by setting initialSleep parameter to the number of seconds to wait before resuming.
  3. Once all operations are complete, the workflow re-invokes the same method,
     passing a special header `x-alis-operation-id` to resume the original business logic using the saved state.
 
@@ -372,14 +382,6 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 	}
 
 	// Set the Timeout
-	var pollEndpoint string
-	if options.PollEndpoint != "" {
-		pollEndpoint = options.PollEndpoint
-	} else {
-		return fmt.Errorf("polling endpoint is required but not specified, please add the lro.WithPollEndpoint() option to your WaitAsync method")
-	}
-
-	// Set the Timeout
 	var timeout time.Duration
 	if options.Timeout != 0 {
 		timeout = options.Timeout
@@ -395,11 +397,29 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 		pollFrequency = time.Second * 7
 	}
 
+	// Set the initial sleep duration
+	var initialSleep time.Duration
+	if options.InitialSleepDuration != 0 {
+		initialSleep = options.InitialSleepDuration
+	} else {
+		initialSleep = time.Second * 0
+	}
+
+	// Set the Poll Endpoint
+	// Only required if waiting with Google Workflow
+	var pollEndpoint string
+	if options.PollEndpoint != "" {
+		pollEndpoint = options.PollEndpoint
+	} else {
+		return fmt.Errorf("polling endpoint is required but not specified, please add the lro.WithPollEndpoint() option to your WaitAsync method")
+	}
+
 	// Prepare the Google Cloud Workflow argument
 	type Args struct {
 		OperationId            string   `json:"operationId"`
 		Operations             []string `json:"operations"`
 		Timeout                int64    `json:"timeout"`
+		InitialSleepDuration   int64    `json:"initialSleepDuration"`
 		PollFrequency          int64    `json:"pollFrequency"`
 		PollEndpoint           string   `json:"pollEndpoint"`
 		PollEndpointAudience   string   `json:"pollEndpointAudience"`
@@ -422,6 +442,7 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 	args, err := json.Marshal(Args{
 		OperationId:            o.id,
 		Operations:             operations,
+		InitialSleepDuration:   int64(initialSleep.Seconds()),
 		Timeout:                int64(timeout.Seconds()),
 		PollFrequency:          int64(pollFrequency.Seconds()),
 		PollEndpoint:           pollEndpoint,
@@ -458,11 +479,19 @@ Optional configuration using 'opts':
 
 Returns the final operation status or an error if timeout is exceeded or another issue occurs.
 */
-func (o *ResumableOperation[T]) Wait(operation string, opts ...WaitOption) (*longrunningpb.Operation, error) {
+func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallback func(string), opts ...WaitOption) error {
+	var err error
+
 	// Add all the provided options to the WaitOptions object
 	options := &WaitOptions{}
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	// First save the state
+	err = o.saveState("operations/"+o.id, state)
+	if err != nil {
+		return err
 	}
 
 	// Use the specified Client if provided
@@ -482,6 +511,14 @@ func (o *ResumableOperation[T]) Wait(operation string, opts ...WaitOption) (*lon
 		timeout = 7 * time.Minute
 	}
 
+	// Set the initial sleep duration
+	var initialSleep time.Duration
+	if options.InitialSleepDuration != 0 {
+		initialSleep = options.InitialSleepDuration
+	} else {
+		initialSleep = time.Second * 0
+	}
+
 	// Set the Polling frequency
 	var pollFrequency time.Duration
 	if options.PollFrequency != 0 {
@@ -490,34 +527,52 @@ func (o *ResumableOperation[T]) Wait(operation string, opts ...WaitOption) (*lon
 		pollFrequency = time.Second * 7
 	}
 
-	// Set the default timeout
-	if timeout == 0 {
-		timeout = time.Second * 77
-	}
 	startTime := time.Now()
 
-	// start loop to check if operation is done or timeout has passed
-	var op *longrunningpb.Operation
-	var err error
-	for {
+	// if set, incur the initial sleep
+	// operations are still processing in this time therefore startTime has already been measured
+	time.Sleep(initialSleep)
 
-		op, err = client.Get(o.ctx, operation)
-		if err != nil {
-			return nil, err
-		}
-		if op.Done {
-			return op, nil
-		}
+	// The following block of code is only applicable when waiting for operations
+	{
+		g := new(errgroup.Group)
 
-		timePassed := time.Since(startTime)
-		if timePassed.Seconds() > timeout.Seconds() {
-			return nil, ErrWaitDeadlineExceeded{
-				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-					operation, timeout.Seconds()),
-			}
+		// locally wait for each operation and contribute status to wait group
+		for _, op := range operations {
+			g.Go(func() error {
+				// start loop to check if operation is done or timeout has passed
+				var operation *longrunningpb.Operation
+				for {
+					operation, err = client.Get(o.ctx, op)
+					if err != nil {
+						return err
+					}
+					if operation.Done {
+						return nil
+					}
+
+					timePassed := time.Since(startTime)
+					if timePassed.Seconds() > timeout.Seconds() {
+						return ErrWaitDeadlineExceeded{
+							message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+								operation, timeout.Seconds()),
+						}
+					}
+					time.Sleep(pollFrequency)
+				}
+			})
 		}
-		time.Sleep(pollFrequency)
+		if err := g.Wait(); err != nil {
+			return err
+		}
 	}
+
+	// An optional waiting callback can be provided if the user would like to resume execution upon completion of waiting
+	if resumeCallback != nil {
+		resumeCallback(o.id)
+	}
+
+	return nil
 }
 
 // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
