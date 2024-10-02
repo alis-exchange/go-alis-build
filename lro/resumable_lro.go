@@ -473,6 +473,7 @@ Wait blocks until the provided long-running operation completes or times out.
 
 Optional configuration using 'opts':
 
+  - InitialSleep: Minimum duration to wait irrespective of operation waiting.
   - Timeout: Maximum duration to wait (default: 7 minutes).
   - PollFrequency: How often to check operation status (default: 7 seconds).
   - Client: Custom client for polling (default: client used to create ResumableOperation).
@@ -555,15 +556,16 @@ func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallba
 					if timePassed.Seconds() > timeout.Seconds() {
 						return ErrWaitDeadlineExceeded{
 							message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-								operation, timeout.Seconds()),
+								op, timeout.Seconds()),
 						}
 					}
 					time.Sleep(pollFrequency)
 				}
 			})
 		}
-		if err := g.Wait(); err != nil {
-			return err
+		groupErr := g.Wait()
+		if groupErr != nil {
+			return groupErr
 		}
 	}
 
