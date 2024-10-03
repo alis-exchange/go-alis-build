@@ -106,12 +106,22 @@ func (h *HttpAuthorizer) HandleAuth(resp http.ResponseWriter, req *http.Request)
 	// ensure all requests not going to /auth have a valid access token
 	accessTokenCookie, err := req.Cookie("access_token")
 	if err != nil || accessTokenCookie.Value == "" {
+		// first set cookie "post_auth_redirect_uri" to the current request uri
+		http.SetCookie(resp, &http.Cookie{
+			Name:  "post_auth_redirect_uri",
+			Value: req.RequestURI,
+		})
 		http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 		return true
 	} else {
 		// validate access token
 		err = h.validateJwt(accessTokenCookie.Value)
 		if err != nil {
+			// first set cookie "post_auth_redirect_uri" to the current request uri
+			http.SetCookie(resp, &http.Cookie{
+				Name:  "post_auth_redirect_uri",
+				Value: req.RequestURI,
+			})
 			http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 			return true
 		}
