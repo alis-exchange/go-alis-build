@@ -8,10 +8,11 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"cloud.google.com/go/spanner"
 	executions "cloud.google.com/go/workflows/executions/apiv1"
-	"go.alis.build/lro/internal/validate"
 	"go.alis.build/sproto"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+
+	"go.alis.build/lro/internal/validate"
 )
 
 const (
@@ -55,6 +56,8 @@ type WorkflowsConfig struct {
 	Location string
 	// Workflow name, for example: my-lro-workflow
 	Workflow string
+	// Set a default host for resumable operations, which can be overwritten via options on NewResumableOperation.
+	Host string
 }
 
 // SpannerConfig is used to configure the underlygin Google Cloud Spanner client.
@@ -103,6 +106,15 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 
 	// Instantiate a new Workflows client if provided
 	if options.WorkflowsConfig != nil {
+		if options.WorkflowsConfig.Project == "" {
+			return nil, fmt.Errorf("workflowsConfig.project is required but not provided")
+		}
+		if options.WorkflowsConfig.Location == "" {
+			return nil, fmt.Errorf("workflowsConfig.location is required but not provided")
+		}
+		if options.WorkflowsConfig.Workflow == "" {
+			return nil, fmt.Errorf("workflowsConfig.workflow is required but not provided")
+		}
 		options.WorkflowsConfig.name = fmt.Sprintf("projects/%s/locations/%s/workflows/%s",
 			options.WorkflowsConfig.Project, options.WorkflowsConfig.Location, options.WorkflowsConfig.Workflow)
 		client.workflowsConfig = options.WorkflowsConfig

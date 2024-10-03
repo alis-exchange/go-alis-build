@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
@@ -34,8 +35,9 @@ const (
 
 // ResumableOptions are used to configure options with the ResumableOperation object.
 type ResumableOptions struct {
-	ResumeEndpoint string
-	Host           string
+	ResumeEndpoint      string
+	LocalResumeCallback func(context.Context)
+	Host                string
 }
 
 // ResumableOption is a functional option for the NewResumableOperation method.
@@ -49,6 +51,19 @@ func WithResumeEndpoint(endpoint string) ResumableOption {
 	}
 }
 
+// WithLocalResumeCallback sets a callback to mimic the resume endpoint during local testing.
+// If WithResumeEndpoint is provided, WithLocalResumeCallback is required.
+// Example:
+//
+//	localLocalResumeCallback := func(newCtx context.Context) {
+//		s.IntegrateFile(newCtx, &pb.IntegrateFileRequest)
+//	}
+func WithLocalResumeCallback(localResumeCallback func(context.Context)) ResumableOption {
+	return func(opts *ResumableOptions) {
+		opts.LocalResumeCallback = localResumeCallback
+	}
+}
+
 // WithHost sets the host for the resumable operation.
 // This is used to infer the resume endpoint if not provided.
 func WithHost(host string) ResumableOption {
@@ -59,11 +74,11 @@ func WithHost(host string) ResumableOption {
 
 // WaitOptions manages additional functionality with the relevant Wait methods.
 type WaitOptions struct {
-	Client               *Client
-	Timeout              time.Duration
-	PollFrequency        time.Duration
-	PollEndpoint         string
-	InitialSleepDuration time.Duration
+	Client              *Client
+	Timeout             time.Duration
+	PollFrequency       time.Duration
+	PollEndpoint        string
+	InitialWaitDuration time.Duration
 }
 
 // WaitOption is a functional option for the relevant Wait methods.
@@ -106,21 +121,22 @@ func WithPollEndpoint(pollEndpoint string) WaitOption {
 	}
 }
 
-// WithInitialSleep sets the sleep duration to be incurred in the first step of Google Cloud Workflow.
-func WithInitialSleepDuration(initialSleepDuration time.Duration) WaitOption {
+// WithInitialWait sets the sleep duration to be incurred in the first step of Google Cloud Workflow.
+func WithInitialWaitDuration(initialWaitDuration time.Duration) WaitOption {
 	return func(opts *WaitOptions) {
-		opts.InitialSleepDuration = initialSleepDuration
+		opts.InitialWaitDuration = initialWaitDuration
 	}
 }
 
 // ResumableOperation is the object used to manage the relevant LROs activties.
 type ResumableOperation[T State] struct {
-	ctx            context.Context
-	client         *Client
-	id             string
-	operation      *longrunningpb.Operation
-	resumeEndpoint string
-	devMode        bool
+	ctx                 context.Context
+	client              *Client
+	id                  string
+	operation           *longrunningpb.Operation
+	resumeEndpoint      string
+	localResumeCallback func(context.Context)
+	devMode             bool
 }
 
 // A State object of any type.
@@ -151,22 +167,45 @@ func NewResumableOperation[T State](ctx context.Context, client *Client, opts ..
 		opt(options)
 	}
 
-	// Get the method from the context
-	method, ok := grpc.Method(ctx)
-	// Construct the resume endpoint from the host and method
-	var resumeEndpoint string
-	if options.Host != "" && ok && method != "" {
-		resumeEndpoint = options.Host + method
-	}
-	// If the resume endpoint is provided, use it
-	if options.ResumeEndpoint != "" {
-		resumeEndpoint = options.ResumeEndpoint
+	op = &ResumableOperation[T]{
+		ctx:                 context.WithoutCancel(ctx),
+		client:              client,
+		localResumeCallback: options.LocalResumeCallback,
 	}
 
-	op = &ResumableOperation[T]{
-		ctx:            context.WithoutCancel(ctx),
-		client:         client,
-		resumeEndpoint: resumeEndpoint,
+	// configure devMode
+	if os.Getenv("K_SERVICE") == "" {
+		op.devMode = true
+	}
+
+	// configure resumeEndpoint
+	{
+		var resumeEndpoint string
+		if options.ResumeEndpoint != "" {
+			// If the resume endpoint is provided, use it
+			resumeEndpoint = options.ResumeEndpoint
+		} else {
+			// Infer resume endpoint
+
+			// if no host is provided in options, use the workflows config default
+			if options.Host == "" {
+				options.Host = client.workflowsConfig.Host
+			}
+
+			// if host is resolved, get the method from the context
+			if options.Host != "" {
+				method, ok := grpc.Method(ctx)
+				if ok && method != "" {
+					resumeEndpoint = options.Host + method
+				}
+			}
+		}
+
+		// If a resume endpoint is specified, specify a resume callback if in dev mode
+		if resumeEndpoint != "" && options.LocalResumeCallback == nil && op.devMode {
+			return nil, nil, fmt.Errorf("please use WithLocalResumeCallback when waiting locally to replace the function of WithResumeEndpoint")
+		}
+		op.resumeEndpoint = resumeEndpoint
 	}
 
 	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
@@ -345,7 +384,7 @@ WaitAsync orchestrates the pausing and resumption of an LRO using a Google Cloud
 This function performs the following steps:
 
  1. Saves the current state for the operation.
- 2. Triggers a Google Cloud Workflow that polls the provided list of operations. Waiting can be performed independent of operations by setting initialSleep parameter to the number of seconds to wait before resuming.
+ 2. Triggers a Google Cloud Workflow that polls the provided list of operations. Waiting can be performed independent of operations by setting initialWaitDuration parameter to the number of seconds to wait before resuming.
  3. Once all operations are complete, the workflow re-invokes the same method,
     passing a special header `x-alis-operation-id` to resume the original business logic using the saved state.
 
@@ -389,6 +428,14 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 		timeout = 7 * time.Minute
 	}
 
+	// Set the initial sleep duration
+	var initialWaitDuration time.Duration
+	if options.InitialWaitDuration != 0 {
+		initialWaitDuration = options.InitialWaitDuration
+	} else {
+		initialWaitDuration = time.Second * 0
+	}
+
 	// Set the Polling frequency
 	var pollFrequency time.Duration
 	if options.PollFrequency != 0 {
@@ -397,21 +444,10 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 		pollFrequency = time.Second * 7
 	}
 
-	// Set the initial sleep duration
-	var initialSleep time.Duration
-	if options.InitialSleepDuration != 0 {
-		initialSleep = options.InitialSleepDuration
-	} else {
-		initialSleep = time.Second * 0
-	}
-
-	// Set the Poll Endpoint
-	// Only required if waiting with Google Workflow
-	var pollEndpoint string
-	if options.PollEndpoint != "" {
-		pollEndpoint = options.PollEndpoint
-	} else {
-		return fmt.Errorf("polling endpoint is required but not specified, please add the lro.WithPollEndpoint() option to your WaitAsync method")
+	// Process resumeEndpoint
+	resumeUrl, err := url.Parse(o.resumeEndpoint)
+	if err != nil {
+		return fmt.Errorf("invalid resume endpoint (%s): %w", o.resumeEndpoint, err)
 	}
 
 	// Prepare the Google Cloud Workflow argument
@@ -419,7 +455,7 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 		OperationId            string   `json:"operationId"`
 		Operations             []string `json:"operations"`
 		Timeout                int64    `json:"timeout"`
-		InitialSleepDuration   int64    `json:"initialSleepDuration"`
+		InitialWaitDuration    int64    `json:"initialWaitDuration"`
 		PollFrequency          int64    `json:"pollFrequency"`
 		PollEndpoint           string   `json:"pollEndpoint"`
 		PollEndpointAudience   string   `json:"pollEndpointAudience"`
@@ -427,37 +463,55 @@ func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ..
 		ResumeEndpointAudience string   `json:"resumeEndpointAudience"`
 	}
 
-	// Retrieve the Audience values required by the authenticated api call made by the workflow.
-	pollUrl, err := url.Parse(pollEndpoint)
+	// Configure the arguments to pass into the container at runtime.
+	args := Args{
+		OperationId:            o.id,
+		Operations:             operations,
+		InitialWaitDuration:    int64(initialWaitDuration.Seconds()),
+		Timeout:                int64(timeout.Seconds()),
+		PollFrequency:          int64(pollFrequency.Seconds()),
+		ResumeEndpoint:         o.resumeEndpoint,
+		ResumeEndpointAudience: "https://" + resumeUrl.Host,
+	}
+
+	// Set the Poll Endpoint
+	// Only required if waiting on operations with Google Workflow
+	var pollEndpoint string
+	var pollUrl *url.URL
+
+	if options.PollEndpoint != "" {
+		pollEndpoint = options.PollEndpoint
+	} else if o.client.workflowsConfig.Host != "" {
+		pollEndpoint = o.client.workflowsConfig.Host + "/google.longrunning.Operations/GetOperation"
+	}
+
+	if pollEndpoint == "" && len(operations) > 0 {
+		// polling endpoint is only used if operations are provided, therefore do not error if no operations are provided
+		return fmt.Errorf("polling endpoint is required to retrieve the given operations, specify lro.WithPollEndpoint() option in invocation of WaitAsync")
+	}
+
+	pollUrl, err = url.Parse(pollEndpoint)
 	if err != nil {
 		return fmt.Errorf("invalid polling endpoint (%s): %w", pollEndpoint, err)
 	}
-	resumeUrl, err := url.Parse(o.resumeEndpoint)
-	if err != nil {
-		return fmt.Errorf("invalid resume endpoint (%s): %w", o.resumeEndpoint, err)
+
+	// update args given valid pollEndpoint
+	args.PollEndpoint = pollEndpoint
+	if pollUrl != nil {
+		args.PollEndpointAudience = "https://" + pollUrl.Host
 	}
 
-	// Configure the arguments to pass into the container at runtime.
 	// The Workflow service requires the argument in JSON format.
-	args, err := json.Marshal(Args{
-		OperationId:            o.id,
-		Operations:             operations,
-		InitialSleepDuration:   int64(initialSleep.Seconds()),
-		Timeout:                int64(timeout.Seconds()),
-		PollFrequency:          int64(pollFrequency.Seconds()),
-		PollEndpoint:           pollEndpoint,
-		PollEndpointAudience:   "https://" + pollUrl.Host,
-		ResumeEndpoint:         o.resumeEndpoint,
-		ResumeEndpointAudience: "https://" + resumeUrl.Host,
-	})
+	argsBytes, err := json.Marshal(args)
 	if err != nil {
 		return err
 	}
+
 	// Launch Google Cloud Workflows and wait...
 	_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
 		Parent: o.client.workflowsConfig.name,
 		Execution: &executionspb.Execution{
-			Argument:     string(args),
+			Argument:     string(argsBytes),
 			CallLogLevel: executionspb.Execution_LOG_ALL_CALLS,
 		},
 	})
@@ -473,14 +527,14 @@ Wait blocks until the provided long-running operation completes or times out.
 
 Optional configuration using 'opts':
 
-  - InitialSleep: Minimum duration to wait irrespective of operation waiting.
+  - InitialWait: Minimum duration to wait irrespective of operation waiting.
   - Timeout: Maximum duration to wait (default: 7 minutes).
   - PollFrequency: How often to check operation status (default: 7 seconds).
   - Client: Custom client for polling (default: client used to create ResumableOperation).
 
 Returns the final operation status or an error if timeout is exceeded or another issue occurs.
 */
-func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallback func(string), opts ...WaitOption) error {
+func (o *ResumableOperation[T]) WaitSync(operations []string, state *T, opts ...WaitOption) error {
 	var err error
 
 	// Add all the provided options to the WaitOptions object
@@ -488,7 +542,6 @@ func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallba
 	for _, opt := range opts {
 		opt(options)
 	}
-
 	// First save the state
 	err = o.saveState("operations/"+o.id, state)
 	if err != nil {
@@ -512,12 +565,12 @@ func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallba
 		timeout = 7 * time.Minute
 	}
 
-	// Set the initial sleep duration
-	var initialSleep time.Duration
-	if options.InitialSleepDuration != 0 {
-		initialSleep = options.InitialSleepDuration
+	// Set the initial wait duration
+	var initialWaitDuration time.Duration
+	if options.InitialWaitDuration != 0 {
+		initialWaitDuration = options.InitialWaitDuration
 	} else {
-		initialSleep = time.Second * 0
+		initialWaitDuration = time.Second * 0
 	}
 
 	// Set the Polling frequency
@@ -530,9 +583,9 @@ func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallba
 
 	startTime := time.Now()
 
-	// if set, incur the initial sleep
+	// if set, incur the initial wait
 	// operations are still processing in this time therefore startTime has already been measured
-	time.Sleep(initialSleep)
+	time.Sleep(initialWaitDuration)
 
 	// The following block of code is only applicable when waiting for operations
 	{
@@ -569,11 +622,30 @@ func (o *ResumableOperation[T]) Wait(operations []string, state *T, resumeCallba
 		}
 	}
 
-	// An optional waiting callback can be provided if the user would like to resume execution upon completion of waiting
-	if resumeCallback != nil {
-		resumeCallback(o.id)
-	}
+	newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
 
+	// user-specified callback to enable resuming after local waiting
+	o.localResumeCallback(newCtx)
+
+	return nil
+}
+
+func (o *ResumableOperation[T]) Wait(operations []string, state *T, opts ...WaitOption) error {
+	var err error
+
+	if o.devMode {
+		// time.Sleep local waiting
+		err = o.WaitSync(operations, state, opts...)
+		if err != nil {
+			return err
+		}
+	} else {
+		// workflow waiting
+		err = o.WaitAsync(operations, state, opts...)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

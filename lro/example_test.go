@@ -93,7 +93,7 @@ func ExampleNewResumableOperation() {
 
 				// In development mode, simply wait for the relevant LRO(s) to complete.
 				if op.DevMode() {
-					op.Wait(lro2.Name)
+					op.WaitSync([]string{lro2.Name}, nil)
 				} else {
 					pollEndpoint := "https://..."
 					err = op.WaitAsync([]string{lro2.GetName()}, checkpoint, WithPollEndpoint(pollEndpoint))
