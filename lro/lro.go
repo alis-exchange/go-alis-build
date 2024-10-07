@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/google/uuid"
@@ -16,26 +17,66 @@ import (
 
 // Operation is the object used to manage the relevant LROs activties.
 type Operation struct {
-	ctx       context.Context
-	client    *Client
-	id        string
-	operation *longrunningpb.Operation
+	ctx        context.Context
+	client     *Client
+	id         string
+	operation  *longrunningpb.Operation
+	waitConfig *WaitConfig
 }
 
-// Options are used to configure options with the Operation object.
-type Options struct {
-	existingOperation string
+type WaitConfig struct {
+	childOperations []*longrunningpb.Operation
+	resumeConfig    *ResumeConfig[State]
+	waitDuration    *time.Duration
+	selfWait        bool
+	devMode         bool
+}
+
+type ResumeConfig[T State] struct {
+	resumeEndpoint      string
+	localResumeCallback func(context.Context)
+	state               *T
+	devMode             bool
 }
 
 // Option is a functional option for the NewOperation method.
-type Option func(*Options)
+type Option func(*Operation)
 
-// WithExistingOperation allows one to instantiate a new Operation object from an
-// existing LRO.
-func WithExistingOperation(operation string) Option {
-	return func(opts *Options) {
-		opts.existingOperation = operation
+// WithResumeConfig enables resume functionality on completion of waiting
+func WithResumeConfig[T State](resumeConfig *ResumeConfig[State]) Option {
+	return func(op *Operation) {
+		op.waitConfig.resumeConfig = resumeConfig
 	}
+}
+
+// WithResumeConfig enables resume functionality on completion of waiting
+func WithWaitDuration(waitDuration *time.Duration) Option {
+	return func(op *Operation) {
+		op.waitConfig.waitDuration = waitDuration
+	}
+}
+
+// ForChildOperations allows waiting until all child operations are done, or timeout is reached
+func ForChildOperations(childOperations []*longrunningpb.Operation) Option {
+	return func(op *Operation) {
+		op.waitConfig.childOperations = childOperations
+	}
+}
+
+// ForChildOperations allows waiting until all child operations are done, or timeout is reached
+func ForSelf(selfWait bool) Option {
+	return func(op *Operation) {
+		op.waitConfig.selfWait = selfWait
+	}
+}
+
+// Wait blocks until the specified option(s) resolve.
+func (o *Operation) Wait(opts ...Option) error {
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	return nil
 }
 
 /*
@@ -45,21 +86,16 @@ Example:
 
 	op, err := lro.NewOperation(ctx, lroClient)
 */
-func NewOperation(ctx context.Context, client *Client, opts ...Option) (op *Operation, err error) {
-	options := &Options{}
-	for _, opt := range opts {
-		opt(options)
-	}
-
+func NewOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
 	op = &Operation{
 		ctx:    context.WithoutCancel(ctx),
 		client: client,
 	}
 
 	// If an existing LRO has been provided, simply retrieve one
-	if options.existingOperation != "" {
+	if operation != "" {
 		// Get a copy of the current LRO
-		lro, err := op.client.Get(op.ctx, options.existingOperation)
+		lro, err := op.client.Get(op.ctx, operation)
 		if err != nil {
 			return nil, err
 		}
