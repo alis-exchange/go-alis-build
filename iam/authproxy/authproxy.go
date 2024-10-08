@@ -119,6 +119,7 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 		http.SetCookie(resp, &http.Cookie{
 			Name:  "post_auth_redirect_uri",
 			Value: req.RequestURI,
+			Path:  "/",
 		})
 		http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 		return true
