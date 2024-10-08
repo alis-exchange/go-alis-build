@@ -20,6 +20,12 @@ type IAM struct {
 	memberResolver map[string](func(ctx context.Context, groupType string, groupId string, az *Authorizer) bool)
 	// Globally disable auth
 	disabled bool
+
+	// a map that RoleHasPermission method can use to check if a role has a permission
+	rolePermissionMap map[string]map[string]bool
+
+	// the users client to use for fetching user policies in case they are not provided in the JWT token
+	usersClient openIam.UsersServiceClient
 }
 
 // New creates a new IAM object which keeps track of the given roles and deployment service account email.
@@ -34,6 +40,16 @@ func New(roles []*openIam.Role, deploymentServiceAccountEmail string) (*IAM, err
 		memberResolver:                make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
 	}
 
+	// populate rolePermissionMap
+	i.rolePermissionMap = make(map[string]map[string]bool)
+	for _, role := range roles {
+		roleName := role.Name
+		i.rolePermissionMap[roleName] = make(map[string]bool)
+		for _, permission := range role.Permissions {
+			i.rolePermissionMap[roleName][permission] = true
+		}
+	}
+
 	return i, nil
 }
 
@@ -44,16 +60,17 @@ Arguments:
   - permission: the Permission, for example '/alis.in.reports.v1.ReportsService/GetReport'
 */
 func (s *IAM) RoleHasPermission(role string, permission string) bool {
-	for _, r := range s.roles {
-		if r.Name == role {
-			for _, p := range r.Permissions {
-				if p == permission {
-					return true
-				}
-			}
-		}
+	// accomodating legacy bindings where role was either just roleId
+	// or alis-build role name, e.g. organisations/*/products/*/roles/*
+	if !strings.HasPrefix(role, "roles/") {
+		roleParts := strings.Split(role, "/")
+		roleId := roleParts[len(roleParts)-1]
+		role = "roles/" + roleId
 	}
-	return false
+	if _, ok := s.rolePermissionMap[role]; !ok {
+		return false
+	}
+	return s.rolePermissionMap[role][permission]
 }
 
 // WithMemberResolver registers a function to resolve whether a requester is a member of a group.
@@ -69,6 +86,12 @@ func (s *IAM) WithMemberResolver(groupTypes []string, resolver func(ctx context.
 		}
 		s.memberResolver[groupType] = resolver
 	}
+	return s
+}
+
+// WithUsersClient registers the users client to use for fetching user policies in case they are not provided in the JWT token.
+func (s *IAM) WithUsersClient(usersClient openIam.UsersServiceClient) *IAM {
+	s.usersClient = usersClient
 	return s
 }
 

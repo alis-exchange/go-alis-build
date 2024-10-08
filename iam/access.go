@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,14 +33,26 @@ type Authorizer struct {
 	// Format: /package.service/method
 	Method string
 
-	// Policies applicable for the method.
-	Policies []*iampb.Policy
+	// Concurrency safe storage of policies that are always checked
+	policies *sync.Map
 
 	// Skip authorization. No auth required if requester is super admin or the auth is already claimed.
 	skipAuth bool
 
 	// The ctx which is applicable for the duration of the grpc method call.
 	ctx context.Context
+
+	// A cache to store the result of the member resolver function
+	memberCache *sync.Map
+
+	// A wait group to track any background policy fetches before checking access.
+	wg *sync.WaitGroup
+
+	// A generic cache that group resolvers can use to store data used to resolve group membership.
+	// There is no need to store final results in this cache, as these are automatically cached by the Authorizer.
+	// An example use case is to store the result of a database query to avoid duplicate queries if a query could
+	// resolve more than one group membership.
+	Cache *sync.Map
 }
 
 /*
@@ -66,7 +80,8 @@ Returns:
 func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, error) {
 	authorizer := &Authorizer{
 		iam:      i,
-		Policies: []*iampb.Policy{},
+		policies: &sync.Map{},
+		wg:       &sync.WaitGroup{},
 	}
 
 	// First, we'll extract the Identity from the context
@@ -74,7 +89,6 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	if err != nil {
 		return nil, ctx, err
 	}
-
 	authorizer.Identity = identity
 	if authorizer.Identity.isDeploymentServiceAccount {
 		authorizer.skipAuth = true
@@ -101,54 +115,27 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	return authorizer, ctx, nil
 }
 
+// Policies returns the list of policies against which any access will be validated.
+func (a *Authorizer) Policies() []*iampb.Policy {
+	// first wait for any async policy fetches to complete
+	a.wg.Wait()
+
+	policies := []*iampb.Policy{}
+	a.policies.Range(func(key, value interface{}) bool {
+		policies = append(policies, value.(*iampb.Policy))
+		return true
+	})
+	return policies
+}
+
 // AuthorizeRpc checks if the Identity has access to the current rpc method based on all the provided policies.
 // This method returns an gRPC compliant error message and should be handled accordingly and is intented to be used by
 // rpc methods.
 func (a *Authorizer) AuthorizeRpc() error {
-	// Skip authorization if the IAM package is globally disabled.
-	if a.iam.disabled {
-		return nil
+	if !a.HasAccess(a.Method) {
+		return status.Errorf(codes.PermissionDenied, "permission denied: %s", a.Method)
 	}
-
-	// if no auth is required, return true
-	if a.skipAuth {
-		return nil
-	}
-
-	// Iterate through the policies and grant access if found
-	for _, policy := range a.Policies {
-		// Now iterate through the bindings
-		for _, binding := range policy.Bindings {
-			// If the binding role has the relevant permission
-			if a.iam.RoleHasPermission(binding.Role, a.Method) {
-				// Check whether the identity is present in the policy members.
-				for _, member := range binding.Members {
-					switch {
-					case strings.HasPrefix(member, "user:") || strings.HasPrefix(member, "serviceAccount:"):
-						// Check for exact member entry
-						if member == a.Identity.PolicyMember() {
-							return nil
-						}
-					case strings.HasPrefix(member, "domain:"):
-						// The domain that represents all the users of that domain.
-						emailDomain := strings.Split(a.Identity.email, "@")[1] // user:joe@mywebsite.com -> mywebsite.com
-						memberDomain := strings.Split(member, ":")[1]          // domain:mywebsite.com -> mywebsite.com
-						if emailDomain == memberDomain {
-							return nil
-						}
-					case member == "allAuthenticatedUsers":
-						// A special identifier that represents anyone
-						// who is authenticated with an approved Identity Provider
-						return nil
-					default:
-						// Still need to provide support for 'groups:'
-					}
-				}
-			}
-		}
-	}
-
-	return status.Errorf(codes.PermissionDenied, "permission denied: %s", a.Method)
+	return nil
 }
 
 // HasAccess checks if the requester has access to the current method based on all the
@@ -164,26 +151,9 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 		return true
 	}
 
-	// Handle any additional Policies.
-	if len(policies) > 0 {
-		for _, policy := range policies {
-			// Now iterate through the bindings
-			for _, binding := range policy.Bindings {
-				// If the binding role has the relevant permission
-				if a.iam.RoleHasPermission(binding.Role, permission) {
-					// Check whether the identity is present in the policy members.
-					for _, member := range binding.Members {
-						if member == a.Identity.PolicyMember() {
-							return true
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Iterate through existing Policies, likely to refer to Policies on parent resources.
-	for _, policy := range a.Policies {
+	// Iterate through Policies and grant access if member found in role that grants access
+	policiesToCheck := append(a.Policies(), policies...)
+	for _, policy := range policiesToCheck {
 		// Now iterate through the bindings
 		for _, binding := range policy.Bindings {
 			// If the binding role has the relevant permission
@@ -191,6 +161,8 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 				// Check whether the identity is present in the policy members.
 				for _, member := range binding.Members {
 					if member == a.Identity.PolicyMember() {
+						return true
+					} else if a.IsGroupMember(member) {
 						return true
 					}
 				}
@@ -201,14 +173,96 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 	return false
 }
 
-// AddPolicy adds a policy to the list of policies against which access will be validated.
+// Returns whether identity is a member of the specified iam group.
+func (a *Authorizer) IsGroupMember(policyMember string) bool {
+	parts := strings.Split(policyMember, ":")
+	groupType := parts[0]
+	if groupType == "user" || groupType == "serviceAccount" {
+		return false
+	}
+	groupId := ""
+	if len(parts) > 1 {
+		groupId = parts[1]
+
+		// builtin domain groups
+		if groupType == "domain" {
+			if strings.HasSuffix(a.Identity.email, "@"+parts[1]) {
+				return true
+			}
+		}
+	}
+	if resolver, ok := a.iam.memberResolver[groupType]; ok {
+		if isMember, ok := a.memberCache.Load(policyMember); ok {
+			return isMember.(bool)
+		}
+		isMember := resolver(a.ctx, groupType, groupId, a)
+		a.memberCache.Store(policyMember, isMember)
+		return isMember
+	}
+	return false
+}
+
+// AddPolicy adds a policy to the list of policies against which any access will be validated.
+// Do not add policies that should not be evaluated in downstream access checks.
+// To add a policy that should only be evaluated for a specific access check, use the optional policies parameter in the HasAccess method.
 func (a *Authorizer) AddPolicy(policy *iampb.Policy) {
-	a.Policies = append(a.Policies, policy)
+	if policy == nil {
+		return
+	}
+	randomUniqueKey := uuid.New().String()
+	a.policies.Store(randomUniqueKey, policy)
 }
 
 // AddIdentityPolicy adds a policy from the underlying Identity to the list of policies against which access will be validated.
 func (a *Authorizer) AddIdentityPolicy() {
 	if a.Identity.policy != nil {
-		a.Policies = append(a.Policies, a.Identity.policy)
+		a.AddPolicy(a.Identity.policy)
+	} else {
+		if a.iam.usersClient != nil {
+			// async fetch the policy
+			a.wg.Add(1)
+			go func() {
+				defer a.wg.Done()
+				req := &iampb.GetIamPolicyRequest{
+					Resource: a.Identity.UserName(),
+				}
+				policy, err := a.iam.usersClient.GetIamPolicy(a.ctx, req)
+				if err != nil {
+					return
+				}
+				a.AddPolicy(policy)
+			}()
+		}
 	}
+}
+
+// Asynchronously fetches a policy on another server using a Grpc Client's GetIamPolicy method.
+// Adds the fetched policy to the list of policies against which access will be validated.
+func (a *Authorizer) AddPolicyFromClientRpc(resource string, clientGetIamPolicyMethod func(ctx context.Context, req *iampb.GetIamPolicyRequest, opts ...grpc.CallOption) (*iampb.Policy, error)) {
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		req := &iampb.GetIamPolicyRequest{
+			Resource: resource,
+		}
+		policy, err := clientGetIamPolicyMethod(a.ctx, req)
+		if err != nil {
+			return
+		}
+		a.AddPolicy(policy)
+	}()
+}
+
+// Asynchronously fetches a policy from a locally implemented service's GetIamPolicy method.
+// Adds the fetched policy to the list of policies against which access will be validated.
+func (a *Authorizer) AddPolicyFromServerRpc(resource string, serverGetIamPolicyMethod func(ctx context.Context, req *iampb.GetIamPolicyRequest) (*iampb.Policy, error)) {
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		policy, err := serverGetIamPolicyMethod(a.ctx, &iampb.GetIamPolicyRequest{Resource: resource})
+		if err != nil {
+			return
+		}
+		a.AddPolicy(policy)
+	}()
 }

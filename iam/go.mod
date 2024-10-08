@@ -5,6 +5,7 @@ go 1.23.1
 require (
 	cloud.google.com/go/iam v1.2.1
 	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/google/uuid v1.6.0
 	go.alis.build/alog v0.0.19
 	google.golang.org/grpc v1.67.1
 	google.golang.org/protobuf v1.34.2
