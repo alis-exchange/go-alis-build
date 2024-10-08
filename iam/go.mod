@@ -1,17 +1,15 @@
-module go.alis.build/authz
+module go.alis.build/iam
 
-go 1.22.0
-
-toolchain go1.22.3
+go 1.23.1
 
 require (
 	cloud.google.com/go/iam v1.2.1
 	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/google/uuid v1.6.0
 	go.alis.build/alog v0.0.19
-	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	google.golang.org/grpc v1.67.0
+	google.golang.org/grpc v1.67.1
 	google.golang.org/protobuf v1.34.2
-	open.alis.services/protobuf v1.66.0
+	open.alis.services/protobuf v1.92.0
 )
 
 require (
@@ -22,3 +20,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 )
+
+// export GOPROXY=https://europe-west1-go.pkg.dev/alis-org-777777/openprotos-go,https://proxy.golang.org,direct && export GONOSUMDB=open.alis.services && go mod tidy
