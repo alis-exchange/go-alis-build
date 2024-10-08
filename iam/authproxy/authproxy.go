@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt"
+	"go.alis.build/iam"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -20,6 +21,9 @@ type AuthProxy struct {
 	authHost   string
 	publicKeys *sync.Map
 }
+
+// AlisForwardedHostHeader ia the header used to forward the host with the
+const AlisForwardedHostHeader = "x-forwarded-host"
 
 // Creates a new AuthProxy with the given authHost.
 // Example authHost: "https://iam-auth-123456789.europe-west1.run.app".
@@ -52,7 +56,7 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 		}
 
 		// add header
-		authReq.Header.Add("x-forwarded-host", req.Host)
+		authReq.Header.Add(AlisForwardedHostHeader, req.Host)
 
 		// set cookies
 		for _, c := range req.Cookies() {
@@ -190,15 +194,15 @@ func (h *AuthProxy) validateJwt(accessToken string) error {
 	return err
 }
 
-// Forwards the Authorization header in the incoming ctx to the outgoing ctx.
-// Use this at the very top of your unary and streaming interceptors.
-func (h *AuthProxy) ForwardAuthorizationHeader(ctx context.Context) (context.Context, error) {
+// ForwardAuthorizationHeader forwards the Authorization header in the incoming ctx to the outgoing ctx.
+// Use this at the very top of your unary and streaming interceptors in the context of a gRPC server
+func ForwardAuthorizationHeader(ctx context.Context) (context.Context, error) {
 	// forward authorization header as metadata in x-alis-forwarded-authorization
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		accessToken := md.Get("authorization")
+		accessToken := md.Get(iam.AuthHeader)
 		if len(accessToken) > 0 {
-			ctx = metadata.AppendToOutgoingContext(ctx, "x-alis-forwarded-authorization", accessToken[0])
+			ctx = metadata.AppendToOutgoingContext(ctx, iam.AlisForwardingHeader, accessToken[0])
 		} else {
 			return ctx, fmt.Errorf("authorization header not found")
 		}
