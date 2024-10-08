@@ -311,7 +311,10 @@ This is useful when you want to add a new identifier to the environment after cr
 func (f *Filter) DeclareIdentifier(identifier Identifier) error {
 	env, err := f.env.Extend(cel.Variable(identifier.Path(), identifier.envType()))
 	if err != nil {
-		return err
+		return ErrInvalidIdentifier{
+			identifier: identifier.Path(),
+			err:        err,
+		}
 	}
 
 	f.env = env
@@ -349,17 +352,26 @@ func (f *Filter) Parse(filter string) (*spanner.Statement, error) {
 
 	ast, issues := f.env.Parse(filter)
 	if issues != nil && issues.Err() != nil {
-		return nil, issues.Err()
+		return nil, ErrInvalidFilter{
+			filter: filter,
+			err:    issues.Err(),
+		}
 	}
 
 	expr, err := cel.AstToParsedExpr(ast)
 	if err != nil {
-		return nil, err
+		return nil, ErrInvalidFilter{
+			filter: filter,
+			err:    err,
+		}
 	}
 
 	sql, params, _, err := f.parseExpr(expr.GetExpr(), nil)
 	if err != nil {
-		return nil, err
+		return nil, ErrInvalidFilter{
+			filter: filter,
+			err:    err,
+		}
 	}
 
 	return &spanner.Statement{

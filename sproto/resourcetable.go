@@ -89,6 +89,14 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 	return rt
 }
 
+/*
+Client returns the underlying spanner.Client instance.
+This client can be used to perform custom queries and mutations.
+*/
+func (rt *ResourceClient) Client() *spanner.Client {
+	return rt.tbl.db.client
+}
+
 func (rt *ResourceClient) Create(ctx context.Context, name string, resource proto.Message, policy *iampb.Policy) (*ResourceRow, error) {
 	if policy == nil && rt.hasIamPolicy {
 		return nil, status.Error(codes.InvalidArgument, "Policy required because resource type has iam policies")

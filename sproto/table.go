@@ -134,6 +134,14 @@ func (t *TableClient) getColNames(messages []proto.Message) ([]string, error) {
 	return colNames, nil
 }
 
+/*
+Client returns the underlying spanner.Client instance.
+This client can be used to perform custom queries and mutations.
+*/
+func (t *TableClient) Client() *spanner.Client {
+	return t.db.client
+}
+
 // Create a single row
 func (t *TableClient) Create(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.BatchCreate(ctx, []*Row{
@@ -526,7 +534,7 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 			}
 		}
 
-		offset, err := strconv.ParseInt(string(offsetBytes), 10, 64)
+		offset, err = strconv.ParseInt(string(offsetBytes), 10, 64)
 		if err != nil {
 			return nil, "", ErrInvalidPageToken{
 				pageToken: opts.PageToken,
@@ -595,6 +603,12 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 	}
 
 	// If less than the limit is returned, there are more rows to read
+	// TODO: Find a better way to determine if there are more rows to read.
+	//  The current logic is flawed. It assume that if the number of rows returned is
+	//  equal to the limit, there are more rows to read. This is not always the case.
+	//  What if the final set of rows returned is exactly equal to the limit? For example,
+	//  given a limit of 100 and total rows are 400, the fourth set of rows returned will
+	//  be exactly 100 rows. The current logic will assume there are more rows to read.
 	var nextPageToken string
 	if len(res) == limit {
 		offsetStr := fmt.Sprintf("%v", offset+int64(len(res)))
