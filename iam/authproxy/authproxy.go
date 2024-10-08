@@ -23,7 +23,7 @@ type AuthProxy struct {
 }
 
 // AlisForwardedHostHeader ia the header used to forward the host with the
-const AlisForwardedHostHeader = "x-forwarded-host"
+const ForwardedHostHeader = "x-forwarded-host"
 
 // Creates a new AuthProxy with the given authHost.
 // Example authHost: "https://iam-auth-123456789.europe-west1.run.app".
@@ -56,7 +56,7 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 		}
 
 		// add header
-		authReq.Header.Add(AlisForwardedHostHeader, req.Host)
+		authReq.Header.Add(ForwardedHostHeader, req.Host)
 
 		// set cookies
 		for _, c := range req.Cookies() {
