@@ -103,6 +103,11 @@ func (h *HttpAuthorizer) HandleAuth(resp http.ResponseWriter, req *http.Request)
 		return true
 	}
 
+	// if favicon requested, return false
+	if req.URL.Path == "/favicon.ico" {
+		return false
+	}
+
 	// ensure all requests not going to /auth have a valid access token
 	accessTokenCookie, err := req.Cookie("access_token")
 	if err != nil || accessTokenCookie.Value == "" {
