@@ -29,8 +29,16 @@ type TableClient struct {
 	defaultLimit      int
 }
 
+/*
+Row represents a row in a table and messages for any PROTO columns.
+*/
 type Row struct {
-	Key      spanner.Key
+	//	Key is a tuple of the row's primary keys values and is used to identify the row to write.
+	//	The order of the keys must match the order of the primary key columns in the table schema.
+	//	For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+	Key spanner.Key
+	// Messages is a list of proto messages to write to the row.
+	// The provided messages must match the types of the PROTO columns in the table schema.
 	Messages []proto.Message
 }
 
@@ -43,7 +51,6 @@ type QueryOptions struct {
 	// This is typically retrieved from a previous response's next page token.
 	// It's a base64 encoded string(base64.StdEncoding.EncodeToString(offset)) of the offset of the last row(s) read.
 	PageToken string
-
 	// Read masks for the proto messages
 	ReadMasks []*fieldmaskpb.FieldMask
 }
@@ -142,7 +149,17 @@ func (t *TableClient) Client() *spanner.Client {
 	return t.db.client
 }
 
-// Create a single row
+/*
+Create creates a new row in the table with the provided row key and proto messages.
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+This method may return a ErrInvalidArguments error if the row key length does not match the primary key columns length,
+or if the message type is not found in the table schema.
+It may also return a ErrAlreadyExists error if the row already exists in the table.
+*/
 func (t *TableClient) Create(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.BatchCreate(ctx, []*Row{
 		{
@@ -152,6 +169,13 @@ func (t *TableClient) Create(ctx context.Context, rowKey spanner.Key, messages .
 	})
 }
 
+/*
+BatchCreate creates multiple rows in the table with the provided row keys and proto messages.
+
+This method may return a ErrInvalidArguments error if the row key length does not match the primary key columns length,
+or if the message type is not found in the table schema.
+It may also return a ErrAlreadyExists error if any of the rows already exist in the table.
+*/
 func (t *TableClient) BatchCreate(ctx context.Context, rows []*Row) error {
 	mutations := make([]*spanner.Mutation, len(rows))
 	for i, row := range rows {
@@ -193,12 +217,28 @@ func (t *TableClient) BatchCreate(ctx context.Context, rows []*Row) error {
 
 	_, err := t.db.client.Apply(ctx, mutations)
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.AlreadyExists:
+			return ErrAlreadyExists{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
 	return nil
 }
 
+/*
+Update updates a row in the table with the provided row key and proto messages.
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+This method may return a ErrNotFound error if the row does not exist in the table.
+*/
 func (t *TableClient) Update(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.BatchUpdate(ctx, []*Row{
 		{
@@ -208,6 +248,13 @@ func (t *TableClient) Update(ctx context.Context, rowKey spanner.Key, messages .
 	})
 }
 
+/*
+BatchUpdate updates multiple rows in the table with the provided row keys and proto messages.
+
+This method may return a ErrInvalidArguments error if the row key length does not match the primary key columns length,
+or if the message type is not found in the table schema.
+It may also return a ErrNotFound error if any of the rows do not exist in the table.
+*/
 func (t *TableClient) BatchUpdate(ctx context.Context, rows []*Row) error {
 	mutations := make([]*spanner.Mutation, len(rows))
 	for i, row := range rows {
@@ -249,13 +296,30 @@ func (t *TableClient) BatchUpdate(ctx context.Context, rows []*Row) error {
 
 	_, err := t.db.client.Apply(ctx, mutations)
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.NotFound:
+			return ErrNotFound{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
 	return nil
 }
 
-// Write one/more proto columns to a single row
+/*
+Write writes a row in the table with the provided row key and proto messages.
+The main difference between Write and Create is that Write will update the row if it already exists, else create a new row.
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+This method may return a ErrInvalidArguments error if the row key length does not match the primary key columns length,
+or if the message type is not found in the table schema.
+*/
 func (t *TableClient) Write(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.BatchWrite(ctx, []*Row{
 		{
@@ -265,7 +329,13 @@ func (t *TableClient) Write(ctx context.Context, rowKey spanner.Key, messages ..
 	})
 }
 
-// Write one/more proto columns to multiple rows
+/*
+BatchWrite writes multiple rows in the table with the provided row keys and proto messages.
+The main difference between BatchWrite and BatchCreate is that BatchWrite will update the rows if they already exist, else create new rows.
+
+This method may return a ErrInvalidArguments error if the row key length does not match the primary key columns length,
+or if the message type is not found in the table schema.
+*/
 func (t *TableClient) BatchWrite(ctx context.Context, rows []*Row) error {
 	var mutations []*spanner.Mutation
 	for _, row := range rows {
@@ -310,18 +380,47 @@ func (t *TableClient) BatchWrite(ctx context.Context, rows []*Row) error {
 	// Apply the mutations
 	_, err := t.db.client.Apply(ctx, mutations)
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.AlreadyExists:
+			return ErrAlreadyExists{
+				err: err,
+			}
+		case codes.NotFound:
+			return ErrNotFound{
+				err: err,
+			}
+		}
 		return err
 	}
 
 	return nil
 }
 
-// Read one/more proto columns from a single row
+/*
+Read reads a single row along with the provided messages/columns
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+This method may return a ErrNotFound error if the row does not exist in the table.
+*/
 func (t *TableClient) Read(ctx context.Context, rowKey spanner.Key, messages ...proto.Message) error {
 	return t.ReadWithFieldMask(ctx, rowKey, messages, nil)
 }
 
-// Read one/more proto columns from a single row and apply the provided read masks
+/*
+ReadWithFieldMask reads a single row along with the provided messages/columns and applies the provided read masks.
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+The length of the read masks should match the length of messages and should be a 1-to-1 mapping. Index i of the read masks corresponds to index i of the messages.
+
+This method may return a ErrNotFound error if the row does not exist in the table.
+It may also return a ErrInvalidFieldMask if an invalid field mask is provided
+*/
 func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) error {
 	// Get columns
 	colNames, err := t.getColNames(messages)
@@ -335,6 +434,7 @@ func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key,
 		if spanner.ErrCode(err) == codes.NotFound {
 			return ErrNotFound{
 				RowKey: rowKey.String(),
+				err:    err,
 			}
 		}
 
@@ -371,12 +471,32 @@ func (t *TableClient) ReadWithFieldMask(ctx context.Context, rowKey spanner.Key,
 	return nil
 }
 
-// Read one/more proto columns from multiple rows
+/*
+BatchRead reads multiple rows along with the provided messages/columns
+
+The row keys are tuples of the rows' primary keys values and are used to identify the rows to write.
+The row keys must match the length of the messages and are a 1-to-1 mapping. Index i of the row keys corresponds to index i of the messages.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+This method may return a ErrInvalidFieldMask if an invalid field mask is provided.
+*/
 func (t *TableClient) BatchRead(ctx context.Context, rowKeys []spanner.Key, messages ...proto.Message) ([]*Row, error) {
 	return t.BatchReadWithFieldMask(ctx, rowKeys, messages, nil)
 }
 
-// Read one/more proto columns from multiple rows and apply the provided read masks
+/*
+BatchReadWithFieldMask reads multiple rows along with the provided messages/columns and applies the provided read masks.
+
+The row keys are tuples of the rows' primary keys values and are used to identify the rows to write.
+The row keys must match the length of the messages and are a 1-to-1 mapping. Index i of the row keys corresponds to index i of the messages.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+
+The length of the read masks should match the length of messages and should be a 1-to-1 mapping. Index i of the read masks corresponds to index i of the messages.
+
+This method may return a ErrInvalidFieldMask if an invalid field mask is provided.
+*/
 func (t *TableClient) BatchReadWithFieldMask(ctx context.Context, rowKeys []spanner.Key, messages []proto.Message, readMasks []*fieldmaskpb.FieldMask) ([]*Row, error) {
 	// Get columns
 	cols, err := t.getColNames(messages)
@@ -465,12 +585,25 @@ func (t *TableClient) BatchReadWithFieldMask(ctx context.Context, rowKeys []span
 	return res, nil
 }
 
-// Delete a single row
+/*
+Delete deletes a row in the table with the provided row key.
+
+The row key is a tuple of the row's primary keys values and is used to identify the row to write.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+*/
 func (t *TableClient) Delete(ctx context.Context, rowKey spanner.Key) error {
 	return t.BatchDelete(ctx, []spanner.Key{rowKey})
 }
 
-// Delete multiple rows
+/*
+BatchDelete deletes multiple rows in the table with the provided row keys.
+
+The row keys are tuples of the rows' primary keys values and are used to identify the rows to write.
+The row keys must match the length of the messages and are a 1-to-1 mapping. Index i of the row keys corresponds to index i of the messages.
+The order of the keys must match the order of the primary key columns in the table schema.
+For example if the primary key is (id, name), the row key must be spanner.Key{{id}, {name}} where {id} and {name} are the primary key values.
+*/
 func (t *TableClient) BatchDelete(ctx context.Context, rowKeys []spanner.Key) error {
 	mutations := make([]*spanner.Mutation, len(rowKeys))
 	for i, key := range rowKeys {
@@ -485,7 +618,12 @@ func (t *TableClient) BatchDelete(ctx context.Context, rowKeys []spanner.Key) er
 	return nil
 }
 
-// Query the table with the provided filter and options
+/*
+Query queries the table with the provided filter and options and return a list of rows along with the next page token.
+
+This method may return a ErrInvalidPageToken error if the provided page token is invalid.
+It may also return a ErrInvalidFieldMask error if an invalid field mask is provided.
+*/
 func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filter *spanner.Statement, opts *QueryOptions) ([]*Row, string, error) {
 	colNames, err := t.getColNames(messages)
 	if err != nil {
@@ -618,7 +756,11 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 	return res, nextPageToken, nil
 }
 
-// Stream queries the table with the provided filter and options and return a stream of rows
+/*
+Stream queries the table with the provided filter and options and return a stream of rows
+
+This method may return a ErrInvalidFieldMask error if an invalid field mask is provided.
+*/
 func (t *TableClient) Stream(ctx context.Context, messages []proto.Message, filter *spanner.Statement, opts *StreamOptions) (*StreamResponse[Row], error) {
 	colNames, err := t.getColNames(messages)
 	if err != nil {

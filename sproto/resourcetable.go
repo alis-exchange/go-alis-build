@@ -33,6 +33,10 @@ type ResourceTblOptions struct {
 	KeyColumnName string
 }
 
+/*
+ResourceClient is a client for a resource table. It provides methods for creating, reading, updating, and deleting resources and
+policies.
+*/
 type ResourceClient struct {
 	tbl                               *TableClient
 	RowKeyConv                        *RowKeyConverter
@@ -42,28 +46,47 @@ type ResourceClient struct {
 	keyColumnName                     string
 }
 
+/*
+ResourceRow represents a row in a resource table. It contains the row key, the resource(proto.Message), and the policy(*iampb.Policy).
+*/
 type ResourceRow struct {
-	RowKey   string
+	// The row key of the resource
+	RowKey string
+	// The resource itself as a proto.Message. This can be cast to the appropriate message type.
 	Resource proto.Message
-	Policy   *iampb.Policy
-	tbl      *TableClient
+	// The IAM policy for the resource. This will be nil if the resource does not have IAM policies.
+	Policy *iampb.Policy
+	tbl    *TableClient
 }
 
+/*
+Merge merges the updatedMsg into the resource. The fieldMaskPaths are the paths of the fields to update.
+*/
 func (rr *ResourceRow) Merge(updatedMsg proto.Message, fieldMaskPaths ...string) {
 	fmutils.Filter(updatedMsg, fieldMaskPaths)
 	fmutils.Prune(rr.Resource, fieldMaskPaths)
 	proto.Merge(rr.Resource, updatedMsg)
 }
 
-// Update the resource in the database. Does not update the policy.
+/*
+Update the resource in the database. Does not update the policy.
+
+This method may return a ErrNotFound error if the row does not exist in the table.
+*/
 func (rr *ResourceRow) Update(ctx context.Context) error {
 	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Resource)
 }
 
+/*
+Delete deletes the resource from the database.
+*/
 func (rr *ResourceRow) Delete(ctx context.Context) error {
 	return rr.tbl.Delete(ctx, spanner.Key{rr.RowKey})
 }
 
+/*
+NewResourceClient creates a new ResourceClient for the given table name and resource message.
+*/
 func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, options *ResourceTblOptions) *ResourceClient {
 	if options == nil {
 		options = &ResourceTblOptions{}
@@ -76,6 +99,8 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 	}
 	tableClient, err := d.NewTableClient(tableName, options.DefaultLimit)
 	if err != nil {
+		// TODO: Return error instead.
+		//  I strongly believe the user should decide on how to handle the error.
 		alog.Fatalf(context.Background(), "Failed to create table client: %v", err)
 	}
 	rt := &ResourceClient{

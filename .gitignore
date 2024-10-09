@@ -5,3 +5,4 @@
 key**.json
 **.local
 **debug**
+/local.env

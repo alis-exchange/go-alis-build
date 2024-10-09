@@ -307,6 +307,8 @@ func NewFilter(identifiers ...Identifier) (*Filter, error) {
 DeclareIdentifier declares a new Identifier in the environment.
 
 This is useful when you want to add a new identifier to the environment after creating the Filter instance.
+
+May return an ErrInvalidIdentifier error if the identifier is invalid.
 */
 func (f *Filter) DeclareIdentifier(identifier Identifier) error {
 	env, err := f.env.Extend(cel.Variable(identifier.Path(), identifier.envType()))
@@ -346,6 +348,8 @@ Examples:
 	filter.Parse("key IN ['resources/1', 'resources/2']")
 	filter.Parse("effective_date != null)
 	filter.Parse("count >= 10)
+
+May return an ErrInvalidFilter error if the filter is invalid.
 */
 func (f *Filter) Parse(filter string) (*spanner.Statement, error) {
 	filter = f.sanitize(filter)

@@ -18,6 +18,7 @@ require (
 	cloud.google.com/go/spanner v1.69.0
 	github.com/google/cel-go v0.21.0
 	github.com/googleapis/go-sql-spanner v1.7.3
+	open.alis.services/protobuf v1.93.0
 )
 
 require (
