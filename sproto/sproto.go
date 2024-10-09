@@ -111,6 +111,7 @@ func (s *Client) ReadProto(ctx context.Context, tableName string, rowKey spanner
 		if spanner.ErrCode(err) == codes.NotFound {
 			return ErrNotFound{
 				RowKey: rowKey.String(),
+				err:    err,
 			}
 		}
 
@@ -926,6 +927,7 @@ func (s *Client) ReadRow(ctx context.Context, tableName string, rowKey spanner.K
 		if spanner.ErrCode(err) == codes.NotFound {
 			return nil, ErrNotFound{
 				RowKey: rowKey.String(),
+				err:    err,
 			}
 		}
 
@@ -1173,6 +1175,13 @@ func (s *Client) InsertRow(ctx context.Context, tableName string, row map[string
 		spanner.Insert(tableName, columns, values),
 	})
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.AlreadyExists:
+			return ErrAlreadyExists{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
@@ -1205,6 +1214,13 @@ func (s *Client) BatchInsertRows(ctx context.Context, tableName string, rows []m
 
 	_, err := s.client.Apply(ctx, mutations)
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.AlreadyExists:
+			return ErrAlreadyExists{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
@@ -1299,6 +1315,13 @@ func (s *Client) UpdateRow(ctx context.Context, tableName string, row map[string
 		spanner.Update(tableName, columns, values),
 	})
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.NotFound:
+			return ErrNotFound{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
@@ -1331,6 +1354,13 @@ func (s *Client) BatchUpdateRows(ctx context.Context, tableName string, rows []m
 
 	_, err := s.client.Apply(ctx, mutations)
 	if err != nil {
+		switch spanner.ErrCode(err) {
+		case codes.NotFound:
+			return ErrNotFound{
+				err: err,
+			}
+		}
+
 		return err
 	}
 
