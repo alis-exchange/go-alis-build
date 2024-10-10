@@ -4,8 +4,7 @@ This package offers an easy way to forward gRPC requests to a service.
 It is mostly useful for gRPC-Web servers that need to forward requests to a different gRPC server
 without having to write RPCs that only wrap the original RPCs.
 
-
-> **Note:** Only unary RPCs are supported at the moment.
+> **Note:** Only supports unary and server streaming RPCs.
 
 ## Usage
 
@@ -30,23 +29,24 @@ func init() {
 }
 ```
 
-2. Use the built in interceptor to forward requests to the correct service
+You can optionally specify which methods to allow.
 
 ```go
-func main() {
-    grpcServer := grpc.NewServer(grpc.UnaryInterceptor(ServiceProxy.UnaryInterceptor))
-}
+ServiceProxy.AddConn(pb.Service_ServiceDesc.ServiceName, conn, "org.product.v1.Service/*", "org.product.v1.OtherService/ExampleMethod")
 ```
 
-You can also use the `IsAllowedMethod` and `ForwardUnaryRequest` in your own custom interceptors
+```go
+
+2. Use the `IsAllowedMethod` and `ForwardUnaryRequest` or `ForwardServerStreamRequest` in your own custom interceptors
 
 ```go
 
 func main() {
-    grpcServer := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptor))
+    grpcServer := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptor), grpc.StreamInterceptor(streamInterceptor))
 }
 
 func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// If the method is allowed, forward the request to the appropriate service
 	if  clients.ServiceProxy.IsAllowedMethod(info.FullMethod) {
 		return clients.ServiceProxy.ForwardUnaryRequest(ctx, req, info)
 	}
@@ -56,5 +56,19 @@ func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServ
 	if err != nil {
 	}
 	return h, err
+}
+
+// Stream interceptor that validates the request and then calls the handler
+func streamInterceptor(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	// If the method is allowed, forward the request to the appropriate service
+	if clients.ServiceProxy.IsAllowedMethod(info.FullMethod) {
+		return clients.ServiceProxy.ForwardServerStreamRequest(stream, info)
+	}
+
+	// Call the handler
+	err := handler(srv, stream)
+	if err != nil {
+	}
+	return err
 }
 ```

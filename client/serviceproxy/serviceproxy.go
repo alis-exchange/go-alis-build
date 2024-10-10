@@ -3,10 +3,10 @@ package serviceproxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
-	"go.alis.build/alog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,42 +16,21 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-type options struct {
-	validator func(ctx context.Context, req interface{}) error
-}
-
-type Option func(*options)
-
-// WithValidator sets the validator for the service proxy
-func WithValidator(validator func(ctx context.Context, req interface{}) error) Option {
-	return func(o *options) {
-		o.validator = validator
-	}
-}
-
 // ServiceProxy is a gRPC service proxy that forwards requests to other services
 type ServiceProxy struct {
 	conns            map[string]*grpc.ClientConn
 	allowedMethods   map[string]bool
 	mu               sync.RWMutex
-	validator        func(ctx context.Context, req interface{}) error
+	requestMessages  map[string]any
 	responseMessages map[string]any
 }
 
 // NewServiceProxy creates a new ServiceProxy
-//
-// An optional validator can be provided to validate requests before forwarding them.
-// This pairs well with the go.alis.build/validator package.
-func NewServiceProxy(opts ...Option) *ServiceProxy {
-	proxyOpts := &options{}
-	for _, o := range opts {
-		o(proxyOpts)
-	}
-
+func NewServiceProxy() *ServiceProxy {
 	return &ServiceProxy{
 		conns:            make(map[string]*grpc.ClientConn),
 		allowedMethods:   make(map[string]bool),
-		validator:        proxyOpts.validator,
+		requestMessages:  make(map[string]any),
 		responseMessages: make(map[string]any),
 	}
 }
@@ -93,8 +72,11 @@ func (f *ServiceProxy) AddConn(service string, clientConn *grpc.ClientConn, allo
 	// TODO: Take into account allowed packages/services/methods to avoid caching unnecessary messages
 	for i := 0; i < sd.Methods().Len(); i++ {
 		method := sd.Methods().Get(i)
+
+		req := dynamicpb.NewMessage(method.Input())
 		resp := dynamicpb.NewMessage(method.Output())
 
+		f.requestMessages[fmt.Sprintf("/%s/%s", service, method.Name())] = req
 		f.responseMessages[fmt.Sprintf("/%s/%s", service, method.Name())] = resp
 	}
 
@@ -112,7 +94,7 @@ func (f *ServiceProxy) RemoveConn(service string) {
 func (f *ServiceProxy) RevokeMethod(method string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.allowedMethods, method)
+	f.allowedMethods[method] = false
 }
 
 // IsAllowedMethod checks if a method is allowed to be proxied
@@ -147,22 +129,23 @@ func (f *ServiceProxy) IsAllowedMethod(fullMethod string) bool {
 	return false
 }
 
-// ForwardUnaryRequest forwards a unary request to the appropriate service
+// ForwardUnaryRequest forwards a unary request to the appropriate service.
 func (f *ServiceProxy) ForwardUnaryRequest(ctx context.Context, req any, info *grpc.UnaryServerInfo) (any, error) {
-
+	// Get the service name from the full method
 	fullMethodParts := strings.Split(info.FullMethod, "/")
 	service := fullMethodParts[1]
 
+	// Ensure the service is registered in the service proxy
 	if _, ok := f.conns[service]; !ok {
 		return nil, status.Errorf(codes.Internal, "service %s not found in service proxy", service)
 	}
 
 	// Get the response message
-	r, ok := f.responseMessages[info.FullMethod]
+	respMsg, ok := f.responseMessages[info.FullMethod]
 	if !ok {
 		return nil, status.Errorf(codes.Internal, "response message not found for method %s", info.FullMethod)
 	}
-	resp := proto.Clone(r.(proto.Message))
+	resp := proto.Clone(respMsg.(proto.Message))
 
 	if err := f.conns[service].Invoke(ctx, info.FullMethod, req, resp); err != nil {
 		return nil, err
@@ -171,87 +154,66 @@ func (f *ServiceProxy) ForwardUnaryRequest(ctx context.Context, req any, info *g
 	return resp, nil
 }
 
-//func (f *ServiceProxy) ForwardStreamRequest(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo) error {
-//	fullMethodParts := strings.Split(info.FullMethod, "/")
-//	service := fullMethodParts[1]
-//
-//	if s, ok := f.conns[service]; !ok || s.clientConn == nil || s.client == nil {
-//		return status.Errorf(codes.Internal, "service %s not found in service proxy", service)
-//	}
-//
-//	// Check if the response message is already known
-//	// If not, get the response message type from the client
-//
-//	outboundStream, err := f.conns[service].clientConn.NewStream(stream.Context(), &grpc.StreamDesc{
-//		ServerStreams: true,
-//		ClientStreams: false,
-//	}, info.FullMethod)
-//	if err != nil {
-//		return status.Errorf(codes.Internal, "error creating stream: %v", err)
-//	}
-//
-//	// Send the request to the external service
-//	if err := outboundStream.SendMsg(req); err != nil {
-//		return status.Errorf(codes.Internal, "error sending message: %v", err)
-//	}
-//
-//	// Relay responses from the external service to the client
-//	for {
-//		// Create a dynamic response message
-//		resp := dynamicpb.NewMessage(methodDesc.Output())
-//
-//		// Receive a response from the external service
-//		err := outboundStream.RecvMsg(resp)
-//		if err == io.EOF {
-//			// Stream ended
-//			break
-//		}
-//		if err != nil {
-//			return fmt.Errorf("failed to receive message from external service: %v", err)
-//		}
-//
-//		// Send the response to the client
-//		if err := stream.SendMsg(resp); err != nil {
-//			return fmt.Errorf("failed to send message to client: %v", err)
-//		}
-//	}
-//
-//	if err := outboundStream.CloseSend(); err != nil {
-//		return fmt.Errorf("failed to close send: %v", err)
-//	}
-//
-//	return nil
-//}
+// ForwardServerStreamRequest forwards a server streaming request to the appropriate service.
+func (f *ServiceProxy) ForwardServerStreamRequest(stream grpc.ServerStream, info *grpc.StreamServerInfo) error {
+	// Get the service name from the full method
+	fullMethodParts := strings.Split(info.FullMethod, "/")
+	service := fullMethodParts[1]
 
-// UnaryInterceptor intercepts unary requests and forwards them to the appropriate service
-// if the method is allowed
-//
-// If a validator is provided, it will be called before calling the handler
-func (f *ServiceProxy) UnaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if f.IsAllowedMethod(info.FullMethod) {
-		return f.ForwardUnaryRequest(ctx, req, info)
+	// Ensure the service is registered in the service proxy
+	if _, ok := f.conns[service]; !ok {
+		return status.Errorf(codes.Internal, "service %s not found in service proxy", service)
 	}
 
-	// Validate the request if a validator is provided
-	if f.validator != nil {
-		if err := f.validator(ctx, req); err != nil {
-			return nil, err
+	// Check if the response message is already known
+	// If not, get the response message type from the client
+
+	outboundStream, err := f.conns[service].NewStream(stream.Context(), &grpc.StreamDesc{
+		ServerStreams: true,
+		ClientStreams: false,
+	}, info.FullMethod)
+	if err != nil {
+		return err
+	}
+
+	reqMsg, ok := f.requestMessages[info.FullMethod]
+	if !ok {
+		return status.Errorf(codes.Internal, "request message not found for method %s", info.FullMethod)
+	}
+	req := proto.Clone(reqMsg.(proto.Message))
+
+	respMsg, ok := f.responseMessages[info.FullMethod]
+	if !ok {
+		return status.Errorf(codes.Internal, "response message not found for method %s", info.FullMethod)
+	}
+
+	// Send the request to the external service
+	if err := outboundStream.SendMsg(req); err != nil {
+		return err
+	}
+
+	// Relay responses from the external service to the client
+	for {
+		resp := proto.Clone(respMsg.(proto.Message))
+		// Receive a response from the external service
+		err := outboundStream.RecvMsg(resp)
+		if err == io.EOF {
+			// Stream ended
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Send the response to the client
+		if err := stream.SendMsg(resp); err != nil {
+			return err
 		}
 	}
 
-	// Call the handler
-	h, err := handler(ctx, req)
-	if err != nil {
-		alog.Debugf(ctx, "%s", req)
-		alog.Warn(ctx, err.Error())
+	if err := outboundStream.CloseSend(); err != nil {
+		return err
 	}
-	return h, err
-}
 
-//func (f *ServiceProxy) StreamInterceptor(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-//
-//	if f.IsAllowedMethod(info.FullMethod) {
-//		return status.Errorf(codes.Unimplemented, "streaming not supported")
-//	}
-//	return err
-//}
+	return nil
+}
