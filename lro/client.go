@@ -19,7 +19,9 @@ const (
 	// OperationColumnName is the column name used in spanner to store LROs
 	OperationColumnName = "Operation"
 	// StateColumnName is the column name used in spanner to store states (if used)
-	StateColumnName = "State"
+	StateColumnName                 = "State"
+	CheckpointIndexColumnName       = "CheckpointIndex"
+	CheckpointProgressionColumnName = "CheckpointProgression"
 )
 
 type ClientOptions struct {

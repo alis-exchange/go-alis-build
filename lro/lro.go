@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -42,11 +44,32 @@ const OperationIdHeaderKey = "x-alis-operation-id"
 
 // Operation is the object used to manage the relevant LROs activties.
 type Operation struct {
-	ctx       context.Context
-	client    *Client
-	id        string
-	operation *longrunningpb.Operation
-	state     any
+	ctx             context.Context
+	client          *Client
+	id              string
+	operation       *longrunningpb.Operation
+	resumable       bool
+	checkpoint      string
+	checkpointIndex int
+	// state     any
+}
+
+type ProgressionOptions struct {
+	checkpointProgression []string
+}
+
+// Option is a functional option for the NewOperation method.
+type ProgressionOption func(*ProgressionOptions) error
+
+// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
+func WithCheckkpointProgression(progression []string) ProgressionOption {
+	return func(p *ProgressionOptions) error {
+		if len(progression) == 0 {
+			return fmt.Errorf("checkpoint progressions cannot be empty")
+		}
+		p.checkpointProgression = progression
+		return nil
+	}
 }
 
 type StateType any
@@ -72,6 +95,7 @@ type WaitConfig struct {
 }
 
 type ResumeConfig struct {
+	ReturnOnResume      bool
 	ResumeEndpoint      string
 	LocalResumeCallback func(context.Context)
 	State               any
@@ -80,11 +104,28 @@ type ResumeConfig struct {
 // Option is a functional option for the NewOperation method.
 type WaitOption func(*WaitConfig) error
 
-func NewResumableOperation[T StateType](ctx context.Context, client *Client) (*Operation, *T, error) {
+func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ProgressionOption) (*Operation, *T, error) {
+	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
+	p := &ProgressionOptions{
+		checkpointProgression: []string{},
+	}
+
+	// Apply all wait options configured by user
+	for _, opt := range opts {
+		err := opt(p)
+		// fail on error in option configuration
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	var err error
+	// var data T
 	op := &Operation{
-		ctx:    context.WithoutCancel(ctx),
-		client: client,
+		ctx:       context.WithoutCancel(ctx),
+		client:    client,
+		resumable: true,
+		// state:     &data,
 	}
 
 	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
@@ -103,6 +144,11 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client) (*O
 		if err != nil {
 			return nil, nil, err
 		}
+		op.checkpointIndex = 0
+		if len(p.checkpointProgression) > 0 {
+			err = saveCheckpointProgression(ctx, "operations/"+op.id, client, p.checkpointProgression)
+			op.checkpoint = p.checkpointProgression[0]
+		}
 		return op, new(T), err
 	} else {
 		// if an existing LRO has been provided, resume by fetching op and state
@@ -120,12 +166,28 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client) (*O
 		if err != nil {
 			return op, nil, err
 		}
-		op.state = state
+		// op.state = state
+
+		checkpointIndex, checkpointProgression, err := loadCheckpointProgression(ctx, "operations/"+op.id, client)
+		op.checkpoint = ""
+		for i, ch := range checkpointProgression {
+			if i == checkpointIndex {
+				op.checkpoint = ch
+				op.checkpointIndex = i
+			}
+		}
+
 		// TODO consider combining the above two operations into one i.e. loadOpAndState
 
 		return op, state, err
 	}
 }
+
+// func WithCheckkpointProgression(operation string) Option {
+// 	return func(o *Operation) {
+// 		o.existingOperation = operation
+// 	}
+// }
 
 /*
 NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
@@ -136,8 +198,9 @@ Example:
 */
 func NewOperation(ctx context.Context, client *Client) (op *Operation, err error) {
 	op = &Operation{
-		ctx:    context.WithoutCancel(ctx),
-		client: client,
+		ctx:       context.WithoutCancel(ctx),
+		client:    client,
+		resumable: false,
 	}
 
 	err = op.create()
@@ -146,6 +209,10 @@ func NewOperation(ctx context.Context, client *Client) (op *Operation, err error
 	}
 
 	return op, err
+}
+
+func (o *Operation) GetCheckpoint() string {
+	return o.checkpoint
 }
 
 func GetOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
@@ -163,17 +230,6 @@ func GetOperation(ctx context.Context, client *Client, operation string) (op *Op
 	op.id = strings.Split(lro.GetName(), "/")[1]
 	op.operation = lro
 	return op, err
-}
-
-// WithResumeConfig enables resume functionality on completion of waiting
-func WithResumeConfig(resumeConfig *ResumeConfig) WaitOption {
-	return func(w *WaitConfig) error {
-		if resumeConfig == nil {
-			return fmt.Errorf("resume config cannot be nil")
-		}
-		w.resumeConfig = resumeConfig
-		return nil
-	}
 }
 
 // WithWaitDuration sets a constant duration for which to wait.
@@ -234,11 +290,24 @@ func ForSelf(selfWait bool) WaitOption {
 }
 
 // Wait blocks until the specified option(s) resolve.
-func (o *Operation) Wait(opts ...WaitOption) error {
+// Wait requires ResumeConfig such that exeuction can resume upon completion of waiting
+// Wait accepts options to determine waiting behaviour
+func (o *Operation) Wait(ctx context.Context, resumeConfig *ResumeConfig, opts ...WaitOption) error {
+	// Validate resumability
+	if !o.resumable {
+		return fmt.Errorf("operation is not resumable, only operations created with NewResumableOperation may invoke Wait")
+	}
+
+	// Validate non-nil resume config
+	if resumeConfig == nil {
+		return fmt.Errorf("resume config cannot be nil")
+	}
+
 	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
 	w := &WaitConfig{
 		waitMechanism: Automatic,
 	}
+	w.resumeConfig = resumeConfig
 
 	// Apply all wait options configured by user
 	for _, opt := range opts {
@@ -246,6 +315,16 @@ func (o *Operation) Wait(opts ...WaitOption) error {
 		// fail on error in option configuration
 		if err != nil {
 			return err
+		}
+	}
+
+	// If wait mechanism is set to automatic,  Determine environment to resolve waiting mechanism (cloud workflows | time.Sleep)
+	// Otherwise use user-set option
+	if w.waitMechanism == Automatic {
+		if os.Getenv("K_SERVICE") == "" {
+			w.waitMechanism = LocalSleep
+		} else {
+			w.waitMechanism = Workflow
 		}
 	}
 
@@ -265,19 +344,16 @@ func (o *Operation) Wait(opts ...WaitOption) error {
 		}
 	}
 
-	// If wait mechanism is set to automatic,  Determine environment to resolve waiting mechanism (cloud workflows | time.Sleep)
-	// Otherwise use user-set option
-	if w.waitMechanism == Automatic {
-		if os.Getenv("K_SERVICE") == "" {
-			w.waitMechanism = LocalSleep
-		} else {
-			w.waitMechanism = Workflow
-		}
+	if w.resumeConfig == nil {
+		return fmt.Errorf("resume config is required but was not provided, specify with WithResumeConfig option")
 	}
 
 	// Save state if resume config is specified with state
-	if w.resumeConfig != nil && w.resumeConfig.State != nil {
+	if w.resumeConfig.State != nil {
 		saveState(o.ctx, o.operation.GetName(), o.client, w.resumeConfig.State)
+	}
+	if o.checkpoint != "" {
+		saveIncrementedCheckpointIndex(o.ctx, o.operation.GetName(), o.client, o.checkpointIndex)
 	}
 
 	startTime := time.Now()
@@ -329,21 +405,33 @@ func (o *Operation) Wait(opts ...WaitOption) error {
 			// Configure workflow's timeout for child operations, accounting for initial wait duration incurred
 			timeoutQuotaAfterWaitDuration := w.timeout - w.waitDuration
 			args.Timeout = int64(timeoutQuotaAfterWaitDuration.Seconds())
+		} else {
+			args.Operations = []string{}
+		}
+
+		// Prevent ReturnOnResume
+		if w.resumeConfig.ReturnOnResume {
+			return fmt.Errorf("can not ReturnOnResume given the wait mechanism is workflow")
 		}
 
 		// 2 (d) Configure workflow's resume endpoint
-		if w.resumeConfig != nil {
-			if w.resumeConfig.ResumeEndpoint == "" {
-				return fmt.Errorf("resume endpoint is required in resume config when wait mechanism is workflow")
+		if w.resumeConfig.ResumeEndpoint == "" {
+			if o.client.workflowsConfig.Host == "" {
+				return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from workflows config host field)")
 			}
-			args.ResumeEndpoint = w.resumeConfig.ResumeEndpoint
-			// Process resumeEndpoint
-			resumeUrl, err := url.Parse(w.resumeConfig.ResumeEndpoint)
-			if err != nil {
-				return fmt.Errorf("could not resolve resumeUrl, invalid resume endpoint (%s): %w", w.resumeConfig.ResumeEndpoint, err)
+			methodName, ok := grpc.Method(ctx)
+			if !ok {
+				return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from grpc.Method())")
 			}
-			args.ResumeEndpointAudience = "https://" + resumeUrl.Host
+			w.resumeConfig.ResumeEndpoint = o.client.workflowsConfig.Host + "/" + methodName
 		}
+		args.ResumeEndpoint = w.resumeConfig.ResumeEndpoint
+		// Process resumeEndpoint
+		resumeUrl, err := url.Parse(w.resumeConfig.ResumeEndpoint)
+		if err != nil {
+			return fmt.Errorf("could not resolve resumeUrl, invalid resume endpoint (%s): %w", w.resumeConfig.ResumeEndpoint, err)
+		}
+		args.ResumeEndpointAudience = "https://" + resumeUrl.Host
 
 		// The Workflow service requires the argument in JSON format.
 		argsBytes, err := json.Marshal(args)
@@ -412,17 +500,18 @@ func (o *Operation) Wait(opts ...WaitOption) error {
 			}
 		}
 
-		// 3. Process resume config, if any
-		if w.resumeConfig != nil {
-			if w.resumeConfig.LocalResumeCallback == nil {
-				return fmt.Errorf("local resume callback is required in resume config when wait mechanism is local sleep")
-			}
-			// attach opId to ctx to pick up existing op on callback
-			// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that much the id in OperationIdHeaderKey
-			newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
-			// user-specified callback to enable resuming after local waiting
-			w.resumeConfig.LocalResumeCallback(newCtx)
+		// 3. Process resume config
+		if w.resumeConfig.ReturnOnResume {
+			return nil
 		}
+		if w.resumeConfig.LocalResumeCallback == nil {
+			return fmt.Errorf("either LocalResumeCallback or ReturnOnResume must be set in ResumeConfig given the wait mechanism is localSleep")
+		}
+		// attach opId to ctx to pick up existing op on callback
+		// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that much the id in OperationIdHeaderKey
+		newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
+		// user-specified callback to enable resuming after local waiting
+		w.resumeConfig.LocalResumeCallback(newCtx)
 
 		return nil
 	default:
@@ -439,14 +528,91 @@ func saveState(ctx context.Context, operation string, client *Client, state any)
 	}
 
 	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":   operation,
-		"State": buffer.Bytes(),
+		"key":           operation,
+		StateColumnName: buffer.Bytes(),
 	})
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
+func saveCheckpointProgression(ctx context.Context, operation string, client *Client, checkpointProgression []string) error {
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
+
+	if err := enc.Encode(checkpointProgression); err != nil {
+		return err
+	}
+
+	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
+		"key":                           operation,
+		CheckpointIndexColumnName:       0,
+		CheckpointProgressionColumnName: checkpointProgression,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
+func saveIncrementedCheckpointIndex(ctx context.Context, operation string, client *Client, checkpointIndex int) error {
+	incrementedIndex := checkpointIndex + 1
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
+
+	if err := enc.Encode(checkpointIndex); err != nil {
+		return err
+	}
+
+	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
+		"key":                     operation,
+		CheckpointIndexColumnName: incrementedIndex,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// loadCheckpointProgression loads the checkpoint progression stored with the LRO resource
+func loadCheckpointProgression(ctx context.Context, operation string, client *Client) (int, []string, error) {
+	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if row[CheckpointProgressionColumnName] == nil {
+		return 0, nil, fmt.Errorf("checkpoint progression is nil")
+	}
+	checkpointProgression := []string{}
+	for _, x := range row[CheckpointProgressionColumnName].([]interface{}) {
+		if str, ok := x.(string); ok {
+			checkpointProgression = append(checkpointProgression, str)
+		} else {
+			return 0, nil, fmt.Errorf("x is not string")
+		}
+	}
+
+	if row[CheckpointIndexColumnName] == nil {
+		return 0, nil, fmt.Errorf("checkpoint index is nil")
+	}
+
+	checkpointIndex, ok := row[CheckpointIndexColumnName].(string)
+	if !ok {
+		return 0, nil, fmt.Errorf("checkpoint index data is not int64")
+	}
+	intVal, err := strconv.ParseInt(checkpointIndex, 10, 64)
+	if err != nil {
+		return 0, nil, fmt.Errorf("strconv.ParseInt: convert checkpoint index to integer")
+	}
+
+	return int(intVal), checkpointProgression, nil
 }
 
 // // loadState loads the current state stored with the LRO resource
