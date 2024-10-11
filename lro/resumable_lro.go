@@ -105,6 +105,7 @@ type ResumeConfig struct {
 	State               any
 }
 
+// NewResumableOperation instantiates a new ResumableOperation object, optionally resuming from a pre-existing LRO.
 func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ResumableOption) (*ResumableOperation, *T, error) {
 	r := &ResumableOperation{
 		op: &Operation{
@@ -192,11 +193,13 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 	}
 }
 
+// ResumeAt sets the checkpoint to resume at, overwriting any previously set checkpoint.
 func (r *ResumableOperation) ResumeAt(checkpoint string) {
 	r.checkpoint = &checkpoint
 	r.saveCheckpoint(*r.checkpoint)
 }
 
+// GetCheckpoint retrieves the current checkpoint.
 func (r *ResumableOperation) GetCheckpoint() string {
 	if r.checkpoint == nil {
 		return ""
@@ -204,30 +207,37 @@ func (r *ResumableOperation) GetCheckpoint() string {
 	return *r.checkpoint
 }
 
+// GetName returns the name of the underlying operation.
 func (r *ResumableOperation) GetName() string {
 	return r.op.GetName()
 }
 
+// GetOperation retrieves the underlying longrunningpb.Operation.
 func (r *ResumableOperation) GetOperation() (*longrunningpb.Operation, error) {
 	return r.op.GetOperation()
 }
 
+// ReturnRPC returns the underlying longrunningpb.Operation for further processing or sending to other APIs.
 func (r *ResumableOperation) ReturnRPC() (*longrunningpb.Operation, error) {
 	return r.op.ReturnRPC()
 }
 
+// Done marks the operation as done with a success response.
 func (r *ResumableOperation) Done(response proto.Message) error {
 	return r.op.Done(response)
 }
 
+// Error marks the operation as done with an error.
 func (r *ResumableOperation) Error(error error) error {
 	return r.op.Error(error)
 }
 
+// SetMetadata sets the metadata for the operation.
 func (r *ResumableOperation) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
 	return r.op.SetMetadata(metadata)
 }
 
+// Get retrieves the current operation status.
 func (r *ResumableOperation) Get() (*longrunningpb.Operation, error) {
 	return r.op.Get()
 }
@@ -300,6 +310,7 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 	return nil
 }
 
+// WaitAsync triggers asynchronous waiting in a workflow.
 func (r *ResumableOperation) WaitAsync(opts ...WaitOption) error {
 	w := &WaitConfig{}
 
@@ -407,7 +418,7 @@ func (r *ResumableOperation) WaitAsync(opts ...WaitOption) error {
 	return nil
 }
 
-// SaveState saves a current state with the LRO resource
+// SaveState saves the current state with the LRO resource
 func (r *ResumableOperation) SaveState(state any) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
