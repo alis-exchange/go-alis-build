@@ -21,19 +21,10 @@ import (
 	"go.alis.build/lro/internal/validate"
 )
 
-// WaitMechanism defines the waiting mechanisms that can be used to incur waiting
-type WaitMechanism int32
-
-const (
-	Automatic WaitMechanism = iota
-	Workflow
-	LocalSleep
-)
-
 // OperationIdHeaderKey is use to indicate the the LRO already exists, and does not need to be created
 const OperationIdHeaderKey = "x-alis-operation-id"
 
-// Operation is the object used to manage the relevant LROs activties.
+// Operation is the object used to manage activities on a longrunningpb.Operation
 type Operation struct {
 	ctx       context.Context
 	client    *Client
@@ -41,6 +32,7 @@ type Operation struct {
 	operation *longrunningpb.Operation
 }
 
+// WaitConfig is used to store the waiting configurations specified as functional WaitOption(s) in Wait()
 type WaitConfig struct {
 	// child operation waiting options
 	operations    []string
@@ -57,14 +49,26 @@ type WaitConfig struct {
 	waitMechanism WaitMechanism
 }
 
-// Option is a functional option for the NewOperation method, applied to an instantiation of WaitConfig.
+// WaitOption is a functional option for WaitConfig.
 type WaitOption func(*WaitConfig) error
 
-// Option is a functional option for the NewOperation method.
+// NewOperationOption is a functional option for Operation.
 type NewOperationOption func(*Operation) error
 
+// WaitMechanism defines the waiting mechanisms that can be used to incur waiting.
+type WaitMechanism int32
+
+const (
+	// The waiting mechanism is determined by the environment
+	Automatic WaitMechanism = iota
+	// The waiting mechanism is a Google Cloud Workflow
+	Workflow
+	// The waiting mechanism is time.Sleep in the thread that calls Wait
+	LocalSleep
+)
+
 // WithExistingOperation allows one to instantiate a new Operation object from an
-// existing LRO.
+// existing LRO, using the name of the LRO.
 func WithExistingOperation(operation string) NewOperationOption {
 	return func(o *Operation) error {
 		if operation == "" {
@@ -95,6 +99,7 @@ func NewOperation(ctx context.Context, client *Client, opts ...NewOperationOptio
 		opt(op)
 	}
 
+	// operation id set with WithExistingOperation, therefore retrieve the lro and wrap in Operation struct
 	if op.id != "" {
 		// Get a copy of the current LRO
 		lro, err := op.client.Get(op.ctx, "operations/"+op.id)
@@ -104,6 +109,7 @@ func NewOperation(ctx context.Context, client *Client, opts ...NewOperationOptio
 		op.id = strings.Split(lro.GetName(), "/")[1]
 		op.operation = lro
 	} else {
+		// create a new lro
 		err = op.create()
 		if err != nil {
 			return nil, err
@@ -136,6 +142,7 @@ func (o *Operation) create() error {
 	return nil
 }
 
+// WithSleep specified a constant duration for which to wait.
 func WithSleep(sleep time.Duration) WaitOption {
 	return func(w *WaitConfig) error {
 		if sleep == 0 {
@@ -146,6 +153,10 @@ func WithSleep(sleep time.Duration) WaitOption {
 	}
 }
 
+// ForOperations specifies operations for which to wait.
+// Format: ["operations/1", "operations/2", "operations/3"]
+// NOTE: Insert an Operations own name in operations in order to block until the operation is set to done.
+// TODO: change this to WithOperations if preferred
 func ForOperations(operations []string, pollFrequency time.Duration) WaitOption {
 	return func(w *WaitConfig) error {
 		if len(operations) == 0 {
@@ -164,6 +175,7 @@ func ForOperations(operations []string, pollFrequency time.Duration) WaitOption 
 	}
 }
 
+// ForOperationsWithTimeout performs the same function as ForOperations except a timeout is applied as an upper limit on waiting.
 func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, timeout time.Duration) WaitOption {
 	return func(w *WaitConfig) error {
 		if len(operations) == 0 {
@@ -186,8 +198,8 @@ func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, 
 	}
 }
 
-// Wait blocks until the specified option(s) resolve, and then continues execution.
-// Wait accepts options to determine waiting behaviour.
+// WaitSync blocks until the specified option(s) resolve, and then continues execution.
+// WaitSync accepts options to determine waiting behaviour.
 func (o *Operation) WaitSync(opts ...WaitOption) error {
 	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
 	w := &WaitConfig{}
@@ -201,12 +213,12 @@ func (o *Operation) WaitSync(opts ...WaitOption) error {
 		}
 	}
 
-	// client is not specified therefore set default as current lro client
+	// Client is not specified therefore set default as current lro client
 	if w.pollClient == nil {
 		w.pollClient = o.client
 	}
 
-	// timeout is not specified  therefore set to default
+	// Timeout is not specified therefore set default
 	if w.timeout == 0 {
 		w.timeout = 7 * time.Minute
 	}
@@ -217,7 +229,7 @@ func (o *Operation) WaitSync(opts ...WaitOption) error {
 	// 2 (a) First, incur constant wait durations
 	time.Sleep(w.sleep)
 
-	// 2 (c) Then, wait for child operations, if any
+	// 2 (b) Then, wait for child operations, if any
 	if len(w.operations) > 0 {
 
 		g := new(errgroup.Group)
@@ -241,6 +253,7 @@ func (o *Operation) WaitSync(opts ...WaitOption) error {
 								op, w.timeout.Seconds()),
 						}
 					}
+					// incur wait duration between polling
 					time.Sleep(w.pollFrequency)
 				}
 			})
@@ -251,7 +264,9 @@ func (o *Operation) WaitSync(opts ...WaitOption) error {
 		}
 	}
 
-	// 3. Process resume config
+	// 2 (c) Process resume config, if any
+	// This is here to facilitate the use of WaitSync to mock WaitAsync when testing
+	// i.e., the callback replaces the function of a workflow hit on resumeEndpoint
 	if w.callback != nil {
 		// attach opId to ctx to pick up existing op on callback
 		// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that match the id in OperationIdHeaderKey
@@ -271,7 +286,7 @@ func (o *Operation) GetOperation() (*longrunningpb.Operation, error) {
 	return o.client.Get(o.ctx, "operations/"+o.id)
 }
 
-// ReturnRPC is mostly used by gRPC methods required to return gRPC compliant error codes.
+// ReturnRPC returns the operation, or a gRPC compliant error code.
 func (o *Operation) ReturnRPC() (*longrunningpb.Operation, error) {
 	op, err := o.client.Get(o.ctx, "operations/"+o.id)
 	if err != nil {
@@ -280,8 +295,7 @@ func (o *Operation) ReturnRPC() (*longrunningpb.Operation, error) {
 	return op, nil
 }
 
-// SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
-// metadata if provided.
+// Done updates the done field to true and sets the result to the response
 func (o *Operation) Done(response proto.Message) error {
 	// get operation
 	op, err := o.GetOperation()
@@ -309,7 +323,7 @@ func (o *Operation) Done(response proto.Message) error {
 	return nil
 }
 
-// Error updates an existing long-running operation's done field to true.
+// Error updates an existing long-running operation's done field to true and sets the error field
 func (o *Operation) Error(error error) error {
 	// get operation
 	op, err := o.GetOperation()
@@ -339,7 +353,7 @@ func (o *Operation) Error(error error) error {
 	return nil
 }
 
-// UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
+// SetMetadata updates an existing long-running operation's metadata.  Metadata typically
 // contains progress information and common metadata such as create time.
 func (o *Operation) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
 	// get operation
@@ -365,12 +379,12 @@ func (o *Operation) SetMetadata(metadata proto.Message) (*longrunningpb.Operatio
 	return op, nil
 }
 
-// Name returns the Long-running Operation resource name in the format 'operations/*'
+// GetName returns the Long-running Operation resource name in the format 'operations/*'
 func (o *Operation) GetName() string {
 	return o.operation.GetName()
 }
 
-// Delete deletes the LRO (including )
+// Delete deletes the LRO, including auxiliary columns
 func (o *Operation) Delete() (*emptypb.Empty, error) {
 	// validate operation name
 	err := validate.Argument("name", "operations/"+o.id, validate.OperationRegex)

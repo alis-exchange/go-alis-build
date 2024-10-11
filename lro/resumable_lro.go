@@ -30,7 +30,7 @@ type ResumableOperation struct {
 	resumeConfig          *ResumeConfig
 }
 
-// ResumableOption is a functional option for the NewResumableOperation method.
+// ResumableOption is a functional option for a ResumableOperation.
 type ResumableOption func(*ResumableOperation) error
 
 // WithFirstCheckpoint sets the first checkpoint to execute in the resumable method.
@@ -41,7 +41,7 @@ func WithFirstCheckpoint(checkpoint string) ResumableOption {
 	}
 }
 
-// WithResumeConfig sets config options for resuming
+// WithResumeConfig sets config options for resume behaviour, including: resumeEndpoint, pollEndpoint (both of which can be inferred if client.workflowsConfig.Host is populated)
 func WithResumeConfig(resumeConfig *ResumeConfig) ResumableOption {
 	return func(r *ResumableOperation) error {
 		if resumeConfig == nil {
@@ -300,6 +300,7 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 				},
 			))
 		}
+		// mock WaitAsync using WaitSync and callback
 		err := r.op.WaitSync(opts...)
 		if err != nil {
 			return err
