@@ -402,8 +402,6 @@ func (o *Operation) Delete() (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }
 
-// TODO: consider a Get that is not a method on Operation but rathen accepts an id and returns an Operation
-
 // Get returns a long-running operation
 func (o *Operation) Get() (*longrunningpb.Operation, error) {
 	if o.id == "" {
@@ -411,9 +409,3 @@ func (o *Operation) Get() (*longrunningpb.Operation, error) {
 	}
 	return o.client.Get(o.ctx, "operations/"+o.id)
 }
-
-// wait constant duration
-// wait for child operations
-// wait for self
-// option to resume
-// override waitMechanism, typically automatic ( local sleep | workflows )
