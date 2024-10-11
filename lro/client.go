@@ -21,6 +21,7 @@ const (
 	// StateColumnName is the column name used in spanner to store states (if used)
 	StateColumnName                 = "State"
 	CheckpointIndexColumnName       = "CheckpointIndex"
+	CheckpointColumnName            = "Checkpoint"
 	CheckpointProgressionColumnName = "CheckpointProgression"
 )
 

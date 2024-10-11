@@ -1,672 +1,533 @@
 package lro
 
-// import (
-// 	"bytes"
-// 	"context"
-// 	"encoding/base64"
-// 	"encoding/gob"
-// 	"encoding/json"
-// 	"fmt"
-// 	"net/url"
-// 	"os"
-// 	"time"
-//
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/gob"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
-// 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-// 	"cloud.google.com/go/spanner"
-// 	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
-// 	"github.com/google/uuid"
-// 	"golang.org/x/sync/errgroup"
-// 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
-// 	"google.golang.org/grpc"
-// 	"google.golang.org/grpc/codes"
-// 	"google.golang.org/grpc/metadata"
-// 	"google.golang.org/grpc/status"
-// 	"google.golang.org/protobuf/proto"
-// 	"google.golang.org/protobuf/types/known/anypb"
-// 	"google.golang.org/protobuf/types/known/emptypb"
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
+	"cloud.google.com/go/spanner"
+	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+)
 
-// 	"go.alis.build/lro/internal/validate"
-// )
+// Operation is the object used to manage the relevant LROs activties.
+type ResumableOperation struct {
+	op                    *Operation
+	checkpoint            *string
+	checkpointIndex       int
+	checkpointProgression []string
+	resumeConfig          *ResumeConfig
+}
 
-// // ResumableOptions are used to configure options with the ResumableOperation object.
-// type ResumableOptions struct {
-// 	ResumeEndpoint      string
-// 	LocalResumeCallback func(context.Context)
-// 	Host                string
-// }
+// Option is a functional option for the NewOperation method.
+type ResumableOption func(*ResumableOperation) error
 
-// // ResumableOption is a functional option for the NewResumableOperation method.
-// type ResumableOption func(*ResumableOptions)
+// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
+func WithCheckpointProgression(progression []string) ResumableOption {
+	return func(r *ResumableOperation) error {
+		if len(progression) == 0 {
+			return fmt.Errorf("checkpoint progressions cannot be empty")
+		}
+		r.checkpointProgression = progression
+		return nil
+	}
+}
 
-// // WithResumeEndpoint sets the resume endpoint for the resumable operation.
-// // If not provided, NewResumableOperation will infer the resume endpoint from the Host option and the context.
-// func WithResumeEndpoint(endpoint string) ResumableOption {
-// 	return func(opts *ResumableOptions) {
-// 		opts.ResumeEndpoint = endpoint
-// 	}
-// }
+// WithFirstCheckpoint sets the first checkpoint
+func WithFirstCheckpoint(checkpoint string) ResumableOption {
+	return func(r *ResumableOperation) error {
+		r.checkpoint = &checkpoint
+		return nil
+	}
+}
 
-// // WithLocalResumeCallback sets a callback to mimic the resume endpoint during local testing.
-// // If WithResumeEndpoint is provided, WithLocalResumeCallback is required.
-// // Example:
-// //
-// //	localLocalResumeCallback := func(newCtx context.Context) {
-// //		s.IntegrateFile(newCtx, &pb.IntegrateFileRequest)
-// //	}
-// func WithLocalResumeCallback(localResumeCallback func(context.Context)) ResumableOption {
-// 	return func(opts *ResumableOptions) {
-// 		opts.LocalResumeCallback = localResumeCallback
-// 	}
-// }
+// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
+func WithResumeConfig(resumeConfig *ResumeConfig) ResumableOption {
+	return func(r *ResumableOperation) error {
+		if resumeConfig == nil {
+			return fmt.Errorf("resume config cannot be nil")
+		}
+		r.resumeConfig = resumeConfig
+		return nil
+	}
+}
 
-// // WithHost sets the host for the resumable operation.
-// // This is used to infer the resume endpoint if not provided.
-// func WithHost(host string) ResumableOption {
-// 	return func(opts *ResumableOptions) {
-// 		opts.Host = host
-// 	}
-// }
+type StateType any
 
-// // WaitOptions manages additional functionality with the relevant Wait methods.
-// type WaitOptions struct {
-// 	Client              *Client
-// 	Timeout             time.Duration
-// 	PollFrequency       time.Duration
-// 	PollEndpoint        string
-// 	InitialWaitDuration time.Duration
-// }
+type ResumeConfig struct {
+	ResumeEndpoint      string
+	PollEndpoint        string
+	LocalResumeCallback func(context.Context)
+	State               any
+}
 
-// // WaitOption is a functional option for the relevant Wait methods.
-// type WaitOption func(*WaitOptions)
+// TODO from existing option
+func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ResumableOption) (*ResumableOperation, *T, error) {
+	resumable := &ResumableOperation{
+		op: &Operation{
+			ctx:    ctx,
+			client: client,
+		},
+	}
 
-// // WithClient specifies a custom Client for polling the Long-Running Operation (LRO).
-// // Use this when the polling client differs from the one used for the initial operation.
-// func WithClient(client *Client) WaitOption {
-// 	return func(opts *WaitOptions) {
-// 		opts.Client = client
-// 	}
-// }
+	// Apply all wait options configured by user
+	for _, opt := range opts {
+		err := opt(resumable)
+		// fail on error in option configuration
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
-// /*
-// WithTimeout sets the Timeout for polling the underlying LRO.
+	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
+	// Determine whether the operation argument is carried in context key x-alis-operation-id
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if len(md.Get(OperationIdHeaderKey)) > 0 {
+			// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
+			resumable.op.id = md.Get(OperationIdHeaderKey)[0]
+		}
+	}
 
-// Timeout defaults to 7 minutes if not provided.
-// */
-// func WithTimeout(timeout time.Duration) WaitOption {
-// 	return func(opts *WaitOptions) {
-// 		opts.Timeout = timeout
-// 	}
-// }
+	if resumable.op.id == "" {
+		// new operation, no resuming
+		op, err := NewOperation(ctx, client)
+		if err != nil {
+			return nil, nil, err
+		}
+		resumable.op = op
+		resumable.checkpointIndex = 0
+		if resumable.checkpoint == nil {
+			if len(resumable.checkpointProgression) > 0 {
+				err = saveCheckpointProgression(ctx, "operations/"+resumable.op.id, client, resumable.checkpointProgression)
+				resumable.checkpoint = &resumable.checkpointProgression[0]
+			}
+		}
+		return resumable, new(T), err
+	} else {
+		// if an existing LRO has been provided, resume by fetching rop and state
 
-// // WithPollFrequency configures how often the operation checks for completion.
-// // For time-critical tasks, use a lower value (e.g., 7 seconds).
-// // Note: Frequent polling increases API calls, potentially impacting costs.
-// // Defaults to 7 seconds if not provided.
-// func WithPollFrequency(pollFrequency time.Duration) WaitOption {
-// 	return func(opts *WaitOptions) {
-// 		opts.PollFrequency = pollFrequency
-// 	}
-// }
+		// get a copy of the LRO identified by rop.id
+		lro, err := resumable.op.client.Get(resumable.op.ctx, "operations/"+resumable.op.id)
+		if err != nil {
+			return nil, nil, err
+		}
+		resumable.op.id = strings.Split(lro.GetName(), "/")[1]
+		resumable.op.operation = lro
 
-// // WithPollEndpoint sets the specific REST API endpoint for Google Cloud Workflows to poll
-// // when checking the Long-Running Operation(s) status.
-// func WithPollEndpoint(pollEndpoint string) WaitOption {
-// 	return func(opts *WaitOptions) {
-// 		opts.PollEndpoint = pollEndpoint
-// 	}
-// }
+		// get state of the LRO identified by resumable.op.id
+		state, err := loadState[T](ctx, "operations/"+resumable.op.id, client)
+		if err != nil {
+			return nil, nil, err
+		}
+		// resumable.op.state = state
 
-// // WithInitialWait sets the sleep duration to be incurred in the first step of Google Cloud Workflow.
-// func WithInitialWaitDuration(initialWaitDuration time.Duration) WaitOption {
-// 	return func(opts *WaitOptions) {
-// 		opts.InitialWaitDuration = initialWaitDuration
-// 	}
-// }
+		resumable.checkpoint = nil
 
-// // ResumableOperation is the object used to manage the relevant LROs activties.
-// type ResumableOperation[T State] struct {
-// 	ctx                 context.Context
-// 	client              *Client
-// 	id                  string
-// 	operation           *longrunningpb.Operation
-// 	resumeEndpoint      string
-// 	localResumeCallback func(context.Context)
-// 	devMode             bool
-// }
+		checkpoint, checkpointIndex, checkpointProgression, err := loadCheckpointColumns(ctx, "operations/"+resumable.op.id, client)
+		if err != nil {
+			return nil, nil, err
+		}
 
-// // A State object of any type.
-// type State interface{}
+		// use checkpoint if explicitly set
+		if checkpoint != "" {
+			resumable.checkpoint = &checkpoint
+			return resumable, state, err
+		}
 
-// /*
-// NewResumableOperation initialises a Long-Running Operation (LRO) with the provided State type (T).
+		// use progression if no checkpoint is set
+		for i, ch := range checkpointProgression {
+			if i == checkpointIndex {
+				resumable.checkpoint = &ch
+				resumable.checkpointIndex = i
+			}
+		}
 
-// This function intelligently checks for an existing LRO by looking for the 'alis-x-operation-id' header.
-// If found, it reconnects to the existing operation; otherwise, it creates a new LRO.
+		// TODO consider combining the above two operations into one i.e. loadOpAndState
 
-// Example (with State):
+		return resumable, state, err
+	}
+}
 
-// 	// State is a custom object which will be stored alongside the LRO
-// 	type State struct {
-// 			Next        string
-// 			Review      string
-// 			Rating      int32
-// 			ApprovedBy  string
-// 			ApprovalLRO string
-// 	}
-// 	var state *State
-// 	op, state, err := lro.Create[State](ctx, lroClient, lro.WithHost("https://.....a.run.app"))
-// */
-// func NewResumableOperation[T State](ctx context.Context, client *Client, opts ...ResumableOption) (op *ResumableOperation[T], state *T, err error) {
-// 	options := &ResumableOptions{}
-// 	for _, opt := range opts {
-// 		opt(options)
-// 	}
+func (r *ResumableOperation) ResumeAt(ctx context.Context, checkpoint string) {
+	r.checkpoint = &checkpoint
+	saveCheckpoint(ctx, r.op.operation.GetName(), r.op.client, *r.checkpoint)
+}
 
-// 	op = &ResumableOperation[T]{
-// 		ctx:                 context.WithoutCancel(ctx),
-// 		client:              client,
-// 		localResumeCallback: options.LocalResumeCallback,
-// 	}
+func (r *ResumableOperation) GetCheckpoint() string {
+	return *r.checkpoint
+}
 
-// 	// configure devMode
-// 	if os.Getenv("K_SERVICE") == "" {
-// 		op.devMode = true
-// 	}
+func (r *ResumableOperation) GetName() string {
+	return r.op.GetName()
+}
 
-// 	// configure resumeEndpoint
-// 	{
-// 		var resumeEndpoint string
-// 		if options.ResumeEndpoint != "" {
-// 			// If the resume endpoint is provided, use it
-// 			resumeEndpoint = options.ResumeEndpoint
-// 		} else {
-// 			// Infer resume endpoint
+func (r *ResumableOperation) ReturnRPC() (*longrunningpb.Operation, error) {
+	return r.op.ReturnRPC()
+}
 
-// 			// if no host is provided in options, use the workflows config default
-// 			if options.Host == "" {
-// 				options.Host = client.workflowsConfig.Host
-// 			}
-
-// 			// if host is resolved, get the method from the context
-// 			if options.Host != "" {
-// 				method, ok := grpc.Method(ctx)
-// 				if ok && method != "" {
-// 					resumeEndpoint = options.Host + method
-// 				}
-// 			}
-// 		}
-
-// 		// If a resume endpoint is specified, specify a resume callback if in dev mode
-// 		if resumeEndpoint != "" && options.LocalResumeCallback == nil && op.devMode {
-// 			return nil, nil, fmt.Errorf("please use WithLocalResumeCallback when waiting locally to replace the function of WithResumeEndpoint")
-// 		}
-// 		op.resumeEndpoint = resumeEndpoint
+// func GetOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
+// 	op = &Operation{
+// 		ctx:    context.WithoutCancel(ctx),
+// 		client: client,
 // 	}
 
-// 	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-// 	md, ok := metadata.FromIncomingContext(ctx)
-// 	if ok {
-// 		if len(md.Get(OperationIdHeaderKey)) > 0 {
-// 			// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
-// 			// No need to create one
-// 			op.id = md.Get(OperationIdHeaderKey)[0]
-
-// 			state, err = op.loadState()
-// 			if err != nil {
-// 				return nil, nil, err
-// 			}
-// 			return op, state, nil
-// 		} else {
-// 			err = op.create()
-// 			if err != nil {
-// 				return nil, nil, err
-// 			}
-// 		}
-// 	} else {
-// 		// Handle the scenario where no context exists.
-// 		err = op.create()
-// 		if err != nil {
-// 			return nil, nil, err
-// 		}
-// 	}
-
-// 	err = op.create()
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	return op, new(T), err
-// }
-
-// /*
-// ActivateDevMode could be used to switch off any resumable features and should only be used for local testing purposes.
-
-// For example:
-
-// 	// Enable Development mode
-// 	op.ActivateDevMode()
-// */
-// func (o *ResumableOperation[T]) ActivateDevMode() {
-// 	o.devMode = true
-// }
-
-// // DevMode return 'true' if the LRO is running in development mode used for local testing purposes
-// func (o *ResumableOperation[T]) DevMode() bool {
-// 	return o.devMode
-// }
-
-// // create stores a new long-running operation in spanner, with done=false
-// func (o *ResumableOperation[T]) create() error {
-// 	// create new unpopulated long-running operation
-// 	o.operation = &longrunningpb.Operation{}
-
-// 	id, err := uuid.NewRandom()
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	o.id = id.String()
-// 	o.operation.Name = "operations/" + id.String()
-
-// 	// write operation and parent to respective spanner columns
-// 	row := map[string]interface{}{"Operation": o.operation}
-// 	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
-// // Get returns a long-running operation
-// func (o *ResumableOperation[T]) Get() (*longrunningpb.Operation, error) {
-// 	return o.client.Get(o.ctx, "operations/"+o.id)
-// }
-
-// // ReturnRPC is mostly used by gRPC methods required to return gRPC compliant error codes.
-// func (o *ResumableOperation[T]) ReturnRPC() (*longrunningpb.Operation, error) {
-// 	op, err := o.client.Get(o.ctx, "operations/"+o.id)
-// 	if err != nil {
-// 		return nil, status.Errorf(codes.Internal, "retrieve operation: %s", err)
-// 	}
-// 	return op, nil
-// }
-
-// // Delete deletes the LRO (including )
-// func (o *ResumableOperation[T]) Delete() (*emptypb.Empty, error) {
-// 	// validate operation name
-// 	err := validate.Argument("name", "operations/"+o.id, validate.OperationRegex)
+// 	// Get a copy of the current LRO
+// 	lro, err := op.client.Get(op.ctx, operation)
 // 	if err != nil {
 // 		return nil, err
 // 	}
 
-// 	// validate existence of operation
-// 	_, err = o.Get()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	// delete operation
-// 	err = o.client.spanner.DeleteRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("delete operation (operations/%s): %w", o.id, err)
-// 	}
-// 	return &emptypb.Empty{}, nil
+// 	op.id = strings.Split(lro.GetName(), "/")[1]
+// 	op.operation = lro
+// 	return op, err
 // }
 
-// // SetSuccessful updates an existing long-running operation's done field to true, sets the response and updates the
-// // metadata if provided.
-// func (o *ResumableOperation[T]) Done(response proto.Message) error {
-// 	// get operation
-// 	op, err := o.Get()
-// 	if err != nil {
-// 		return err
-// 	}
+// WithWaitMechanism sets the wait mechanism.
+// This option should only be used if the user intends to override the wait mechanism that is inferred from your environment.
+func WithWaitMechanism(waitMechanism WaitMechanism) WaitOption {
+	return func(w *WaitConfig) error {
+		w.waitMechanism = waitMechanism
+		return nil
+	}
+}
 
-// 	// update done and result
-// 	op.Done = true
-// 	if response != nil {
-// 		resultAny, err := anypb.New(response)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
-// 	}
+func withLocalResumableCallback(localResumableCallback func(context.Context)) WaitOption {
+	return func(w *WaitConfig) error {
+		w.callback = localResumableCallback
+		return nil
+	}
+}
 
-// 	//  write operation and parent to respective spanner columns
-// 	row := map[string]interface{}{"Operation": op}
-// 	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerConfig.Table, row)
-// 	if err != nil {
-// 		return err
-// 	}
+// Wait blocks until the specified option(s) resolve.
+// Wait requires ResumeConfig such that exeuction can resume upon completion of waiting
+// Wait accepts options to determine waiting behaviour
+func (r *ResumableOperation) Wait(ctx context.Context, opts ...WaitOption) error {
+	w := &WaitConfig{
+		waitMechanism: Automatic,
+	}
 
-// 	return nil
-// }
+	// Allow override of mechanism
+	// // Apply all wait options configured by user
+	// for _, opt := range opts {
+	// 	err := opt(w)
+	// 	// fail on error in option configuration
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
-// // Error updates an existing long-running operation's done field to true.
-// func (o *ResumableOperation[T]) Error(error error) error {
-// 	// get operation
-// 	op, err := o.Get()
-// 	if err != nil {
-// 		return err
-// 	}
+	// If wait mechanism is set to automatic, determine environment to resolve waiting mechanism (cloud workflows | time.Sleep)
+	// Otherwise use user-set option
+	if w.waitMechanism == Automatic {
+		if os.Getenv("K_SERVICE") == "" {
+			w.waitMechanism = LocalSleep
+		} else {
+			w.waitMechanism = Workflow
+		}
+	}
 
-// 	// update operation fields
-// 	op.Done = true
-// 	if error == nil {
-// 		error = fmt.Errorf("unknown error")
-// 	}
+	if r.checkpoint != nil {
+		saveIncrementedCheckpointIndex(r.op.ctx, r.op.operation.GetName(), r.op.client, r.checkpointIndex)
+	}
 
-// 	op.Result = &longrunningpb.Operation_Error{Error: &statuspb.Status{
-// 		Code:    int32(codes.Unknown),
-// 		Message: error.Error(),
-// 		Details: nil,
-// 	}}
+	switch w.waitMechanism {
+	case Workflow:
+		r.WaitAsync(ctx, opts...)
+		return nil
+	case LocalSleep:
+		// if user has supplied a callback use that
+		// otherwise configure a callback that mimics resumable hit via workflow
+		if r.resumeConfig.LocalResumeCallback != nil {
+			opts = append(opts, withLocalResumableCallback(r.resumeConfig.LocalResumeCallback))
+		} else {
+			opts = append(opts, withLocalResumableCallback(func(context.Context) {
+				// TODO debug
+				m, ok := grpc.Method(ctx)
+				if !ok {
+					return
+				}
+				err := grpc.Invoke(ctx, m, nil, nil, nil)
+				_ = err
+			}))
+		}
+		r.op.WaitSync(ctx, opts...)
+		return nil
+	default:
+		return fmt.Errorf("unknown wait mechanism: %d", w.waitMechanism)
+	}
+}
 
-// 	// write operation and parent to respective spanner columns
-// 	row := map[string]interface{}{"Operation": op}
-// 	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerConfig.Table, row)
-// 	if err != nil {
-// 		return err
-// 	}
+func (r *ResumableOperation) WaitAsync(ctx context.Context, opts ...WaitOption) error {
+	w := &WaitConfig{}
+	// w.resumeConfig = resumeConfig
 
-// 	return nil
-// }
+	// Apply all wait options configured by user
+	for _, opt := range opts {
+		err := opt(w)
+		// fail on error in option configuration
+		if err != nil {
+			return err
+		}
+	}
+	// Prepare the Google Cloud Workflow argument
+	type Args struct {
+		OperationId            string   `json:"operationId"`
+		InitialWaitDuration    int64    `json:"initialWaitDuration"`
+		Operations             []string `json:"operations"`
+		PollFrequency          int64    `json:"pollFrequency"`
+		PollEndpoint           string   `json:"pollEndpoint"`
+		PollEndpointAudience   string   `json:"pollEndpointAudience"`
+		ResumeEndpoint         string   `json:"resumeEndpoint"`
+		ResumeEndpointAudience string   `json:"resumeEndpointAudience"`
+		Timeout                int64    `json:"timeout"`
+	}
+	args := Args{
+		OperationId: r.op.id,
+	}
+	// 2. Configure workflow to incur waiting
 
-// /*
-// WaitAsync orchestrates the pausing and resumption of an LRO using a Google Cloud Workflow.
+	// 2 (a) Configure workflow to incur constant wait durations
+	if w.sleep != 0 {
+		args.InitialWaitDuration = int64(w.sleep.Seconds())
+	}
 
-// This function performs the following steps:
+	// 2 (b) Configure workflow to wait for child operations
+	if len(w.operations) > 0 {
+		if r.resumeConfig.PollEndpoint == "" {
+			if r.op.client.workflowsConfig.Host == "" {
+				return fmt.Errorf("poll endpoint is required in ResumeConfig if host is not set (failed to infer resume endpoint from workflows config host field)")
+			}
+			args.PollEndpoint = r.op.client.workflowsConfig.Host + "/google.longrunning.Operations/GetOperation"
+		} else {
+			args.PollEndpoint = r.resumeConfig.PollEndpoint
+		}
 
-//  1. Saves the current state for the operation.
-//  2. Triggers a Google Cloud Workflow that polls the provided list of operations. Waiting can be performed independent of operations by setting initialWaitDuration parameter to the number of seconds to wait before resuming.
-//  3. Once all operations are complete, the workflow re-invokes the same method,
-//     passing a special header `x-alis-operation-id` to resume the original business logic using the saved state.
+		args.Operations = w.operations
+		args.PollFrequency = int64(w.pollFrequency.Seconds())
+		pollUrl, err := url.Parse(args.PollEndpoint)
+		if err != nil || pollUrl == nil {
+			return fmt.Errorf("could not resolve pollUrl, invalid polling endpoint (%s): %w", r.resumeConfig.PollEndpoint, err)
+		}
+		// update args given valid pollEndpoint
+		args.PollEndpointAudience = "https://" + pollUrl.Host
 
-// Parameters:
-//   - operations: A slice of operation IDs to monitor.
-//   - state: The current state data to be saved for later resumption.
-//   - pollEndpoint: The RESTFull endpoint used for polling the status of the provided LROs
-//     for example: https://.../.../GetOperation
-// */
-// func (o *ResumableOperation[T]) WaitAsync(operations []string, state *T, opts ...WaitOption) error {
-// 	// Add all the provided options to the WaitOptions object
-// 	options := &WaitOptions{}
-// 	for _, opt := range opts {
-// 		opt(options)
-// 	}
+		// timeout is not specified  therefore set to default
+		if w.timeout == 0 {
+			w.timeout = 7 * time.Minute
+		}
 
-// 	if o.devMode {
-// 		return fmt.Errorf("unable to run WaitAsync while in development mode")
-// 	}
+		// Configure workflow's timeout for child operations, accounting for initial wait duration incurred
+		args.Timeout = int64(w.timeout.Seconds())
+	} else {
+		args.Timeout = 0
+		args.PollEndpoint = ""
+		args.PollEndpointAudience = ""
+		args.PollFrequency = 0
+		args.Operations = []string{}
+	}
 
-// 	if o.client.workflowsConfig == nil {
-// 		return fmt.Errorf("the Google Cloud Workflow config is not setup with the client instantiation, please add the WorkflowsConfig to the NewClient method call ")
-// 	}
+	// 2 (c) Configure workflow's resume endpoint
+	if r.resumeConfig.ResumeEndpoint == "" {
+		if r.op.client.workflowsConfig.Host == "" {
+			return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from workflows config host field)")
+		}
+		methodName, ok := grpc.Method(ctx)
+		if !ok {
+			return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from grpc.Method())")
+		}
+		r.resumeConfig.ResumeEndpoint = r.op.client.workflowsConfig.Host + "/" + methodName
+	}
+	args.ResumeEndpoint = r.resumeConfig.ResumeEndpoint
+	resumeUrl, err := url.Parse(r.resumeConfig.ResumeEndpoint)
+	if err != nil {
+		return fmt.Errorf("could not resolve resumeUrl, invalid resume endpoint (%s): %w", r.resumeConfig.ResumeEndpoint, err)
+	}
+	args.ResumeEndpointAudience = "https://" + resumeUrl.Host
 
-// 	// First it saves the state
-// 	err := o.saveState("operations/"+o.id, state)
-// 	if err != nil {
-// 		return err
-// 	}
+	// The Workflow service requires the argument in JSON format.
+	argsBytes, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
 
-// 	// Ensure operations is not nil, needs to be an array for Google Cloud Workflows
-// 	if operations == nil {
-// 		operations = []string{}
-// 	}
+	// Launch Google Cloud Workflows to wait...
+	_, err = r.op.client.workflows.CreateExecution(r.op.ctx, &executionspb.CreateExecutionRequest{
+		Parent: r.op.client.workflowsConfig.name,
+		Execution: &executionspb.Execution{
+			Argument:     string(argsBytes),
+			CallLogLevel: executionspb.Execution_LOG_ALL_CALLS,
+		},
+	})
+	if err != nil {
+		return err
+	}
 
-// 	// Set the Timeout
-// 	var timeout time.Duration
-// 	if options.Timeout != 0 {
-// 		timeout = options.Timeout
-// 	} else {
-// 		timeout = 7 * time.Minute
-// 	}
+	return nil
+}
 
-// 	// Set the initial sleep duration
-// 	var initialWaitDuration time.Duration
-// 	if options.InitialWaitDuration != 0 {
-// 		initialWaitDuration = options.InitialWaitDuration
-// 	} else {
-// 		initialWaitDuration = time.Second * 0
-// 	}
+// SaveState saves a current state with the LRO resource
+func (r *ResumableOperation) SaveState(ctx context.Context, state any) error {
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
+	if err := enc.Encode(state); err != nil {
+		return err
+	}
 
-// 	// Set the Polling frequency
-// 	var pollFrequency time.Duration
-// 	if options.PollFrequency != 0 {
-// 		pollFrequency = options.PollFrequency
-// 	} else {
-// 		pollFrequency = time.Second * 7
-// 	}
+	err := r.op.client.spanner.UpdateRow(ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+		"key":           r.op.operation.GetName(),
+		StateColumnName: buffer.Bytes(),
+	})
+	if err != nil {
+		return err
+	}
 
-// 	// Process resumeEndpoint
-// 	resumeUrl, err := url.Parse(o.resumeEndpoint)
-// 	if err != nil {
-// 		return fmt.Errorf("invalid resume endpoint (%s): %w", o.resumeEndpoint, err)
-// 	}
+	return nil
+}
 
-// 	// Prepare the Google Cloud Workflow argument
-// 	type Args struct {
-// 		OperationId            string   `json:"operationId"`
-// 		Operations             []string `json:"operations"`
-// 		Timeout                int64    `json:"timeout"`
-// 		InitialWaitDuration    int64    `json:"initialWaitDuration"`
-// 		PollFrequency          int64    `json:"pollFrequency"`
-// 		PollEndpoint           string   `json:"pollEndpoint"`
-// 		PollEndpointAudience   string   `json:"pollEndpointAudience"`
-// 		ResumeEndpoint         string   `json:"resumeEndpoint"`
-// 		ResumeEndpointAudience string   `json:"resumeEndpointAudience"`
-// 	}
+// SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
+func saveCheckpointProgression(ctx context.Context, operation string, client *Client, checkpointProgression []string) error {
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
 
-// 	// Configure the arguments to pass into the container at runtime.
-// 	args := Args{
-// 		OperationId:            o.id,
-// 		Operations:             operations,
-// 		InitialWaitDuration:    int64(initialWaitDuration.Seconds()),
-// 		Timeout:                int64(timeout.Seconds()),
-// 		PollFrequency:          int64(pollFrequency.Seconds()),
-// 		ResumeEndpoint:         o.resumeEndpoint,
-// 		ResumeEndpointAudience: "https://" + resumeUrl.Host,
-// 	}
+	if err := enc.Encode(checkpointProgression); err != nil {
+		return err
+	}
 
-// 	// Set the Poll Endpoint
-// 	// Only required if waiting on operations with Google Workflow
-// 	var pollEndpoint string
-// 	var pollUrl *url.URL
+	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
+		"key":                           operation,
+		CheckpointIndexColumnName:       0,
+		CheckpointProgressionColumnName: checkpointProgression,
+	})
+	if err != nil {
+		return err
+	}
 
-// 	if options.PollEndpoint != "" {
-// 		pollEndpoint = options.PollEndpoint
-// 	} else if o.client.workflowsConfig.Host != "" {
-// 		pollEndpoint = o.client.workflowsConfig.Host + "/google.longrunning.Operations/GetOperation"
-// 	}
+	return nil
+}
 
-// 	if pollEndpoint == "" && len(operations) > 0 {
-// 		// polling endpoint is only used if operations are provided, therefore do not error if no operations are provided
-// 		return fmt.Errorf("polling endpoint is required to retrieve the given operations, specify lro.WithPollEndpoint() option in invocation of WaitAsync")
-// 	}
+// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
+func saveIncrementedCheckpointIndex(ctx context.Context, operation string, client *Client, checkpointIndex int) error {
+	incrementedIndex := checkpointIndex + 1
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
 
-// 	pollUrl, err = url.Parse(pollEndpoint)
-// 	if err != nil {
-// 		return fmt.Errorf("invalid polling endpoint (%s): %w", pollEndpoint, err)
-// 	}
+	if err := enc.Encode(incrementedIndex); err != nil {
+		return err
+	}
 
-// 	// update args given valid pollEndpoint
-// 	args.PollEndpoint = pollEndpoint
-// 	if pollUrl != nil {
-// 		args.PollEndpointAudience = "https://" + pollUrl.Host
-// 	}
+	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
+		"key":                     operation,
+		CheckpointIndexColumnName: incrementedIndex,
+	})
+	if err != nil {
+		return err
+	}
 
-// 	// The Workflow service requires the argument in JSON format.
-// 	argsBytes, err := json.Marshal(args)
-// 	if err != nil {
-// 		return err
-// 	}
+	return nil
+}
 
-// 	// Launch Google Cloud Workflows and wait...
-// 	_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
-// 		Parent: o.client.workflowsConfig.name,
-// 		Execution: &executionspb.Execution{
-// 			Argument:     string(argsBytes),
-// 			CallLogLevel: executionspb.Execution_LOG_ALL_CALLS,
-// 		},
-// 	})
-// 	if err != nil {
-// 		return err
-// 	}
+// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
+func saveCheckpoint(ctx context.Context, operation string, client *Client, checkpoint string) error {
+	buffer := bytes.Buffer{}
+	enc := gob.NewEncoder(&buffer)
 
-// 	return nil
-// }
+	if err := enc.Encode(checkpoint); err != nil {
+		return err
+	}
 
-// /*
-// Wait blocks until the provided long-running operation completes or times out.
+	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
+		"key":                operation,
+		CheckpointColumnName: checkpoint,
+	})
+	if err != nil {
+		return err
+	}
 
-// Optional configuration using 'opts':
+	return nil
+}
 
-//   - InitialWait: Minimum duration to wait irrespective of operation waiting.
-//   - Timeout: Maximum duration to wait (default: 7 minutes).
-//   - PollFrequency: How often to check operation status (default: 7 seconds).
-//   - Client: Custom client for polling (default: client used to create ResumableOperation).
+// loadCheckpointColumns loads the checkpoint progression stored with the LRO resource
+func loadCheckpointColumns(ctx context.Context, operation string, client *Client) (string, int, []string, error) {
+	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{CheckpointColumnName, CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
+	if err != nil {
+		return "", 0, nil, err
+	}
 
-// Returns the final operation status or an error if timeout is exceeded or another issue occurs.
-// */
-// func (o *ResumableOperation[T]) WaitSync(operations []string, state *T, opts ...WaitOption) error {
-// 	var err error
+	if row[CheckpointColumnName] == nil {
+		if row[CheckpointProgressionColumnName] == nil {
+			return "", 0, nil, fmt.Errorf("checkpoint progression is nil")
+		}
+		checkpointProgression := []string{}
+		for _, x := range row[CheckpointProgressionColumnName].([]interface{}) {
+			if str, ok := x.(string); ok {
+				checkpointProgression = append(checkpointProgression, str)
+			} else {
+				return "", 0, nil, fmt.Errorf("x is not string")
+			}
+		}
 
-// 	// Add all the provided options to the WaitOptions object
-// 	options := &WaitOptions{}
-// 	for _, opt := range opts {
-// 		opt(options)
-// 	}
-// 	// First save the state
-// 	err = o.saveState("operations/"+o.id, state)
-// 	if err != nil {
-// 		return err
-// 	}
+		if row[CheckpointIndexColumnName] == nil {
+			return "", 0, nil, fmt.Errorf("checkpoint index is nil")
+		}
+		checkpointIndex, ok := row[CheckpointIndexColumnName].(string)
+		if !ok {
+			return "", 0, nil, fmt.Errorf("checkpoint index data is not int64")
+		}
+		intVal, err := strconv.ParseInt(checkpointIndex, 10, 64)
+		if err != nil {
+			return "", 0, nil, fmt.Errorf("strconv.ParseInt: convert checkpoint index to integer")
+		}
+		return "", int(intVal), checkpointProgression, nil
+	} else {
+		checkpoint, ok := row[CheckpointColumnName].(string)
+		if !ok {
+			return "", 0, nil, fmt.Errorf("checkpoint data is not string")
+		}
+		return checkpoint, 0, nil, nil
+	}
+}
 
-// 	// Use the specified Client if provided
-// 	var client *Client
-// 	if options.Client != nil {
-// 		client = options.Client
-// 	} else {
-// 		// use the client specified with NewResumableOption
-// 		client = o.client
-// 	}
+// loadState loads the current state stored with the LRO resource
+func loadState[T StateType](ctx context.Context, operation string, client *Client) (*T, error) {
+	var data T
+	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{StateColumnName}, nil)
+	if err != nil {
+		return &data, err
+	}
+	if row[StateColumnName] != nil {
 
-// 	// Set the Timeout
-// 	var timeout time.Duration
-// 	if options.Timeout != 0 {
-// 		timeout = options.Timeout
-// 	} else {
-// 		timeout = 7 * time.Minute
-// 	}
+		stateString, ok := row[StateColumnName].(string)
+		if !ok {
+			return &data, fmt.Errorf("state data is not string")
+		}
 
-// 	// Set the initial wait duration
-// 	var initialWaitDuration time.Duration
-// 	if options.InitialWaitDuration != 0 {
-// 		initialWaitDuration = options.InitialWaitDuration
-// 	} else {
-// 		initialWaitDuration = time.Second * 0
-// 	}
+		// Decode from base64
+		decodedData, err := base64.StdEncoding.DecodeString(stateString)
+		if err != nil {
+			fmt.Println("Error decoding:", err)
+			return &data, err
+		}
 
-// 	// Set the Polling frequency
-// 	var pollFrequency time.Duration
-// 	if options.PollFrequency != 0 {
-// 		pollFrequency = options.PollFrequency
-// 	} else {
-// 		pollFrequency = time.Second * 7
-// 	}
+		var buffer bytes.Buffer
+		buffer.Write(decodedData)
+		decoder := gob.NewDecoder(&buffer)
 
-// 	startTime := time.Now()
+		err = decoder.Decode(&data)
+		if err != nil {
+			return &data, err
+		}
+	}
 
-// 	// if set, incur the initial wait
-// 	// operations are still processing in this time therefore startTime has already been measured
-// 	time.Sleep(initialWaitDuration)
-
-// 	// The following block of code is only applicable when waiting for operations
-// 	{
-// 		g := new(errgroup.Group)
-
-// 		// locally wait for each operation and contribute status to wait group
-// 		for _, op := range operations {
-// 			g.Go(func() error {
-// 				// start loop to check if operation is done or timeout has passed
-// 				var operation *longrunningpb.Operation
-// 				for {
-// 					operation, err = client.Get(o.ctx, op)
-// 					if err != nil {
-// 						return err
-// 					}
-// 					if operation.Done {
-// 						return nil
-// 					}
-
-// 					timePassed := time.Since(startTime)
-// 					if timePassed.Seconds() > timeout.Seconds() {
-// 						return ErrWaitDeadlineExceeded{
-// 							message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-// 								op, timeout.Seconds()),
-// 						}
-// 					}
-// 					time.Sleep(pollFrequency)
-// 				}
-// 			})
-// 		}
-// 		groupErr := g.Wait()
-// 		if groupErr != nil {
-// 			return groupErr
-// 		}
-// 	}
-
-// 	newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
-
-// 	// user-specified callback to enable resuming after local waiting
-// 	o.localResumeCallback(newCtx)
-
-// 	return nil
-// }
-
-// func (o *ResumableOperation[T]) Wait(operations []string, state *T, opts ...WaitOption) error {
-// 	var err error
-
-// 	if o.devMode {
-// 		// time.Sleep local waiting
-// 		err = o.WaitSync(operations, state, opts...)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	} else {
-// 		// workflow waiting
-// 		err = o.WaitAsync(operations, state, opts...)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
-// // UpdateMetadata updates an existing long-running operation's metadata.  Metadata typically
-// // contains progress information and common metadata such as create time.
-// func (o *ResumableOperation[T]) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
-// 	// get operation
-// 	op, err := o.Get()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	// update metadata if required
-// 	metaAny, err := anypb.New(metadata)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	op.Metadata = metaAny
-
-// 	// write operation and parent to respective spanner columns
-// 	row := map[string]interface{}{"Operation": op}
-// 	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerConfig.Table, row)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return op, nil
-// }
+	return &data, nil
+}

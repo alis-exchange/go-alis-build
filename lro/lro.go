@@ -1,25 +1,16 @@
 package lro
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/gob"
-	"encoding/json"
 	"fmt"
-	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"cloud.google.com/go/spanner"
-	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -44,150 +35,51 @@ const OperationIdHeaderKey = "x-alis-operation-id"
 
 // Operation is the object used to manage the relevant LROs activties.
 type Operation struct {
-	ctx             context.Context
-	client          *Client
-	id              string
-	operation       *longrunningpb.Operation
-	resumable       bool
-	checkpoint      string
-	checkpointIndex int
-	// state     any
+	ctx       context.Context
+	client    *Client
+	id        string
+	operation *longrunningpb.Operation
 }
-
-type ProgressionOptions struct {
-	checkpointProgression []string
-}
-
-// Option is a functional option for the NewOperation method.
-type ProgressionOption func(*ProgressionOptions) error
-
-// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
-func WithCheckkpointProgression(progression []string) ProgressionOption {
-	return func(p *ProgressionOptions) error {
-		if len(progression) == 0 {
-			return fmt.Errorf("checkpoint progressions cannot be empty")
-		}
-		p.checkpointProgression = progression
-		return nil
-	}
-}
-
-type StateType any
 
 type WaitConfig struct {
 	// child operation waiting options
-	childOperations []string
-	pollFrequency   time.Duration
-	pollEndpoint    string
+	operations    []string
+	pollFrequency time.Duration
+	pollClient    *Client
 
 	// constant duration wait option
-	waitDuration time.Duration
+	sleep time.Duration
 
-	// self wait option
-	selfWait bool
+	timeout time.Duration
 
-	// resume options
-	resumeConfig *ResumeConfig
+	callback func(context.Context)
 
-	// general options
 	waitMechanism WaitMechanism
-	timeout       time.Duration
+
+	localResumableSimulation bool
 }
 
-type ResumeConfig struct {
-	ReturnOnResume      bool
-	ResumeEndpoint      string
-	LocalResumeCallback func(context.Context)
-	State               any
-}
-
-// Option is a functional option for the NewOperation method.
+// Option is a functional option for the NewOperation method, applied to an instantiation of WaitConfig.
 type WaitOption func(*WaitConfig) error
 
-func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ProgressionOption) (*Operation, *T, error) {
-	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
-	p := &ProgressionOptions{
-		checkpointProgression: []string{},
-	}
+// Option is a functional option for the NewOperation method.
+type NewOperationOption func(*Operation) error
 
-	// Apply all wait options configured by user
-	for _, opt := range opts {
-		err := opt(p)
-		// fail on error in option configuration
-		if err != nil {
-			return nil, nil, err
+// WithExistingOperation allows one to instantiate a new Operation object from an
+// existing LRO.
+func WithExistingOperation(operation string) NewOperationOption {
+	return func(o *Operation) error {
+		if operation == "" {
+			return fmt.Errorf("operation cannot be empty")
 		}
-	}
-
-	var err error
-	// var data T
-	op := &Operation{
-		ctx:       context.WithoutCancel(ctx),
-		client:    client,
-		resumable: true,
-		// state:     &data,
-	}
-
-	// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-	// Determine whether the operation argument is carried in context key x-alis-operation-id
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		if len(md.Get(OperationIdHeaderKey)) > 0 {
-			// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
-			op.id = md.Get(OperationIdHeaderKey)[0]
+		if !strings.HasPrefix(operation, "operations/") {
+			return fmt.Errorf("invalid operation name")
 		}
-	}
-
-	if op.id == "" {
-		// new operation, no resuming
-		err = op.create()
-		if err != nil {
-			return nil, nil, err
-		}
-		op.checkpointIndex = 0
-		if len(p.checkpointProgression) > 0 {
-			err = saveCheckpointProgression(ctx, "operations/"+op.id, client, p.checkpointProgression)
-			op.checkpoint = p.checkpointProgression[0]
-		}
-		return op, new(T), err
-	} else {
-		// if an existing LRO has been provided, resume by fetching op and state
-
-		// get a copy of the LRO identified by op.id
-		lro, err := op.client.Get(op.ctx, "operations/"+op.id)
-		if err != nil {
-			return nil, nil, err
-		}
-		op.id = strings.Split(lro.GetName(), "/")[1]
-		op.operation = lro
-
-		// get state of the LRO identified by op.id
-		state, err := loadState[T](ctx, "operations/"+op.id, client)
-		if err != nil {
-			return op, nil, err
-		}
-		// op.state = state
-
-		checkpointIndex, checkpointProgression, err := loadCheckpointProgression(ctx, "operations/"+op.id, client)
-		op.checkpoint = ""
-		for i, ch := range checkpointProgression {
-			if i == checkpointIndex {
-				op.checkpoint = ch
-				op.checkpointIndex = i
-			}
-		}
-
-		// TODO consider combining the above two operations into one i.e. loadOpAndState
-
-		return op, state, err
+		operationId := strings.TrimPrefix(operation, "operations/")
+		o.id = operationId
+		return nil
 	}
 }
-
-// func WithCheckkpointProgression(operation string) Option {
-// 	return func(o *Operation) {
-// 		o.existingOperation = operation
-// 	}
-// }
 
 /*
 NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
@@ -196,491 +88,31 @@ Example:
 
 	op, err := lro.NewOperation(ctx, lroClient)
 */
-func NewOperation(ctx context.Context, client *Client) (op *Operation, err error) {
-	op = &Operation{
-		ctx:       context.WithoutCancel(ctx),
-		client:    client,
-		resumable: false,
-	}
-
-	err = op.create()
-	if err != nil {
-		return nil, err
-	}
-
-	return op, err
-}
-
-func (o *Operation) GetCheckpoint() string {
-	return o.checkpoint
-}
-
-func GetOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
+func NewOperation(ctx context.Context, client *Client, opts ...NewOperationOption) (op *Operation, err error) {
 	op = &Operation{
 		ctx:    context.WithoutCancel(ctx),
 		client: client,
 	}
-
-	// Get a copy of the current LRO
-	lro, err := op.client.Get(op.ctx, operation)
-	if err != nil {
-		return nil, err
-	}
-
-	op.id = strings.Split(lro.GetName(), "/")[1]
-	op.operation = lro
-	return op, err
-}
-
-// WithWaitDuration sets a constant duration for which to wait.
-// This should exceed the timeout.
-func WithWaitDuration(waitDuration time.Duration) WaitOption {
-	return func(w *WaitConfig) error {
-		if waitDuration == 0 {
-			return fmt.Errorf("wait duration cannot be zero")
-		}
-		w.waitDuration = waitDuration
-		return nil
-	}
-}
-
-// WithTimeout sets a timeout on waiting.
-// If wait duration is specified, it should exceed the timeout.
-func WithTimeout(timeout time.Duration) WaitOption {
-	return func(w *WaitConfig) error {
-		if timeout == 0 {
-			return fmt.Errorf("timeout cannot be zero")
-		}
-		w.timeout = timeout
-		return nil
-	}
-}
-
-// WithWaitMechanism sets the wait mechanism.
-// This option should only be used if the user intends to override the wait mechanism that is inferred from your environment.
-func WithWaitMechanism(waitMechanism WaitMechanism) WaitOption {
-	return func(w *WaitConfig) error {
-		w.waitMechanism = waitMechanism
-		return nil
-	}
-}
-
-// ForChildOperations waits until all child operations are done, or timeout is exceeded.
-func ForChildOperations(childOperations []string, pollFrequency time.Duration, pollEndpoint string) WaitOption {
-	return func(w *WaitConfig) error {
-		if len(childOperations) == 0 {
-			return fmt.Errorf("child operations cannot be empty")
-		}
-		if pollFrequency == 0 {
-			pollFrequency = 7 * time.Second
-		}
-		w.childOperations = childOperations
-		w.pollFrequency = pollFrequency
-		w.pollEndpoint = pollEndpoint
-		return nil
-	}
-}
-
-// ForSelf waits until the operation identified by operation.id is done.
-func ForSelf(selfWait bool) WaitOption {
-	return func(w *WaitConfig) error {
-		w.selfWait = selfWait
-		return nil
-	}
-}
-
-// Wait blocks until the specified option(s) resolve.
-// Wait requires ResumeConfig such that exeuction can resume upon completion of waiting
-// Wait accepts options to determine waiting behaviour
-func (o *Operation) Wait(ctx context.Context, resumeConfig *ResumeConfig, opts ...WaitOption) error {
-	// Validate resumability
-	if !o.resumable {
-		return fmt.Errorf("operation is not resumable, only operations created with NewResumableOperation may invoke Wait")
-	}
-
-	// Validate non-nil resume config
-	if resumeConfig == nil {
-		return fmt.Errorf("resume config cannot be nil")
-	}
-
-	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
-	w := &WaitConfig{
-		waitMechanism: Automatic,
-	}
-	w.resumeConfig = resumeConfig
-
-	// Apply all wait options configured by user
 	for _, opt := range opts {
-		err := opt(w)
-		// fail on error in option configuration
+		opt(op)
+	}
+
+	if op.id != "" {
+		// Get a copy of the current LRO
+		lro, err := op.client.Get(op.ctx, "operations/"+op.id)
 		if err != nil {
-			return err
+			return nil, err
 		}
-	}
-
-	// If wait mechanism is set to automatic,  Determine environment to resolve waiting mechanism (cloud workflows | time.Sleep)
-	// Otherwise use user-set option
-	if w.waitMechanism == Automatic {
-		if os.Getenv("K_SERVICE") == "" {
-			w.waitMechanism = LocalSleep
-		} else {
-			w.waitMechanism = Workflow
-		}
-	}
-
-	// Timeout validation
-	if w.timeout != 0 {
-		// timeout is specified
-		if w.waitDuration != 0 && w.timeout < w.waitDuration {
-			// wait duration is specfied and timeout is specified as less than wait duration
-			return fmt.Errorf("the configured wait duration explicilty exceeds the configured timeout: %s > %s", w.timeout, w.waitDuration)
-		}
+		op.id = strings.Split(lro.GetName(), "/")[1]
+		op.operation = lro
 	} else {
-		// timeout is not specified and therefore set to default
-		w.timeout = 7 * time.Minute
-		if w.waitDuration != 0 && w.timeout <= w.waitDuration {
-			// wait duration is specified and timeout default is less than wait duration
-			return fmt.Errorf("timeout is unset and default timeout is less than configured wait duration: %s > %s", w.timeout, w.waitDuration)
-		}
-	}
-
-	if w.resumeConfig == nil {
-		return fmt.Errorf("resume config is required but was not provided, specify with WithResumeConfig option")
-	}
-
-	// Save state if resume config is specified with state
-	if w.resumeConfig.State != nil {
-		saveState(o.ctx, o.operation.GetName(), o.client, w.resumeConfig.State)
-	}
-	if o.checkpoint != "" {
-		saveIncrementedCheckpointIndex(o.ctx, o.operation.GetName(), o.client, o.checkpointIndex)
-	}
-
-	startTime := time.Now()
-	switch w.waitMechanism {
-	case Workflow:
-
-		// Prepare the Google Cloud Workflow argument
-		type Args struct {
-			OperationId            string   `json:"operationId"`
-			InitialWaitDuration    int64    `json:"initialWaitDuration"`
-			Operations             []string `json:"operations"`
-			PollFrequency          int64    `json:"pollFrequency"`
-			PollEndpoint           string   `json:"pollEndpoint"`
-			PollEndpointAudience   string   `json:"pollEndpointAudience"`
-			ResumeEndpoint         string   `json:"resumeEndpoint"`
-			ResumeEndpointAudience string   `json:"resumeEndpointAudience"`
-			Timeout                int64    `json:"timeout"`
-		}
-		args := Args{
-			OperationId: o.id,
-		}
-		// 2. Configure workflow to incur waiting
-
-		// 2 (a) Configure workflow to incur constant wait durations
-		if w.waitDuration != 0 {
-			args.InitialWaitDuration = int64(w.waitDuration.Seconds())
-		}
-
-		// 2 (b) Determine whether to include self in 'child operations'
-		if w.selfWait {
-			w.childOperations = append(w.childOperations, "operations/"+o.id)
-		}
-
-		// 2 (c) Configure workflow to wait for child operations
-		if len(w.childOperations) > 0 {
-			if args.PollEndpoint == "" {
-				return fmt.Errorf("poll endpoint cannot be empty in the case of workflow waiting")
-			}
-			args.Operations = w.childOperations
-			args.PollFrequency = int64(w.pollFrequency.Seconds())
-			args.PollEndpoint = w.pollEndpoint
-			pollUrl, err := url.Parse(w.pollEndpoint)
-			if err != nil || pollUrl == nil {
-				return fmt.Errorf("could not resolve pollUrl, invalid polling endpoint (%s): %w", w.pollEndpoint, err)
-			}
-			// update args given valid pollEndpoint
-			args.PollEndpointAudience = "https://" + pollUrl.Host
-
-			// Configure workflow's timeout for child operations, accounting for initial wait duration incurred
-			timeoutQuotaAfterWaitDuration := w.timeout - w.waitDuration
-			args.Timeout = int64(timeoutQuotaAfterWaitDuration.Seconds())
-		} else {
-			args.Operations = []string{}
-		}
-
-		// Prevent ReturnOnResume
-		if w.resumeConfig.ReturnOnResume {
-			return fmt.Errorf("can not ReturnOnResume given the wait mechanism is workflow")
-		}
-
-		// 2 (d) Configure workflow's resume endpoint
-		if w.resumeConfig.ResumeEndpoint == "" {
-			if o.client.workflowsConfig.Host == "" {
-				return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from workflows config host field)")
-			}
-			methodName, ok := grpc.Method(ctx)
-			if !ok {
-				return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from grpc.Method())")
-			}
-			w.resumeConfig.ResumeEndpoint = o.client.workflowsConfig.Host + "/" + methodName
-		}
-		args.ResumeEndpoint = w.resumeConfig.ResumeEndpoint
-		// Process resumeEndpoint
-		resumeUrl, err := url.Parse(w.resumeConfig.ResumeEndpoint)
+		err = op.create()
 		if err != nil {
-			return fmt.Errorf("could not resolve resumeUrl, invalid resume endpoint (%s): %w", w.resumeConfig.ResumeEndpoint, err)
-		}
-		args.ResumeEndpointAudience = "https://" + resumeUrl.Host
-
-		// The Workflow service requires the argument in JSON format.
-		argsBytes, err := json.Marshal(args)
-		if err != nil {
-			return err
-		}
-
-		// Launch Google Cloud Workflows to wait...
-		_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
-			Parent: o.client.workflowsConfig.name,
-			Execution: &executionspb.Execution{
-				Argument:     string(argsBytes),
-				CallLogLevel: executionspb.Execution_LOG_ALL_CALLS,
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		return nil
-
-	case LocalSleep:
-		// 2. Incur waiting
-		// 2 (a) First, incur constant wait durations
-		// time.Sleep(w.waitDuration)
-		time.Sleep(w.waitDuration)
-
-		// 2 (b) Determine whether to include self in 'child operations'
-		if w.selfWait {
-			w.childOperations = append(w.childOperations, "operations/"+o.id)
-		}
-
-		// 2 (c) Then, wait for child operations, if any
-		if len(w.childOperations) > 0 {
-			// Configure workflow's timeout for child operations, accounting for initial wait duration incurred
-			timeoutQuotaAfterWaitDuration := w.timeout - w.waitDuration
-
-			g := new(errgroup.Group)
-			// Locally wait for each operation and contribute op status to wait group
-			for _, op := range w.childOperations {
-				g.Go(func() error {
-					// Start loop to check if operation is done or timeout has passed
-					for {
-						operation, err := o.client.Get(o.ctx, op)
-						if err != nil {
-							return err
-						}
-						if operation.Done {
-							return nil
-						}
-
-						timePassed := time.Since(startTime)
-						if timePassed.Seconds() > timeoutQuotaAfterWaitDuration.Seconds() {
-							return ErrWaitDeadlineExceeded{
-								message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-									op, timeoutQuotaAfterWaitDuration.Seconds()),
-							}
-						}
-						time.Sleep(w.pollFrequency)
-					}
-				})
-			}
-			groupErr := g.Wait()
-			if groupErr != nil {
-				return groupErr
-			}
-		}
-
-		// 3. Process resume config
-		if w.resumeConfig.ReturnOnResume {
-			return nil
-		}
-		if w.resumeConfig.LocalResumeCallback == nil {
-			return fmt.Errorf("either LocalResumeCallback or ReturnOnResume must be set in ResumeConfig given the wait mechanism is localSleep")
-		}
-		// attach opId to ctx to pick up existing op on callback
-		// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that much the id in OperationIdHeaderKey
-		newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
-		// user-specified callback to enable resuming after local waiting
-		w.resumeConfig.LocalResumeCallback(newCtx)
-
-		return nil
-	default:
-		return fmt.Errorf("unknown wait mechanism: %d", w.waitMechanism)
-	}
-}
-
-// SaveState saves a current state with the LRO resource
-func saveState(ctx context.Context, operation string, client *Client, state any) error {
-	buffer := bytes.Buffer{}
-	enc := gob.NewEncoder(&buffer)
-	if err := enc.Encode(state); err != nil {
-		return err
-	}
-
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":           operation,
-		StateColumnName: buffer.Bytes(),
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
-func saveCheckpointProgression(ctx context.Context, operation string, client *Client, checkpointProgression []string) error {
-	buffer := bytes.Buffer{}
-	enc := gob.NewEncoder(&buffer)
-
-	if err := enc.Encode(checkpointProgression); err != nil {
-		return err
-	}
-
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":                           operation,
-		CheckpointIndexColumnName:       0,
-		CheckpointProgressionColumnName: checkpointProgression,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
-func saveIncrementedCheckpointIndex(ctx context.Context, operation string, client *Client, checkpointIndex int) error {
-	incrementedIndex := checkpointIndex + 1
-	buffer := bytes.Buffer{}
-	enc := gob.NewEncoder(&buffer)
-
-	if err := enc.Encode(checkpointIndex); err != nil {
-		return err
-	}
-
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":                     operation,
-		CheckpointIndexColumnName: incrementedIndex,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// loadCheckpointProgression loads the checkpoint progression stored with the LRO resource
-func loadCheckpointProgression(ctx context.Context, operation string, client *Client) (int, []string, error) {
-	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	if row[CheckpointProgressionColumnName] == nil {
-		return 0, nil, fmt.Errorf("checkpoint progression is nil")
-	}
-	checkpointProgression := []string{}
-	for _, x := range row[CheckpointProgressionColumnName].([]interface{}) {
-		if str, ok := x.(string); ok {
-			checkpointProgression = append(checkpointProgression, str)
-		} else {
-			return 0, nil, fmt.Errorf("x is not string")
+			return nil, err
 		}
 	}
 
-	if row[CheckpointIndexColumnName] == nil {
-		return 0, nil, fmt.Errorf("checkpoint index is nil")
-	}
-
-	checkpointIndex, ok := row[CheckpointIndexColumnName].(string)
-	if !ok {
-		return 0, nil, fmt.Errorf("checkpoint index data is not int64")
-	}
-	intVal, err := strconv.ParseInt(checkpointIndex, 10, 64)
-	if err != nil {
-		return 0, nil, fmt.Errorf("strconv.ParseInt: convert checkpoint index to integer")
-	}
-
-	return int(intVal), checkpointProgression, nil
-}
-
-// // loadState loads the current state stored with the LRO resource
-// func loadState[T StateType]() (*T, error) {
-// 	var data T
-// 	row, err := o.client.spanner.ReadRow(o.ctx, o.client.spannerConfig.Table, spanner.Key{"operations/" + o.id}, []string{StateColumnName}, nil)
-// 	if err != nil {
-// 		return &data, err
-// 	}
-// 	if row[StateColumnName] != nil {
-
-// 		stateString, ok := row[StateColumnName].(string)
-// 		if !ok {
-// 			return &data, fmt.Errorf("state data is not string")
-// 		}
-
-// 		// Decode from base643
-// 		decodedData, err := base64.StdEncoding.DecodeString(stateString)
-// 		if err != nil {
-// 			fmt.Println("Error decoding:", err)
-// 			return &data, err
-// 		}
-
-// 		var buffer bytes.Buffer
-// 		buffer.Write(decodedData)
-// 		decoder := gob.NewDecoder(&buffer)
-
-// 		err = decoder.Decode(&data)
-// 		if err != nil {
-// 			return &data, err
-// 		}
-// 	}
-
-// 	return &data, nil
-// }
-
-// loadState loads the current state stored with the LRO resource
-func loadState[T StateType](ctx context.Context, operation string, client *Client) (*T, error) {
-	var data T
-	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{StateColumnName}, nil)
-	if err != nil {
-		return &data, err
-	}
-	if row[StateColumnName] != nil {
-
-		stateString, ok := row[StateColumnName].(string)
-		if !ok {
-			return &data, fmt.Errorf("state data is not string")
-		}
-
-		// Decode from base64
-		decodedData, err := base64.StdEncoding.DecodeString(stateString)
-		if err != nil {
-			fmt.Println("Error decoding:", err)
-			return &data, err
-		}
-
-		var buffer bytes.Buffer
-		buffer.Write(decodedData)
-		decoder := gob.NewDecoder(&buffer)
-
-		err = decoder.Decode(&data)
-		if err != nil {
-			return &data, err
-		}
-	}
-
-	return &data, nil
+	return op, err
 }
 
 // create stores a new long-running operation in spanner, with done=false
@@ -701,6 +133,143 @@ func (o *Operation) create() error {
 	err = o.client.spanner.InsertRow(o.ctx, o.client.spannerConfig.Table, row)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func WithSleep(sleep time.Duration) WaitOption {
+	return func(w *WaitConfig) error {
+		if sleep == 0 {
+			return fmt.Errorf("sleep duration cannot be zero")
+		}
+		w.sleep = sleep
+		return nil
+	}
+}
+
+func ForOperations(operations []string, pollFrequency time.Duration) WaitOption {
+	return func(w *WaitConfig) error {
+		if len(operations) == 0 {
+			return fmt.Errorf("operations cannot be empty")
+		}
+		if pollFrequency == 0 {
+			return fmt.Errorf("poll frequency cannot be zero")
+		}
+		// if pollClient == nil {
+		// 	return fmt.Errorf("poll client cannot be nil")
+		// }
+		// w.pollClient = pollClient
+		w.operations = operations
+		w.pollFrequency = pollFrequency
+		return nil
+	}
+}
+
+func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, timeout time.Duration) WaitOption {
+	return func(w *WaitConfig) error {
+		if len(operations) == 0 {
+			return fmt.Errorf("operations cannot be empty")
+		}
+		if pollFrequency == 0 {
+			return fmt.Errorf("poll frequency cannot be zero")
+		}
+		if timeout == 0 {
+			return fmt.Errorf("timeout cannot be zero")
+		}
+		// if pollClient == nil {
+		// return fmt.Errorf("poll client cannot be nil")
+		// }
+		// w.pollClient = pollClient
+		w.operations = operations
+		w.pollFrequency = pollFrequency
+		w.timeout = timeout
+		return nil
+	}
+}
+
+func WithResumeCallback(callback func(context.Context)) WaitOption {
+	return func(w *WaitConfig) error {
+		if callback == nil {
+			return fmt.Errorf("callback cannot be nil")
+		}
+		w.callback = callback
+		return nil
+	}
+}
+
+// Wait blocks until the specified option(s) resolve, and then continues execution.
+// Wait accepts options to determine waiting behaviour.
+func (o *Operation) WaitSync(ctx context.Context, opts ...WaitOption) error {
+	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
+	w := &WaitConfig{}
+
+	// Apply all wait options configured by user
+	for _, opt := range opts {
+		err := opt(w)
+		// fail on error in option configuration
+		if err != nil {
+			return err
+		}
+	}
+
+	// client is not specified therefore set default as current lro client
+	if w.pollClient == nil {
+		w.pollClient = o.client
+	}
+
+	// timeout is not specified  therefore set to default
+	if w.timeout == 0 {
+		w.timeout = 7 * time.Minute
+	}
+
+	startTime := time.Now()
+
+	// 2. Incur waiting
+	// 2 (a) First, incur constant wait durations
+	time.Sleep(w.sleep)
+
+	// 2 (c) Then, wait for child operations, if any
+	if len(w.operations) > 0 {
+
+		g := new(errgroup.Group)
+		// Locally wait for each operation and contribute op status to wait group
+		for _, op := range w.operations {
+			g.Go(func() error {
+				// Start loop to check if operation is done or timeout has passed
+				for {
+					operation, err := w.pollClient.Get(o.ctx, op)
+					if err != nil {
+						return err
+					}
+					if operation.Done {
+						return nil
+					}
+
+					timePassed := time.Since(startTime)
+					if timePassed.Seconds() > w.timeout.Seconds() {
+						return ErrWaitDeadlineExceeded{
+							message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
+								op, w.timeout.Seconds()),
+						}
+					}
+					time.Sleep(w.pollFrequency)
+				}
+			})
+		}
+		groupErr := g.Wait()
+		if groupErr != nil {
+			return groupErr
+		}
+	}
+
+	// 3. Process resume config
+	if w.callback != nil {
+		// attach opId to ctx to pick up existing op on callback
+		// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that match the id in OperationIdHeaderKey
+		newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
+		// user-specified callback to enable resuming after local waiting
+		w.callback(newCtx)
 	}
 
 	return nil
