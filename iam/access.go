@@ -151,6 +151,11 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 		return true
 	}
 
+	// check if the permission is an open permission
+	if a.iam.openPermissions[permission] {
+		return true
+	}
+
 	// Iterate through Policies and grant access if member found in role that grants access
 	policiesToCheck := append(a.Policies(), policies...)
 	for _, policy := range policiesToCheck {
@@ -205,16 +210,35 @@ func (a *Authorizer) IsGroupMember(policyMember string) bool {
 // AddPolicy adds a policy to the list of policies against which any access will be validated.
 // Do not add policies that should not be evaluated in downstream access checks.
 // To add a policy that should only be evaluated for a specific access check, use the optional policies parameter in the HasAccess method.
+// Will do nothing if identity is deployment service account or auth is already claimed.
+// Auth is claimed if another method on this server is calling the method where this authorizer lives.
 func (a *Authorizer) AddPolicy(policy *iampb.Policy) {
+	// do nothing if auth skipped
+	if a.skipAuth {
+		return
+	}
+
+	// do nothing if policy is nil
 	if policy == nil {
 		return
 	}
+
+	// add the policy to the list of policies
 	randomUniqueKey := uuid.New().String()
 	a.policies.Store(randomUniqueKey, policy)
 }
 
 // AddIdentityPolicy adds a policy from the underlying Identity to the list of policies against which access will be validated.
+// If the policy is not present in the Identity's jwt and a usersClient is provided, it will fetch the policy asynchronously.
+// Will do nothing if identity is deployment service account or auth is already claimed.
+// Auth is claimed if another method on this server is calling the method where this authorizer lives.
 func (a *Authorizer) AddIdentityPolicy() {
+	// do nothing if auth skipped
+	if a.skipAuth {
+		return
+	}
+
+	// add the policy if it exists
 	if a.Identity.policy != nil {
 		a.AddPolicy(a.Identity.policy)
 	} else {
@@ -238,7 +262,15 @@ func (a *Authorizer) AddIdentityPolicy() {
 
 // Asynchronously fetches a policy on another server using a Grpc Client's GetIamPolicy method.
 // Adds the fetched policy to the list of policies against which access will be validated.
+// Will do nothing if identity is deployment service account or auth is already claimed.
+// Auth is claimed if another method on this server is calling the method where this authorizer lives.
 func (a *Authorizer) AddPolicyFromClientRpc(resource string, clientGetIamPolicyMethod func(ctx context.Context, req *iampb.GetIamPolicyRequest, opts ...grpc.CallOption) (*iampb.Policy, error)) {
+	// do nothing if auth skipped
+	if a.skipAuth {
+		return
+	}
+
+	// async fetch the policy
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -255,7 +287,15 @@ func (a *Authorizer) AddPolicyFromClientRpc(resource string, clientGetIamPolicyM
 
 // Asynchronously fetches a policy from a locally implemented service's GetIamPolicy method.
 // Adds the fetched policy to the list of policies against which access will be validated.
+// Will do nothing if identity is deployment service account or auth is already claimed.
+// Auth is claimed if another method on this server is calling the method where this authorizer lives.
 func (a *Authorizer) AddPolicyFromServerRpc(resource string, serverGetIamPolicyMethod func(ctx context.Context, req *iampb.GetIamPolicyRequest) (*iampb.Policy, error)) {
+	// do nothing if auth skipped
+	if a.skipAuth {
+		return
+	}
+
+	// async fetch the policy
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()

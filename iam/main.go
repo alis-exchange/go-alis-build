@@ -26,6 +26,9 @@ type IAM struct {
 
 	// the users client to use for fetching user policies in case they are not provided in the JWT token
 	usersClient openIam.UsersServiceClient
+
+	// open permissions are always allowed
+	openPermissions map[string]bool
 }
 
 // New creates a new IAM object which keeps track of the given roles and deployment service account email.
@@ -47,6 +50,9 @@ func New(roles []*openIam.Role, deploymentServiceAccountEmail string) (*IAM, err
 		i.rolePermissionMap[roleName] = make(map[string]bool)
 		for _, permission := range role.Permissions {
 			i.rolePermissionMap[roleName][permission] = true
+			if role.AllUsers {
+				i.openPermissions[permission] = true
+			}
 		}
 	}
 
