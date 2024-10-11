@@ -67,7 +67,7 @@ type StateType any
 type ResumeConfig struct {
 	ResumeEndpoint      string
 	PollEndpoint        string
-	LocalResumeCallback func(context.Context)
+	LocalResumeCallback func(context.Context) error
 	State               any
 }
 
@@ -75,7 +75,7 @@ type ResumeConfig struct {
 func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ResumableOption) (*ResumableOperation, *T, error) {
 	resumable := &ResumableOperation{
 		op: &Operation{
-			ctx:    ctx,
+			ctx:    context.WithoutCancel(ctx),
 			client: client,
 		},
 	}
@@ -109,7 +109,7 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 		resumable.checkpointIndex = 0
 		if resumable.checkpoint == nil {
 			if len(resumable.checkpointProgression) > 0 {
-				err = saveCheckpointProgression(ctx, "operations/"+resumable.op.id, client, resumable.checkpointProgression)
+				err = resumable.saveCheckpointProgression(resumable.checkpointProgression)
 				resumable.checkpoint = &resumable.checkpointProgression[0]
 			}
 		}
@@ -134,7 +134,7 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 
 		resumable.checkpoint = nil
 
-		checkpoint, checkpointIndex, checkpointProgression, err := loadCheckpointColumns(ctx, "operations/"+resumable.op.id, client)
+		checkpoint, checkpointIndex, checkpointProgression, err := resumable.loadCheckpointColumns()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -159,12 +159,15 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 	}
 }
 
-func (r *ResumableOperation) ResumeAt(ctx context.Context, checkpoint string) {
+func (r *ResumableOperation) ResumeAt(checkpoint string) {
 	r.checkpoint = &checkpoint
-	saveCheckpoint(ctx, r.op.operation.GetName(), r.op.client, *r.checkpoint)
+	r.saveCheckpoint(*r.checkpoint)
 }
 
 func (r *ResumableOperation) GetCheckpoint() string {
+	if r.checkpoint == nil {
+		return ""
+	}
 	return *r.checkpoint
 }
 
@@ -202,7 +205,7 @@ func WithWaitMechanism(waitMechanism WaitMechanism) WaitOption {
 	}
 }
 
-func withLocalResumableCallback(localResumableCallback func(context.Context)) WaitOption {
+func withLocalResumableCallback(localResumableCallback func(context.Context) error) WaitOption {
 	return func(w *WaitConfig) error {
 		w.callback = localResumableCallback
 		return nil
@@ -212,7 +215,7 @@ func withLocalResumableCallback(localResumableCallback func(context.Context)) Wa
 // Wait blocks until the specified option(s) resolve.
 // Wait requires ResumeConfig such that exeuction can resume upon completion of waiting
 // Wait accepts options to determine waiting behaviour
-func (r *ResumableOperation) Wait(ctx context.Context, opts ...WaitOption) error {
+func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 	w := &WaitConfig{
 		waitMechanism: Automatic,
 	}
@@ -238,37 +241,79 @@ func (r *ResumableOperation) Wait(ctx context.Context, opts ...WaitOption) error
 	}
 
 	if r.checkpoint != nil {
-		saveIncrementedCheckpointIndex(r.op.ctx, r.op.operation.GetName(), r.op.client, r.checkpointIndex)
+		r.incrementAndSaveCheckpointIndex(r.checkpointIndex)
 	}
 
 	switch w.waitMechanism {
 	case Workflow:
-		r.WaitAsync(ctx, opts...)
-		return nil
+		err := r.WaitAsync(opts...)
+		if err != nil {
+			return err
+		}
 	case LocalSleep:
 		// if user has supplied a callback use that
 		// otherwise configure a callback that mimics resumable hit via workflow
 		if r.resumeConfig.LocalResumeCallback != nil {
 			opts = append(opts, withLocalResumableCallback(r.resumeConfig.LocalResumeCallback))
 		} else {
-			opts = append(opts, withLocalResumableCallback(func(context.Context) {
-				// TODO debug
-				m, ok := grpc.Method(ctx)
-				if !ok {
-					return
-				}
-				err := grpc.Invoke(ctx, m, nil, nil, nil)
-				_ = err
-			}))
+			opts = append(opts, withLocalResumableCallback(
+
+				func(ctx context.Context) error {
+					// TODO debug
+					m, ok := grpc.Method(ctx)
+					if !ok {
+						return fmt.Errorf("failed to extract grpc.Method")
+					}
+					err := grpc.Invoke(ctx, m, nil, nil, nil)
+					if err != nil {
+						return fmt.Errorf("failed to grpc.Invoke on grpc.Method")
+					}
+					return nil
+				},
+				// func(context.Context) error {
+				// 	// Extract the method from the context using metadata.
+				// 	md, ok := metadata.FromIncomingContext(r.op.ctx)
+				// 	if !ok {
+				// 		return fmt.Errorf("failed to extract metadata from context")
+				// 	}
+
+				// 	// Get the "grpc-method" key from the metadata
+				// 	method, ok := md["grpc-method"]
+				// 	if !ok || len(method) == 0 {
+				// 		return fmt.Errorf("missing grpc-method in metadata")
+				// 	}
+
+				// 	// Construct the full method name (including package and service)
+				// 	fullMethod := method[0]
+
+				// 	// Create a new context with the same metadata for the outgoing request
+				// 	newCtx := metadata.NewOutgoingContext(ctx, md)
+
+				// 	// Invoke the method on the server using grpc.Invoke
+				// 	// Assuming you have a ClientConn available
+				// 	var clientConn *grpc.ClientConn // ... your grpc.ClientConn
+
+				// 	// Invoke the method
+				// 	err := grpc.Invoke(newCtx, fullMethod, nil, nil, clientConn)
+				// 	if err != nil {
+				// 		return fmt.Errorf("error invoking method: %v", err)
+				// 	}
+
+				// 	return nil
+				// },
+			))
 		}
-		r.op.WaitSync(ctx, opts...)
-		return nil
+		err := r.op.WaitSync(opts...)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown wait mechanism: %d", w.waitMechanism)
 	}
+	return nil
 }
 
-func (r *ResumableOperation) WaitAsync(ctx context.Context, opts ...WaitOption) error {
+func (r *ResumableOperation) WaitAsync(opts ...WaitOption) error {
 	w := &WaitConfig{}
 	// w.resumeConfig = resumeConfig
 
@@ -342,7 +387,7 @@ func (r *ResumableOperation) WaitAsync(ctx context.Context, opts ...WaitOption) 
 		if r.op.client.workflowsConfig.Host == "" {
 			return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from workflows config host field)")
 		}
-		methodName, ok := grpc.Method(ctx)
+		methodName, ok := grpc.Method(r.op.ctx)
 		if !ok {
 			return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from grpc.Method())")
 		}
@@ -377,14 +422,14 @@ func (r *ResumableOperation) WaitAsync(ctx context.Context, opts ...WaitOption) 
 }
 
 // SaveState saves a current state with the LRO resource
-func (r *ResumableOperation) SaveState(ctx context.Context, state any) error {
+func (r *ResumableOperation) SaveState(state any) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
 	if err := enc.Encode(state); err != nil {
 		return err
 	}
 
-	err := r.op.client.spanner.UpdateRow(ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
 		"key":           r.op.operation.GetName(),
 		StateColumnName: buffer.Bytes(),
 	})
@@ -396,7 +441,7 @@ func (r *ResumableOperation) SaveState(ctx context.Context, state any) error {
 }
 
 // SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
-func saveCheckpointProgression(ctx context.Context, operation string, client *Client, checkpointProgression []string) error {
+func (r *ResumableOperation) saveCheckpointProgression(checkpointProgression []string) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
 
@@ -404,8 +449,8 @@ func saveCheckpointProgression(ctx context.Context, operation string, client *Cl
 		return err
 	}
 
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":                           operation,
+	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+		"key":                           r.op.operation.GetName(),
 		CheckpointIndexColumnName:       0,
 		CheckpointProgressionColumnName: checkpointProgression,
 	})
@@ -417,7 +462,7 @@ func saveCheckpointProgression(ctx context.Context, operation string, client *Cl
 }
 
 // SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
-func saveIncrementedCheckpointIndex(ctx context.Context, operation string, client *Client, checkpointIndex int) error {
+func (r *ResumableOperation) incrementAndSaveCheckpointIndex(checkpointIndex int) error {
 	incrementedIndex := checkpointIndex + 1
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
@@ -426,8 +471,8 @@ func saveIncrementedCheckpointIndex(ctx context.Context, operation string, clien
 		return err
 	}
 
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":                     operation,
+	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+		"key":                     r.op.operation.GetName(),
 		CheckpointIndexColumnName: incrementedIndex,
 	})
 	if err != nil {
@@ -438,7 +483,7 @@ func saveIncrementedCheckpointIndex(ctx context.Context, operation string, clien
 }
 
 // SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
-func saveCheckpoint(ctx context.Context, operation string, client *Client, checkpoint string) error {
+func (r *ResumableOperation) saveCheckpoint(checkpoint string) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
 
@@ -446,8 +491,8 @@ func saveCheckpoint(ctx context.Context, operation string, client *Client, check
 		return err
 	}
 
-	err := client.spanner.UpdateRow(ctx, client.spannerConfig.Table, map[string]interface{}{
-		"key":                operation,
+	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+		"key":                r.op.operation.GetName(),
 		CheckpointColumnName: checkpoint,
 	})
 	if err != nil {
@@ -458,8 +503,8 @@ func saveCheckpoint(ctx context.Context, operation string, client *Client, check
 }
 
 // loadCheckpointColumns loads the checkpoint progression stored with the LRO resource
-func loadCheckpointColumns(ctx context.Context, operation string, client *Client) (string, int, []string, error) {
-	row, err := client.spanner.ReadRow(ctx, client.spannerConfig.Table, spanner.Key{operation}, []string{CheckpointColumnName, CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
+func (r *ResumableOperation) loadCheckpointColumns() (string, int, []string, error) {
+	row, err := r.op.client.spanner.ReadRow(r.op.ctx, r.op.client.spannerConfig.Table, spanner.Key{r.op.operation.GetName()}, []string{CheckpointColumnName, CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
 	if err != nil {
 		return "", 0, nil, err
 	}
@@ -473,7 +518,7 @@ func loadCheckpointColumns(ctx context.Context, operation string, client *Client
 			if str, ok := x.(string); ok {
 				checkpointProgression = append(checkpointProgression, str)
 			} else {
-				return "", 0, nil, fmt.Errorf("x is not string")
+				return "", 0, nil, fmt.Errorf("checkpoint progression item is not string")
 			}
 		}
 

@@ -52,11 +52,9 @@ type WaitConfig struct {
 
 	timeout time.Duration
 
-	callback func(context.Context)
+	callback func(context.Context) error
 
 	waitMechanism WaitMechanism
-
-	localResumableSimulation bool
 }
 
 // Option is a functional option for the NewOperation method, applied to an instantiation of WaitConfig.
@@ -188,7 +186,7 @@ func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, 
 	}
 }
 
-func WithResumeCallback(callback func(context.Context)) WaitOption {
+func WithResumeCallback(callback func(context.Context) error) WaitOption {
 	return func(w *WaitConfig) error {
 		if callback == nil {
 			return fmt.Errorf("callback cannot be nil")
@@ -200,7 +198,7 @@ func WithResumeCallback(callback func(context.Context)) WaitOption {
 
 // Wait blocks until the specified option(s) resolve, and then continues execution.
 // Wait accepts options to determine waiting behaviour.
-func (o *Operation) WaitSync(ctx context.Context, opts ...WaitOption) error {
+func (o *Operation) WaitSync(opts ...WaitOption) error {
 	// Store wait options on an instance of wait config such that waiting can be done in parallel on one operation
 	w := &WaitConfig{}
 
@@ -269,7 +267,10 @@ func (o *Operation) WaitSync(ctx context.Context, opts ...WaitOption) error {
 		// the callback that is provided is assumed to instantiate an op via NewOperation, which will look for existing ops that match the id in OperationIdHeaderKey
 		newCtx := metadata.NewIncomingContext(o.ctx, metadata.Pairs(OperationIdHeaderKey, o.id))
 		// user-specified callback to enable resuming after local waiting
-		w.callback(newCtx)
+		err := w.callback(newCtx)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
