@@ -155,7 +155,7 @@ func (f *ServiceProxy) ForwardUnaryRequest(ctx context.Context, req any, info *g
 }
 
 // ForwardServerStreamRequest forwards a server streaming request to the appropriate service.
-func (f *ServiceProxy) ForwardServerStreamRequest(stream grpc.ServerStream, info *grpc.StreamServerInfo) error {
+func (f *ServiceProxy) ForwardServerStreamRequest(ctx context.Context, stream grpc.ServerStream, info *grpc.StreamServerInfo) error {
 	// Get the service name from the full method
 	fullMethodParts := strings.Split(info.FullMethod, "/")
 	service := fullMethodParts[1]
@@ -168,7 +168,7 @@ func (f *ServiceProxy) ForwardServerStreamRequest(stream grpc.ServerStream, info
 	// Check if the response message is already known
 	// If not, get the response message type from the client
 
-	outboundStream, err := f.conns[service].NewStream(stream.Context(), &grpc.StreamDesc{
+	outboundStream, err := f.conns[service].NewStream(ctx, &grpc.StreamDesc{
 		ServerStreams: true,
 		ClientStreams: false,
 	}, info.FullMethod)

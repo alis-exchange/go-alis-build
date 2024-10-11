@@ -35,8 +35,6 @@ You can optionally specify which methods to allow.
 ServiceProxy.AddConn(pb.Service_ServiceDesc.ServiceName, conn, "org.product.v1.Service/*", "org.product.v1.OtherService/ExampleMethod")
 ```
 
-```go
-
 2. Use the `IsAllowedMethod` and `ForwardUnaryRequest` or `ForwardServerStreamRequest` in your own custom interceptors
 
 ```go
@@ -62,7 +60,7 @@ func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServ
 func streamInterceptor(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	// If the method is allowed, forward the request to the appropriate service
 	if clients.ServiceProxy.IsAllowedMethod(info.FullMethod) {
-		return clients.ServiceProxy.ForwardServerStreamRequest(stream, info)
+		return clients.ServiceProxy.ForwardServerStreamRequest(stream.Context(), stream, info)
 	}
 
 	// Call the handler
