@@ -41,6 +41,7 @@ func New(roles []*openIam.Role, deploymentServiceAccountEmail string) (*IAM, err
 		deploymentServiceAccountEmail: deploymentServiceAccountEmail,
 		roles:                         roles,
 		memberResolver:                make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
+		openPermissions:               make(map[string]bool),
 	}
 
 	// populate rolePermissionMap
