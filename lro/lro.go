@@ -186,16 +186,6 @@ func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, 
 	}
 }
 
-func WithResumeCallback(callback func(context.Context) error) WaitOption {
-	return func(w *WaitConfig) error {
-		if callback == nil {
-			return fmt.Errorf("callback cannot be nil")
-		}
-		w.callback = callback
-		return nil
-	}
-}
-
 // Wait blocks until the specified option(s) resolve, and then continues execution.
 // Wait accepts options to determine waiting behaviour.
 func (o *Operation) WaitSync(opts ...WaitOption) error {
