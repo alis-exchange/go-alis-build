@@ -178,9 +178,34 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 	return false
 }
 
+// Returns whether the requester has the specified role in the list of specified policies.
+// Does not look in the Policies stored in the Authorizer, but rather the provided policies.
+func (a *Authorizer) MemberHasRole(policies []*iampb.Policy, role string) bool {
+	role = ensureCorrectRoleName(role)
+	for _, policy := range policies {
+		// Now iterate through the bindings
+		for _, binding := range policy.Bindings {
+			// accomodating legacy bindings where role was either just roleId
+			// or alis-build role name, e.g. organisations/*/products/*/roles/*
+			bindingRole := ensureCorrectRoleName(binding.Role)
+			if bindingRole == role {
+				// Check whether the identity is present in the policy members.
+				for _, policyMember := range binding.Members {
+					if a.Identity.PolicyMember() == policyMember {
+						return true
+					} else if a.IsGroupMember(policyMember) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Returns whether identity is a member of the specified iam group.
-func (a *Authorizer) IsGroupMember(policyMember string) bool {
-	parts := strings.Split(policyMember, ":")
+func (a *Authorizer) IsGroupMember(group string) bool {
+	parts := strings.Split(group, ":")
 	groupType := parts[0]
 	if groupType == "user" || groupType == "serviceAccount" {
 		return false
@@ -197,11 +222,11 @@ func (a *Authorizer) IsGroupMember(policyMember string) bool {
 		}
 	}
 	if resolver, ok := a.iam.memberResolver[groupType]; ok {
-		if isMember, ok := a.memberCache.Load(policyMember); ok {
+		if isMember, ok := a.memberCache.Load(group); ok {
 			return isMember.(bool)
 		}
 		isMember := resolver(a.ctx, groupType, groupId, a)
-		a.memberCache.Store(policyMember, isMember)
+		a.memberCache.Store(group, isMember)
 		return isMember
 	}
 	return false

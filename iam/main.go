@@ -67,13 +67,7 @@ Arguments:
   - permission: the Permission, for example '/alis.in.reports.v1.ReportsService/GetReport'
 */
 func (s *IAM) RoleHasPermission(role string, permission string) bool {
-	// accomodating legacy bindings where role was either just roleId
-	// or alis-build role name, e.g. organisations/*/products/*/roles/*
-	if !strings.HasPrefix(role, "roles/") {
-		roleParts := strings.Split(role, "/")
-		roleId := roleParts[len(roleParts)-1]
-		role = "roles/" + roleId
-	}
+	role = ensureCorrectRoleName(role)
 	if _, ok := s.rolePermissionMap[role]; !ok {
 		return false
 	}
@@ -106,4 +100,16 @@ func (s *IAM) WithUsersClient(usersClient openIam.UsersServiceClient) *IAM {
 // Use this method for testing methods without enforcing authorization.
 func (i *IAM) Disable() {
 	i.disabled = true
+}
+
+// Converts the role name to the correct format of 'roles/{role_id}'.
+// Accomodates legacy bindings where role was either just roleId
+// or alis-build role name, e.g. organisations/*/products/*/roles/*
+func ensureCorrectRoleName(role string) string {
+	if !strings.HasPrefix(role, "roles/") {
+		roleParts := strings.Split(role, "/")
+		roleId := roleParts[len(roleParts)-1]
+		role = "roles/" + roleId
+	}
+	return role
 }
