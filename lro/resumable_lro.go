@@ -18,9 +18,10 @@ import (
 	"cloud.google.com/go/workflows/executions/apiv1/executionspb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
-// Operation is the object used to manage the relevant LROs activties.
+// ResumbaleOperation wraps an Operation, facilitating resumability of a method with the Operation.
 type ResumableOperation struct {
 	op                    *Operation
 	checkpoint            *string
@@ -29,21 +30,10 @@ type ResumableOperation struct {
 	resumeConfig          *ResumeConfig
 }
 
-// Option is a functional option for the NewOperation method.
+// ResumableOption is a functional option for the NewResumableOperation method.
 type ResumableOption func(*ResumableOperation) error
 
-// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
-func WithCheckpointProgression(progression []string) ResumableOption {
-	return func(r *ResumableOperation) error {
-		if len(progression) == 0 {
-			return fmt.Errorf("checkpoint progressions cannot be empty")
-		}
-		r.checkpointProgression = progression
-		return nil
-	}
-}
-
-// WithFirstCheckpoint sets the first checkpoint
+// WithFirstCheckpoint sets the first checkpoint to execute in the resumable method.
 func WithFirstCheckpoint(checkpoint string) ResumableOption {
 	return func(r *ResumableOperation) error {
 		r.checkpoint = &checkpoint
@@ -51,7 +41,7 @@ func WithFirstCheckpoint(checkpoint string) ResumableOption {
 	}
 }
 
-// WithCheckkpointProgression sets the a progression of checkpoints to cycle through
+// WithResumeConfig sets config options for resuming
 func WithResumeConfig(resumeConfig *ResumeConfig) ResumableOption {
 	return func(r *ResumableOperation) error {
 		if resumeConfig == nil {
@@ -62,6 +52,50 @@ func WithResumeConfig(resumeConfig *ResumeConfig) ResumableOption {
 	}
 }
 
+// WithCheckpointProgression sets the a progression of checkpoints to cycle through in the method, with waiting inbetween checkpoints
+func WithCheckpointProgression(progression []string) ResumableOption {
+	return func(r *ResumableOperation) error {
+		if len(progression) == 0 {
+			return fmt.Errorf("checkpoint progressions cannot be empty")
+		}
+		r.checkpointProgression = progression
+		return nil
+	}
+}
+
+// WithExistingOperation allows one to instantiate a new ResumableOperation object from an
+// existing LRO.
+func FromExistingOperation(operation string) ResumableOption {
+	return func(r *ResumableOperation) error {
+		if operation == "" {
+			return fmt.Errorf("operation cannot be empty")
+		}
+		if !strings.HasPrefix(operation, "operations/") {
+			return fmt.Errorf("invalid operation name")
+		}
+		operationId := strings.TrimPrefix(operation, "operations/")
+		r.op.id = operationId
+		return nil
+	}
+}
+
+// withLocalResumableCallback is an internal option that is used to mock WaitAsync with WaitSync on local testing
+func withLocalResumableCallback(localResumableCallback func(context.Context) error) WaitOption {
+	return func(w *WaitConfig) error {
+		w.callback = localResumableCallback
+		return nil
+	}
+}
+
+// // WithWaitMechanism sets the wait mechanism.
+// // This option should only be used if the user intends to override the wait mechanism that is inferred from your environment.
+// func WithWaitMechanism(waitMechanism WaitMechanism) WaitOption {
+// 	return func(w *WaitConfig) error {
+// 		w.waitMechanism = waitMechanism
+// 		return nil
+// 	}
+// }
+
 type StateType any
 
 type ResumeConfig struct {
@@ -71,9 +105,8 @@ type ResumeConfig struct {
 	State               any
 }
 
-// TODO from existing option
 func NewResumableOperation[T StateType](ctx context.Context, client *Client, opts ...ResumableOption) (*ResumableOperation, *T, error) {
-	resumable := &ResumableOperation{
+	r := &ResumableOperation{
 		op: &Operation{
 			ctx:    context.WithoutCancel(ctx),
 			client: client,
@@ -82,7 +115,7 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 
 	// Apply all wait options configured by user
 	for _, opt := range opts {
-		err := opt(resumable)
+		err := opt(r)
 		// fail on error in option configuration
 		if err != nil {
 			return nil, nil, err
@@ -95,67 +128,67 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 	if ok {
 		if len(md.Get(OperationIdHeaderKey)) > 0 {
 			// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
-			resumable.op.id = md.Get(OperationIdHeaderKey)[0]
+			r.op.id = md.Get(OperationIdHeaderKey)[0]
 		}
 	}
 
-	if resumable.op.id == "" {
+	if r.op.id == "" {
 		// new operation, no resuming
 		op, err := NewOperation(ctx, client)
 		if err != nil {
 			return nil, nil, err
 		}
-		resumable.op = op
-		resumable.checkpointIndex = 0
-		if resumable.checkpoint == nil {
-			if len(resumable.checkpointProgression) > 0 {
-				err = resumable.saveCheckpointProgression(resumable.checkpointProgression)
-				resumable.checkpoint = &resumable.checkpointProgression[0]
+		r.op = op
+		r.checkpointIndex = 0
+		if r.checkpoint == nil {
+			if len(r.checkpointProgression) > 0 {
+				err = r.saveCheckpointProgression(r.checkpointProgression)
+				r.checkpoint = &r.checkpointProgression[0]
 			}
 		}
-		return resumable, new(T), err
+		return r, new(T), err
 	} else {
 		// if an existing LRO has been provided, resume by fetching rop and state
 
 		// get a copy of the LRO identified by rop.id
-		lro, err := resumable.op.client.Get(resumable.op.ctx, "operations/"+resumable.op.id)
+		lro, err := r.op.client.Get(r.op.ctx, "operations/"+r.op.id)
 		if err != nil {
 			return nil, nil, err
 		}
-		resumable.op.id = strings.Split(lro.GetName(), "/")[1]
-		resumable.op.operation = lro
+		r.op.id = strings.Split(lro.GetName(), "/")[1]
+		r.op.operation = lro
 
-		// get state of the LRO identified by resumable.op.id
-		state, err := loadState[T](ctx, "operations/"+resumable.op.id, client)
+		// get state of the LRO identified by r.op.id
+		state, err := loadState[T](ctx, "operations/"+r.op.id, client)
 		if err != nil {
 			return nil, nil, err
 		}
-		// resumable.op.state = state
+		// r.op.state = state
 
-		resumable.checkpoint = nil
+		r.checkpoint = nil
 
-		checkpoint, checkpointIndex, checkpointProgression, err := resumable.loadCheckpointColumns()
+		checkpoint, checkpointIndex, checkpointProgression, err := r.loadCheckpointColumns()
 		if err != nil {
 			return nil, nil, err
 		}
 
 		// use checkpoint if explicitly set
 		if checkpoint != "" {
-			resumable.checkpoint = &checkpoint
-			return resumable, state, err
+			r.checkpoint = &checkpoint
+			return r, state, err
 		}
 
 		// use progression if no checkpoint is set
 		for i, ch := range checkpointProgression {
 			if i == checkpointIndex {
-				resumable.checkpoint = &ch
-				resumable.checkpointIndex = i
+				r.checkpoint = &ch
+				r.checkpointIndex = i
 			}
 		}
 
 		// TODO consider combining the above two operations into one i.e. loadOpAndState
 
-		return resumable, state, err
+		return r, state, err
 	}
 }
 
@@ -175,52 +208,38 @@ func (r *ResumableOperation) GetName() string {
 	return r.op.GetName()
 }
 
+func (r *ResumableOperation) GetOperation() (*longrunningpb.Operation, error) {
+	return r.op.GetOperation()
+}
+
 func (r *ResumableOperation) ReturnRPC() (*longrunningpb.Operation, error) {
 	return r.op.ReturnRPC()
 }
 
-// func GetOperation(ctx context.Context, client *Client, operation string) (op *Operation, err error) {
-// 	op = &Operation{
-// 		ctx:    context.WithoutCancel(ctx),
-// 		client: client,
-// 	}
-
-// 	// Get a copy of the current LRO
-// 	lro, err := op.client.Get(op.ctx, operation)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	op.id = strings.Split(lro.GetName(), "/")[1]
-// 	op.operation = lro
-// 	return op, err
-// }
-
-// WithWaitMechanism sets the wait mechanism.
-// This option should only be used if the user intends to override the wait mechanism that is inferred from your environment.
-func WithWaitMechanism(waitMechanism WaitMechanism) WaitOption {
-	return func(w *WaitConfig) error {
-		w.waitMechanism = waitMechanism
-		return nil
-	}
+func (r *ResumableOperation) Done(response proto.Message) error {
+	return r.op.Done(response)
 }
 
-func withLocalResumableCallback(localResumableCallback func(context.Context) error) WaitOption {
-	return func(w *WaitConfig) error {
-		w.callback = localResumableCallback
-		return nil
-	}
+func (r *ResumableOperation) Error(error error) error {
+	return r.op.Error(error)
+}
+
+func (r *ResumableOperation) SetMetadata(metadata proto.Message) (*longrunningpb.Operation, error) {
+	return r.op.SetMetadata(metadata)
+}
+
+func (r *ResumableOperation) Get() (*longrunningpb.Operation, error) {
+	return r.op.Get()
 }
 
 // Wait blocks until the specified option(s) resolve.
-// Wait requires ResumeConfig such that exeuction can resume upon completion of waiting
 // Wait accepts options to determine waiting behaviour
 func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 	w := &WaitConfig{
 		waitMechanism: Automatic,
 	}
 
-	// Allow override of mechanism
+	// Consider allowing override of mechanism
 	// // Apply all wait options configured by user
 	// for _, opt := range opts {
 	// 	err := opt(w)
@@ -240,7 +259,7 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 		}
 	}
 
-	if r.checkpoint != nil {
+	if r.checkpoint != nil && len(r.checkpointProgression) > 0 {
 		r.incrementAndSaveCheckpointIndex(r.checkpointIndex)
 	}
 
@@ -257,50 +276,18 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 			opts = append(opts, withLocalResumableCallback(r.resumeConfig.LocalResumeCallback))
 		} else {
 			opts = append(opts, withLocalResumableCallback(
-
 				func(ctx context.Context) error {
-					// TODO debug
 					m, ok := grpc.Method(ctx)
 					if !ok {
 						return fmt.Errorf("failed to extract grpc.Method")
 					}
+
 					err := grpc.Invoke(ctx, m, nil, nil, nil)
 					if err != nil {
 						return fmt.Errorf("failed to grpc.Invoke on grpc.Method")
 					}
 					return nil
 				},
-				// func(context.Context) error {
-				// 	// Extract the method from the context using metadata.
-				// 	md, ok := metadata.FromIncomingContext(r.op.ctx)
-				// 	if !ok {
-				// 		return fmt.Errorf("failed to extract metadata from context")
-				// 	}
-
-				// 	// Get the "grpc-method" key from the metadata
-				// 	method, ok := md["grpc-method"]
-				// 	if !ok || len(method) == 0 {
-				// 		return fmt.Errorf("missing grpc-method in metadata")
-				// 	}
-
-				// 	// Construct the full method name (including package and service)
-				// 	fullMethod := method[0]
-
-				// 	// Create a new context with the same metadata for the outgoing request
-				// 	newCtx := metadata.NewOutgoingContext(ctx, md)
-
-				// 	// Invoke the method on the server using grpc.Invoke
-				// 	// Assuming you have a ClientConn available
-				// 	var clientConn *grpc.ClientConn // ... your grpc.ClientConn
-
-				// 	// Invoke the method
-				// 	err := grpc.Invoke(newCtx, fullMethod, nil, nil, clientConn)
-				// 	if err != nil {
-				// 		return fmt.Errorf("error invoking method: %v", err)
-				// 	}
-
-				// 	return nil
-				// },
 			))
 		}
 		err := r.op.WaitSync(opts...)
@@ -315,7 +302,6 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 
 func (r *ResumableOperation) WaitAsync(opts ...WaitOption) error {
 	w := &WaitConfig{}
-	// w.resumeConfig = resumeConfig
 
 	// Apply all wait options configured by user
 	for _, opt := range opts {
@@ -461,7 +447,7 @@ func (r *ResumableOperation) saveCheckpointProgression(checkpointProgression []s
 	return nil
 }
 
-// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
+// SaveCheckpointIndex saves the checkpoint index alongside an LRO resource
 func (r *ResumableOperation) incrementAndSaveCheckpointIndex(checkpointIndex int) error {
 	incrementedIndex := checkpointIndex + 1
 	buffer := bytes.Buffer{}
@@ -482,7 +468,7 @@ func (r *ResumableOperation) incrementAndSaveCheckpointIndex(checkpointIndex int
 	return nil
 }
 
-// SaveCheckpointIndex saves the checkpoint progression alongside an LRO resource
+// SaveCheckpoint saves the checkpoint alongside an LRO resource
 func (r *ResumableOperation) saveCheckpoint(checkpoint string) error {
 	buffer := bytes.Buffer{}
 	enc := gob.NewEncoder(&buffer)
@@ -502,7 +488,7 @@ func (r *ResumableOperation) saveCheckpoint(checkpoint string) error {
 	return nil
 }
 
-// loadCheckpointColumns loads the checkpoint progression stored with the LRO resource
+// loadCheckpointColumns loads the checkpoint, checkpoint index and checkpoint progression stored with the LRO resource
 func (r *ResumableOperation) loadCheckpointColumns() (string, int, []string, error) {
 	row, err := r.op.client.spanner.ReadRow(r.op.ctx, r.op.client.spannerConfig.Table, spanner.Key{r.op.operation.GetName()}, []string{CheckpointColumnName, CheckpointIndexColumnName, CheckpointProgressionColumnName}, nil)
 	if err != nil {
