@@ -180,7 +180,7 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 
 // Returns whether the requester has the specified role in the list of specified policies.
 // Does not look in the Policies stored in the Authorizer, but rather the provided policies.
-func (a *Authorizer) MemberHasRole(policies []*iampb.Policy, role string) bool {
+func (a *Authorizer) HasRole(policies []*iampb.Policy, role string) bool {
 	role = ensureCorrectRoleName(role)
 	for _, policy := range policies {
 		// Now iterate through the bindings
