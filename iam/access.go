@@ -8,6 +8,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"github.com/google/uuid"
+	"go.alis.build/alog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -53,6 +54,10 @@ type Authorizer struct {
 	// An example use case is to store the result of a database query to avoid duplicate queries if a query could
 	// resolve more than one group membership.
 	Cache *sync.Map
+
+	// The batch authorizer, if any, that this authorizer belongs to.
+	// Batch authorizer is used as a shared cache for policies, group memberships and the generic Cache.
+	batchAuthorizer *BatchAuthorizer
 }
 
 /*
@@ -79,9 +84,11 @@ Returns:
 */
 func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, error) {
 	authorizer := &Authorizer{
-		iam:      i,
-		policies: &sync.Map{},
-		wg:       &sync.WaitGroup{},
+		iam:         i,
+		policies:    &sync.Map{},
+		memberCache: &sync.Map{},
+		wg:          &sync.WaitGroup{},
+		Cache:       &sync.Map{},
 	}
 
 	// First, we'll extract the Identity from the context
@@ -262,25 +269,24 @@ func (a *Authorizer) AddIdentityPolicy() {
 	if a.skipAuth {
 		return
 	}
-
 	// add the policy if it exists
 	if a.Identity.policy != nil {
 		a.AddPolicy(a.Identity.policy)
 	} else {
 		if a.iam.usersClient != nil {
 			// async fetch the policy
-			a.wg.Add(1)
-			go func() {
-				defer a.wg.Done()
+			fetchFunc := func() *iampb.Policy {
 				req := &iampb.GetIamPolicyRequest{
 					Resource: a.Identity.UserName(),
 				}
 				policy, err := a.iam.usersClient.GetIamPolicy(a.ctx, req)
 				if err != nil {
-					return
+					alog.Alertf(a.ctx, "error fetching policy for user %s: %v", a.Identity.UserName(), err)
+					return nil
 				}
-				a.AddPolicy(policy)
-			}()
+				return policy
+			}
+			a.AsyncAddPolicy(a.Identity.UserName(), fetchFunc)
 		}
 	}
 }
@@ -296,18 +302,18 @@ func (a *Authorizer) AddPolicyFromClientRpc(resource string, clientGetIamPolicyM
 	}
 
 	// async fetch the policy
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	fetchFunc := func() *iampb.Policy {
 		req := &iampb.GetIamPolicyRequest{
 			Resource: resource,
 		}
 		policy, err := clientGetIamPolicyMethod(a.ctx, req)
 		if err != nil {
-			return
+			alog.Alertf(a.ctx, "error fetching policy from client for %s: %v", resource, err)
+			return nil
 		}
-		a.AddPolicy(policy)
-	}()
+		return policy
+	}
+	a.AsyncAddPolicy(resource, fetchFunc)
 }
 
 // Asynchronously fetches a policy from a locally implemented service's GetIamPolicy method.
@@ -321,13 +327,45 @@ func (a *Authorizer) AddPolicyFromServerRpc(resource string, serverGetIamPolicyM
 	}
 
 	// async fetch the policy
+	fetchFunc := func() *iampb.Policy {
+		req := &iampb.GetIamPolicyRequest{
+			Resource: resource,
+		}
+		policy, err := serverGetIamPolicyMethod(a.ctx, req)
+		if err != nil {
+			alog.Alertf(a.ctx, "error fetching policy from server for %s: %v", resource, err)
+			return nil
+		}
+		return policy
+	}
+	a.AsyncAddPolicy(resource, fetchFunc)
+}
+
+// This function should rarely be used directly.
+// Rather use the AddIdentityPolicy, AddPolicyFromClientRpc, or AddPolicyFromServerRpc functions.
+// Asynchronously fetches a policy using the provided fetch function and adds it to the list of policies against which access will be validated.
+func (a *Authorizer) AsyncAddPolicy(resource string, fetchFunc func() *iampb.Policy) {
+	// do nothing if auth skipped
+	if a.skipAuth {
+		return
+	}
+
+	// async fetch the policy
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
-		policy, err := serverGetIamPolicyMethod(a.ctx, &iampb.GetIamPolicyRequest{Resource: resource})
-		if err != nil {
-			return
+
+		// if part of batch authorizer, use the batch authorizer's async fetch policy to benefit from caching
+		if a.batchAuthorizer != nil {
+			policy := a.batchAuthorizer.asyncFetchPolicy(resource, fetchFunc)
+			if policy != nil {
+				a.AddPolicy(policy)
+			}
+		} else {
+			policy := fetchFunc()
+			if policy != nil {
+				a.AddPolicy(policy)
+			}
 		}
-		a.AddPolicy(policy)
 	}()
 }
