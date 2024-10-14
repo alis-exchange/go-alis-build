@@ -176,6 +176,7 @@ func ForOperations(operations []string, pollFrequency time.Duration) WaitOption 
 }
 
 // ForOperationsWithTimeout performs the same function as ForOperations except a timeout is applied as an upper limit on waiting.
+// TODO consider accepting a map[string]*Client for operations where each operation client can be specfified along side it, if nil default to o.client.
 func ForOperationsWithTimeout(operations []string, pollFrequency time.Duration, timeout time.Duration) WaitOption {
 	return func(w *WaitConfig) error {
 		if len(operations) == 0 {

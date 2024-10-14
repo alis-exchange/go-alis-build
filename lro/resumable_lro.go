@@ -140,11 +140,10 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 		}
 		r.op = op
 		r.checkpointIndex = 0
-		if r.checkpoint == nil {
-			if len(r.checkpointProgression) > 0 {
-				err = r.saveCheckpointProgression(r.checkpointProgression)
-				r.checkpoint = &r.checkpointProgression[0]
-			}
+		if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
+			// don't save checkpoint progression if checkpoint's are being manually set
+			err = r.saveCheckpointProgression(r.checkpointProgression)
+			r.checkpoint = &r.checkpointProgression[0]
 		}
 		return r, new(T), err
 	} else {
@@ -268,7 +267,8 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 		}
 	}
 
-	if r.checkpoint != nil && len(r.checkpointProgression) > 0 {
+	// facilitate resume on next checkpoint in the case that checkpoint progression is being used and not r.SetNextCheckpoint
+	if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
 		r.incrementAndSaveCheckpointIndex(r.checkpointIndex)
 	}
 
@@ -286,11 +286,13 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 		} else {
 			opts = append(opts, withLocalResumableCallback(
 				func(ctx context.Context) error {
+					// TODO: consider using go.alis.build/test to implement this callback
 					m, ok := grpc.Method(ctx)
 					if !ok {
 						return fmt.Errorf("failed to extract grpc.Method")
 					}
 
+					// TODO fix this, require client connection
 					err := grpc.Invoke(ctx, m, nil, nil, nil)
 					if err != nil {
 						return fmt.Errorf("failed to grpc.Invoke on grpc.Method")
