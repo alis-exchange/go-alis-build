@@ -102,7 +102,6 @@ type ResumeConfig struct {
 	ResumeEndpoint      string
 	PollEndpoint        string
 	LocalResumeCallback func(context.Context) error
-	State               any
 }
 
 // NewResumableOperation instantiates a new ResumableOperation object, optionally resuming from a pre-existing LRO.
@@ -193,8 +192,8 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 	}
 }
 
-// ResumeAt sets the checkpoint to resume at, overwriting any previously set checkpoint.
-func (r *ResumableOperation) ResumeAt(checkpoint string) {
+// NextCheckpoint sets the checkpoint to resume at, overwriting any previously set checkpoint.
+func (r *ResumableOperation) SetNextCheckpoint(checkpoint string) {
 	r.checkpoint = &checkpoint
 	r.saveCheckpoint(*r.checkpoint)
 }
