@@ -115,12 +115,15 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 	// ensure all requests not going to /auth have a valid access token
 	accessTokenCookie, err := req.Cookie("access_token")
 	if err != nil || accessTokenCookie.Value == "" {
-		// first set cookie "post_auth_redirect_uri" to the current request uri
-		http.SetCookie(resp, &http.Cookie{
-			Name:  "post_auth_redirect_uri",
-			Value: req.RequestURI,
-			Path:  "/",
-		})
+		// first set cookie "post_auth_redirect_uri" to the current request uri if not already set
+		currentCookie, err := req.Cookie("post_auth_redirect_uri")
+		if err != nil || currentCookie.Value == "" {
+			http.SetCookie(resp, &http.Cookie{
+				Name:  "post_auth_redirect_uri",
+				Value: req.RequestURI,
+				Path:  "/",
+			})
+		}
 		http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 		return true
 	} else {
