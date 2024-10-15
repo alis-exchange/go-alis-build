@@ -18,8 +18,10 @@ import (
 )
 
 type AuthProxy struct {
-	authHost   string
-	publicKeys *sync.Map
+	authHost       string
+	publicKeys     *sync.Map
+	publicPrefixes []string
+	publicExacts   map[string]bool
 }
 
 // AlisForwardedHostHeader ia the header used to forward the host with the
@@ -31,6 +33,31 @@ func New(authHost string) *AuthProxy {
 	return &AuthProxy{
 		authHost:   strings.TrimSuffix(authHost, "/"),
 		publicKeys: &sync.Map{},
+		publicExacts: map[string]bool{
+			"/favicon.ico": true,
+		},
+	}
+}
+
+// Exclude paths from authentication, i.e. no access token is required for these paths.
+// You can specify exact paths or paths with a wildcard (*) at the end.
+// favicon.ico is by default a public path.
+func WithPublicPaths(paths ...string) func(*AuthProxy) {
+	return func(h *AuthProxy) {
+		for _, path := range paths {
+			if strings.HasSuffix(path, "*") {
+				h.publicPrefixes = append(h.publicPrefixes, strings.TrimSuffix(path, "*"))
+			} else {
+				h.publicExacts[path] = true
+			}
+		}
+	}
+}
+
+// Exclude favicon.ico from public paths, as its default behavior is to be public.
+func WithPrivateFavicon() func(*AuthProxy) {
+	return func(h *AuthProxy) {
+		h.publicExacts["/favicon.ico"] = false
 	}
 }
 
@@ -41,7 +68,11 @@ func New(authHost string) *AuthProxy {
 // Returns true if the request was handled, in which case you should return from the handler.
 func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool {
 	// Handle /auth requests
-	if strings.HasPrefix(req.URL.Path, "/auth") {
+	path := req.URL.Path
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if strings.HasPrefix(path, "/auth") {
 		// make hit and return response body and cookie headers
 		endpoint := fmt.Sprintf("%s%s", h.authHost, req.URL.Path)
 		if req.URL.RawQuery != "" {
@@ -76,7 +107,7 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 		}
 		defer authResp.Body.Close()
 
-		// // copy cookies
+		// copy cookies
 		for _, c := range authResp.Cookies() {
 			http.SetCookie(resp, c)
 		}
@@ -107,9 +138,14 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 		return true
 	}
 
-	// if favicon requested, return false
-	if req.URL.Path == "/favicon.ico" {
+	// Handle public paths
+	if h.publicExacts[path] {
 		return false
+	}
+	for _, prefix := range h.publicPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return false
+		}
 	}
 
 	// ensure all requests not going to /auth have a valid access token
