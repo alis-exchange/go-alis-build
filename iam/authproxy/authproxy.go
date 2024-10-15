@@ -18,10 +18,11 @@ import (
 )
 
 type AuthProxy struct {
-	authHost       string
-	publicKeys     *sync.Map
-	publicPrefixes []string
-	publicExacts   map[string]bool
+	authHost              string
+	publicKeys            *sync.Map
+	publicPrefixes        []string
+	publicExacts          map[string]bool
+	fixedPostAuthRedirect string
 }
 
 // AlisForwardedHostHeader ia the header used to forward the host with the
@@ -58,6 +59,14 @@ func (h *AuthProxy) WithPublicPaths(paths ...string) {
 // Exclude favicon.ico from public paths, as its default behavior is to be public.
 func (h *AuthProxy) WithPrivateFavicon() {
 	h.publicExacts["/favicon.ico"] = false
+}
+
+// Hardcodes the path to redirect to after authentication in stead of using the request URI.
+func (h *AuthProxy) WithFixedPostAuthRedirect(path string) {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	h.fixedPostAuthRedirect = path
 }
 
 // Reverse proxies /auth/* requests to the authHost and validates the access_token cookie
@@ -150,26 +159,34 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 	// ensure all requests not going to /auth have a valid access token
 	accessTokenCookie, err := req.Cookie("access_token")
 	if err != nil || accessTokenCookie.Value == "" {
-		// first set cookie "post_auth_redirect_uri" to the current request uri if not already set
-		currentCookie, err := req.Cookie("post_auth_redirect_uri")
-		if err != nil || currentCookie.Value == "" {
-			http.SetCookie(resp, &http.Cookie{
-				Name:  "post_auth_redirect_uri",
-				Value: req.RequestURI,
-				Path:  "/",
-			})
-		}
+		http.SetCookie(resp, &http.Cookie{
+			Name:  "post_auth_redirect_uri",
+			Value: req.RequestURI,
+			Path:  "/",
+		})
+
 		http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 		return true
 	} else {
 		// validate access token
 		err = h.validateJwt(accessTokenCookie.Value)
 		if err != nil {
-			// first set cookie "post_auth_redirect_uri" to the current request uri
-			http.SetCookie(resp, &http.Cookie{
-				Name:  "post_auth_redirect_uri",
-				Value: req.RequestURI,
-			})
+			if h.fixedPostAuthRedirect != "" {
+				http.SetCookie(resp, &http.Cookie{
+					Name:  "post_auth_redirect_uri",
+					Value: req.RequestURI,
+				})
+			} else {
+				// if cookie set, expire it
+				_, err := req.Cookie("post_auth_redirect_uri")
+				if err == nil {
+					http.SetCookie(resp, &http.Cookie{
+						Name:   "post_auth_redirect_uri",
+						Value:  "",
+						MaxAge: -1,
+					})
+				}
+			}
 			http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 			return true
 		}
