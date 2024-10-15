@@ -55,8 +55,18 @@ type ResourceRow struct {
 	// The resource itself as a proto.Message. This can be cast to the appropriate message type.
 	Resource proto.Message
 	// The IAM policy for the resource. This will be nil if the resource does not have IAM policies.
-	Policy *iampb.Policy
-	tbl    *TableClient
+	Policy         *iampb.Policy
+	resourceClient *ResourceClient
+}
+
+// Set the row key for the row. This is needed if a list/query/stream was run and any of the rows returned by the query needs to be updated/deleted.
+func (rr *ResourceRow) SetRowKey(name string) error {
+	rowKey, err := rr.resourceClient.RowKeyConv.GetRowKey(name)
+	if err != nil {
+		return err
+	}
+	rr.RowKey = rowKey
+	return nil
 }
 
 /*
@@ -74,14 +84,20 @@ Update the resource in the database. Does not update the policy.
 This method may return a ErrNotFound error if the row does not exist in the table.
 */
 func (rr *ResourceRow) Update(ctx context.Context) error {
-	return rr.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Resource)
+	if rr.RowKey == "" {
+		return status.Error(codes.InvalidArgument, "Row key is empty because row was retrieved via Query,List or Stream method. Use SetRowKey to set the row key")
+	}
+	return rr.resourceClient.tbl.Update(ctx, spanner.Key{rr.RowKey}, rr.Resource)
 }
 
 /*
 Delete deletes the resource from the database.
 */
 func (rr *ResourceRow) Delete(ctx context.Context) error {
-	return rr.tbl.Delete(ctx, spanner.Key{rr.RowKey})
+	if rr.RowKey == "" {
+		return status.Error(codes.InvalidArgument, "Row key is empty because row was retrieved via Query,List or Stream method. Use SetRowKey to set the row key")
+	}
+	return rr.resourceClient.tbl.Delete(ctx, spanner.Key{rr.RowKey})
 }
 
 /*
@@ -185,9 +201,9 @@ func (rt *ResourceClient) BatchCreate(ctx context.Context, names []string, resou
 	resourceRows := make([]*ResourceRow, len(names))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey:   row.Key.String(),
-			Resource: row.Messages[0],
-			tbl:      rt.tbl,
+			RowKey:         row.Key.String(),
+			Resource:       row.Messages[0],
+			resourceClient: rt,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -220,9 +236,9 @@ func (rt *ResourceClient) Read(ctx context.Context, name string, fieldMaskPaths 
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: msg,
-		tbl:      rt.tbl,
+		RowKey:         rowKey,
+		Resource:       msg,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		resourceRow.Policy = policy
@@ -284,9 +300,9 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 			return nil, nil, status.Errorf(codes.Internal, "Failed to convert row key to string: %v", err)
 		}
 		resourceRow := &ResourceRow{
-			RowKey:   key,
-			Resource: row.Messages[0],
-			tbl:      rt.tbl,
+			RowKey:         key,
+			Resource:       row.Messages[0],
+			resourceClient: rt,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -317,9 +333,8 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 	resourceRows := make([]*ResourceRow, len(rows))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey:   row.Key.String(),
-			Resource: row.Messages[0],
-			tbl:      rt.tbl,
+			Resource:       row.Messages[0],
+			resourceClient: rt,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -373,9 +388,8 @@ func (rt *ResourceClient) Stream(ctx context.Context, parent string, opts *Query
 			}
 
 			resourceRow := &ResourceRow{
-				RowKey:   row.Key.String(),
-				Resource: row.Messages[0],
-				tbl:      rt.tbl,
+				Resource:       row.Messages[0],
+				resourceClient: rt,
 			}
 			if rt.hasIamPolicy {
 				resourceRow.Policy = row.Messages[1].(*iampb.Policy)
@@ -405,9 +419,8 @@ func (rt *ResourceClient) Query(ctx context.Context, filter *spanner.Statement, 
 	resourceRows := make([]*ResourceRow, len(rows))
 	for i, row := range rows {
 		resourceRow := &ResourceRow{
-			RowKey:   row.Key.String(),
-			Resource: row.Messages[0],
-			tbl:      rt.tbl,
+			Resource:       row.Messages[0],
+			resourceClient: rt,
 		}
 		if rt.hasIamPolicy {
 			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
