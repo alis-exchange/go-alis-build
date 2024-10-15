@@ -390,7 +390,7 @@ func (r *ResumableOperation) WaitAsync(opts ...WaitOption) error {
 		if !ok {
 			return fmt.Errorf("resume endpoint is required in ResumeConfig given the wait mechanism is workflow (failed to infer resume endpoint from grpc.Method())")
 		}
-		r.resumeConfig.ResumeEndpoint = r.op.client.workflowsConfig.Host + "/" + methodName
+		r.resumeConfig.ResumeEndpoint = r.op.client.workflowsConfig.Host + methodName
 	}
 	args.ResumeEndpoint = r.resumeConfig.ResumeEndpoint
 	resumeUrl, err := url.Parse(r.resumeConfig.ResumeEndpoint)
