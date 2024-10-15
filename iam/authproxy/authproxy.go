@@ -44,6 +44,9 @@ func New(authHost string) *AuthProxy {
 // favicon.ico is by default a public path.
 func (h *AuthProxy) WithPublicPaths(paths ...string) {
 	for _, path := range paths {
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
 		if strings.HasSuffix(path, "*") {
 			h.publicPrefixes = append(h.publicPrefixes, strings.TrimSuffix(path, "*"))
 		} else {
