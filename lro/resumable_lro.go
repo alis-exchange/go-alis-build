@@ -23,11 +23,11 @@ import (
 
 // ResumbaleOperation wraps an Operation, facilitating resumability of a method with the Operation.
 type ResumableOperation struct {
-	op                    *Operation
-	checkpoint            *string
-	checkpointIndex       int
-	checkpointProgression []string
-	resumeConfig          *ResumeConfig
+	op         *Operation
+	checkpoint *string
+	// checkpointIndex       int
+	// checkpointProgression []string
+	resumeConfig *ResumeConfig
 }
 
 // ResumableOption is a functional option for a ResumableOperation.
@@ -52,16 +52,16 @@ func WithResumeConfig(resumeConfig *ResumeConfig) ResumableOption {
 	}
 }
 
-// WithCheckpointProgression sets the a progression of checkpoints to cycle through in the method, with waiting inbetween checkpoints
-func WithCheckpointProgression(progression []string) ResumableOption {
-	return func(r *ResumableOperation) error {
-		if len(progression) == 0 {
-			return fmt.Errorf("checkpoint progressions cannot be empty")
-		}
-		r.checkpointProgression = progression
-		return nil
-	}
-}
+// // WithCheckpointProgression sets the a progression of checkpoints to cycle through in the method, with waiting inbetween checkpoints
+// func WithCheckpointProgression(progression []string) ResumableOption {
+// 	return func(r *ResumableOperation) error {
+// 		if len(progression) == 0 {
+// 			return fmt.Errorf("checkpoint progressions cannot be empty")
+// 		}
+// 		r.checkpointProgression = progression
+// 		return nil
+// 	}
+// }
 
 // WithExistingOperation allows one to instantiate a new ResumableOperation object from an
 // existing LRO.
@@ -139,12 +139,12 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 			return nil, nil, err
 		}
 		r.op = op
-		r.checkpointIndex = 0
-		if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
-			// don't save checkpoint progression if checkpoint's are being manually set
-			err = r.saveCheckpointProgression(r.checkpointProgression)
-			r.checkpoint = &r.checkpointProgression[0]
-		}
+		// r.checkpointIndex = 0
+		// if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
+		// 	// don't save checkpoint progression if checkpoint's are being manually set
+		// 	err = r.saveCheckpointProgression(r.checkpointProgression)
+		// 	r.checkpoint = &r.checkpointProgression[0]
+		// }
 		return r, new(T), err
 	} else {
 		// if an existing LRO has been provided, resume by fetching rop and state
@@ -166,7 +166,7 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 
 		r.checkpoint = nil
 
-		checkpoint, checkpointIndex, checkpointProgression, err := r.loadCheckpointColumns()
+		checkpoint, _, _, err := r.loadCheckpointColumns()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -177,13 +177,13 @@ func NewResumableOperation[T StateType](ctx context.Context, client *Client, opt
 			return r, state, err
 		}
 
-		// use progression if no checkpoint is set
-		for i, ch := range checkpointProgression {
-			if i == checkpointIndex {
-				r.checkpoint = &ch
-				r.checkpointIndex = i
-			}
-		}
+		// // use progression if no checkpoint is set
+		// for i, ch := range checkpointProgression {
+		// 	if i == checkpointIndex {
+		// 		r.checkpoint = &ch
+		// 		r.checkpointIndex = i
+		// 	}
+		// }
 
 		// TODO consider combining the above two operations into one i.e. loadOpAndState
 
@@ -267,10 +267,10 @@ func (r *ResumableOperation) Wait(opts ...WaitOption) error {
 		}
 	}
 
-	// facilitate resume on next checkpoint in the case that checkpoint progression is being used and not r.SetNextCheckpoint
-	if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
-		r.incrementAndSaveCheckpointIndex(r.checkpointIndex)
-	}
+	// // facilitate resume on next checkpoint in the case that checkpoint progression is being used and not r.SetNextCheckpoint
+	// if r.checkpoint == nil && len(r.checkpointProgression) > 0 {
+	// 	r.incrementAndSaveCheckpointIndex(r.checkpointIndex)
+	// }
 
 	switch w.waitMechanism {
 	case Workflow:
@@ -439,47 +439,47 @@ func (r *ResumableOperation) SaveState(state any) error {
 	return nil
 }
 
-// SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
-func (r *ResumableOperation) saveCheckpointProgression(checkpointProgression []string) error {
-	buffer := bytes.Buffer{}
-	enc := gob.NewEncoder(&buffer)
+// // SaveCheckpointProgression saves the checkpoint progression alongside an LRO resource
+// func (r *ResumableOperation) saveCheckpointProgression(checkpointProgression []string) error {
+// 	buffer := bytes.Buffer{}
+// 	enc := gob.NewEncoder(&buffer)
 
-	if err := enc.Encode(checkpointProgression); err != nil {
-		return err
-	}
+// 	if err := enc.Encode(checkpointProgression); err != nil {
+// 		return err
+// 	}
 
-	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
-		"key":                           r.op.operation.GetName(),
-		CheckpointIndexColumnName:       0,
-		CheckpointProgressionColumnName: checkpointProgression,
-	})
-	if err != nil {
-		return err
-	}
+// 	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+// 		"key":                           r.op.operation.GetName(),
+// 		CheckpointIndexColumnName:       0,
+// 		CheckpointProgressionColumnName: checkpointProgression,
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// SaveCheckpointIndex saves the checkpoint index alongside an LRO resource
-func (r *ResumableOperation) incrementAndSaveCheckpointIndex(checkpointIndex int) error {
-	incrementedIndex := checkpointIndex + 1
-	buffer := bytes.Buffer{}
-	enc := gob.NewEncoder(&buffer)
+// // SaveCheckpointIndex saves the checkpoint index alongside an LRO resource
+// func (r *ResumableOperation) incrementAndSaveCheckpointIndex(checkpointIndex int) error {
+// 	incrementedIndex := checkpointIndex + 1
+// 	buffer := bytes.Buffer{}
+// 	enc := gob.NewEncoder(&buffer)
 
-	if err := enc.Encode(incrementedIndex); err != nil {
-		return err
-	}
+// 	if err := enc.Encode(incrementedIndex); err != nil {
+// 		return err
+// 	}
 
-	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
-		"key":                     r.op.operation.GetName(),
-		CheckpointIndexColumnName: incrementedIndex,
-	})
-	if err != nil {
-		return err
-	}
+// 	err := r.op.client.spanner.UpdateRow(r.op.ctx, r.op.client.spannerConfig.Table, map[string]interface{}{
+// 		"key":                     r.op.operation.GetName(),
+// 		CheckpointIndexColumnName: incrementedIndex,
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // SaveCheckpoint saves the checkpoint alongside an LRO resource
 func (r *ResumableOperation) saveCheckpoint(checkpoint string) error {
