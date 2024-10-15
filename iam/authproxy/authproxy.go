@@ -42,23 +42,19 @@ func New(authHost string) *AuthProxy {
 // Exclude paths from authentication, i.e. no access token is required for these paths.
 // You can specify exact paths or paths with a wildcard (*) at the end.
 // favicon.ico is by default a public path.
-func WithPublicPaths(paths ...string) func(*AuthProxy) {
-	return func(h *AuthProxy) {
-		for _, path := range paths {
-			if strings.HasSuffix(path, "*") {
-				h.publicPrefixes = append(h.publicPrefixes, strings.TrimSuffix(path, "*"))
-			} else {
-				h.publicExacts[path] = true
-			}
+func (h *AuthProxy) WithPublicPaths(paths ...string) {
+	for _, path := range paths {
+		if strings.HasSuffix(path, "*") {
+			h.publicPrefixes = append(h.publicPrefixes, strings.TrimSuffix(path, "*"))
+		} else {
+			h.publicExacts[path] = true
 		}
 	}
 }
 
 // Exclude favicon.ico from public paths, as its default behavior is to be public.
-func WithPrivateFavicon() func(*AuthProxy) {
-	return func(h *AuthProxy) {
-		h.publicExacts["/favicon.ico"] = false
-	}
+func (h *AuthProxy) WithPrivateFavicon() {
+	h.publicExacts["/favicon.ico"] = false
 }
 
 // Reverse proxies /auth/* requests to the authHost and validates the access_token cookie
