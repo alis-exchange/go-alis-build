@@ -87,63 +87,10 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 			endpoint += "?" + req.URL.RawQuery
 		}
 
-		// Create a new request using http
-		authReq, err := http.NewRequest("GET", endpoint, nil)
-		if err != nil {
-			http.Error(resp, err.Error(), http.StatusServiceUnavailable)
-			return true
-		}
+		h.reverseProxyToEndpoint(resp, req, endpoint)
 
-		// add header
-		authReq.Header.Add(ForwardedHostHeader, req.Host)
-
-		// set cookies
-		for _, c := range req.Cookies() {
-			authReq.AddCookie(c)
-		}
-
-		// Send req using http Client
-		client := &http.Client{
-			CheckRedirect: func(r *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-		authResp, err := client.Do(authReq)
-		if err != nil {
-			http.Error(resp, err.Error(), http.StatusServiceUnavailable)
-			return true
-		}
-		defer authResp.Body.Close()
-
-		// copy cookies
-		for _, c := range authResp.Cookies() {
-			http.SetCookie(resp, c)
-		}
-
-		// copy headers but change Cookie to Set-Cookie
-		for k, v := range authResp.Header {
-			if k == "Set-Cookie" {
-				continue
-			}
-			if k == "Cookie" {
-				continue
-			}
-			if k == "Content-Length" {
-				continue
-			}
-			resp.Header().Set(k, v[0])
-		}
-
-		// copy status code
-		resp.WriteHeader(authResp.StatusCode)
-
-		// copy body
-		_, err = io.Copy(resp, authResp.Body)
-		if err != nil {
-			http.Error(resp, err.Error(), http.StatusInternalServerError)
-			return true
-		}
 		return true
+
 	}
 
 	// Handle public paths
@@ -193,10 +140,76 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 	}
 
 	// add access token as header
-	req.Header.Add("Authorization", "Bearer "+accessTokenCookie.Value)
+	req.Header.Del(iam.AuthHeader)
+	req.Header.Add(iam.AuthHeader, "Bearer "+accessTokenCookie.Value)
 
 	// return false if request was not handled
 	return false
+}
+
+// Reverse proxies to /auth/denied which shows a message in the line of "Not found or you don't have access".
+func (h *AuthProxy) HandleNotFoundOrAccessDenied(resp http.ResponseWriter, req *http.Request) {
+	endpoint := fmt.Sprintf("%s/auth/denied", h.authHost)
+	h.reverseProxyToEndpoint(resp, req, endpoint)
+}
+
+func (h *AuthProxy) reverseProxyToEndpoint(resp http.ResponseWriter, req *http.Request, endpoint string) {
+	// Create a new request using http
+	authReq, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		http.Error(resp, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	// add header
+	authReq.Header.Add(ForwardedHostHeader, req.Host)
+
+	// set cookies
+	for _, c := range req.Cookies() {
+		authReq.AddCookie(c)
+	}
+
+	// Send req using http Client
+	client := &http.Client{
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	authResp, err := client.Do(authReq)
+	if err != nil {
+		http.Error(resp, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer authResp.Body.Close()
+
+	// copy cookies
+	for _, c := range authResp.Cookies() {
+		http.SetCookie(resp, c)
+	}
+
+	// copy headers but change Cookie to Set-Cookie
+	for k, v := range authResp.Header {
+		if k == "Set-Cookie" {
+			continue
+		}
+		if k == "Cookie" {
+			continue
+		}
+		if k == "Content-Length" {
+			continue
+		}
+		resp.Header().Set(k, v[0])
+	}
+
+	// copy status code
+	resp.WriteHeader(authResp.StatusCode)
+
+	// copy body
+	_, err = io.Copy(resp, authResp.Body)
+	if err != nil {
+		http.Error(resp, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 // Returns an error if the token is invalid
