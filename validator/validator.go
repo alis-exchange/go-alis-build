@@ -104,6 +104,13 @@ func (v *Validator) AddRule(rule *Rule) *Rule {
 
 // Add another validator as a sub-message validator. The sub-message validator will be run when Validate is called on the parent validator.
 func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validator, options *SubMsgOptions) *Rule {
+	subMsgRule := v.SubMessageRule(path, subMsgValidator, options)
+	v.rules = append(v.rules, subMsgRule)
+	return subMsgRule
+}
+
+// Create a sub message rule for a field in the proto message. The sub message validator will be run when Validate is called on the parent validator.
+func (v *Validator) SubMessageRule(path string, subMsgValidator *Validator, options *SubMsgOptions) *Rule {
 	fieldPathsGetter := func(v *Validator, msg protoreflect.ProtoMessage) []string {
 		return []string{}
 	}
@@ -280,7 +287,6 @@ func (v *Validator) AddSubMessageValidator(path string, subMsgValidator *Validat
 
 	// add rule
 	rule.setValidator(v)
-	v.rules = append(v.rules, rule)
 	return rule
 }
 
