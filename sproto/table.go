@@ -11,6 +11,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/mennanov/fmutils"
+	"go.alis.build/utils"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
@@ -630,8 +631,12 @@ func (t *TableClient) Query(ctx context.Context, messages []proto.Message, filte
 		return nil, "", err
 	}
 
+	wrappedColNames := utils.Transform(colNames, func(colName string) string {
+		return fmt.Sprintf("`%s`", colName)
+	})
+
 	// Construct the query
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(colNames, ","), t.tableName)
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(wrappedColNames, ","), t.tableName)
 	params := map[string]interface{}{}
 	// Add filtering condition if provided
 	if filter != nil && filter.SQL != "" {
@@ -767,8 +772,12 @@ func (t *TableClient) Stream(ctx context.Context, messages []proto.Message, filt
 		return nil, err
 	}
 
+	wrappedColNames := utils.Transform(colNames, func(colName string) string {
+		return fmt.Sprintf("`%s`", colName)
+	})
+
 	// Construct the query
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(colNames, ","), t.tableName)
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(wrappedColNames, ","), t.tableName)
 	params := map[string]interface{}{}
 	// Add filtering condition if provided
 	if filter != nil && filter.SQL != "" {
