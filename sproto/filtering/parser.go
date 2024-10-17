@@ -230,7 +230,7 @@ func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string
 			return "", nil, false, fmt.Errorf("unsupported function: %s", call.Function)
 		}
 	case *expr.Expr_IdentExpr:
-		return expression.GetIdentExpr().GetName(), params, false, nil
+		return f.parseIdentifier(expression.GetIdentExpr().GetName()), params, false, nil
 	case *expr.Expr_ConstExpr:
 		constExpr := expression.GetConstExpr()
 		switch constExpr.ConstantKind.(type) {
@@ -318,6 +318,8 @@ func (f *Filter) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string
 func (f *Filter) parseIdentifier(sql string) string {
 	if ident, ok := f.identifiers[sql]; ok {
 		switch ident.(type) {
+		case reservedIdentifier:
+			sql = fmt.Sprintf("`%s`", sql)
 		case timestampIdentifier:
 			sql = fmt.Sprintf("TIMESTAMP_ADD(TIMESTAMP_SECONDS(%s.seconds),INTERVAL CAST(FLOOR(IFNULL(%s.nanos,0) / 1000) AS INT64) MICROSECOND)", sql, sql)
 		case durationIdentifier:

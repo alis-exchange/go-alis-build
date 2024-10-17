@@ -5,6 +5,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/ext"
 	"google.golang.org/genproto/googleapis/type/date"
@@ -176,6 +177,17 @@ func (t mapIdentifier) Path() string {
 	return t.path
 }
 
+type reservedIdentifier struct {
+	name string
+}
+
+func (t reservedIdentifier) envType() *cel.Type {
+	return types.NewOpaqueType(t.name)
+}
+func (t reservedIdentifier) Path() string {
+	return t.name
+}
+
 /*
 Duration enables conversion of google.protobuf.Duration to a spanner int type.
 
@@ -221,6 +233,19 @@ Example:
 func Date(path string) Identifier {
 	return dateIdentifier{
 		path: path,
+	}
+}
+
+/*
+Reserved allows for the querying of columns with reserved keywords.
+It instructs the parser to wrap the column names with backticks(`).
+This is only required if you have a column with a reserved keyword
+
+It takes in the name of the column.
+*/
+func Reserved(name string) Identifier {
+	return reservedIdentifier{
+		name: name,
 	}
 }
 

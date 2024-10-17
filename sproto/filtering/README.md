@@ -33,6 +33,14 @@ They enable to parser to recognize protocol buffer types and convert them to SQL
     filter, err := filtering.NewFilter(filtering.Timestamp("Proto.create_time"),filtering.Duration("Proto.duration"))
 ```
 
+### Reserved keywords
+
+One of your columns may have a reserved keyword as a name. For this you can register the column using the `filtering.Reserved()` identifier.
+
+```go
+    filter, err := filtering.NewFilter(filtering.Reserved("Group"), filtering.Reserved("Lookup"))
+```
+
 ## Supported protobuf functions
 
 Please note that the package only supports the following protobuf functions at the moment:
