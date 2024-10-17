@@ -58,7 +58,7 @@ func TimestampField(path string) *datetime {
 			alog.Fatalf(context.Background(), "%s is not a Timestamp", path)
 		}
 		if ts == nil {
-			return []time.Time{}
+			return []time.Time{{}}
 		}
 		return []time.Time{ts.AsTime()}
 	}

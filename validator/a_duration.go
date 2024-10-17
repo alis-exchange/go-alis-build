@@ -49,7 +49,7 @@ func DurationField(path string) *dur {
 			alog.Fatalf(context.Background(), "%s is not a Duration", path)
 		}
 		if d == nil {
-			return []time.Duration{}
+			return []time.Duration{time.Duration(0)}
 		}
 		return []time.Duration{d.AsDuration()}
 	}
