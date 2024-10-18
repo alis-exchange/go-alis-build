@@ -39,21 +39,21 @@ func ExampleNewOperation() {
 				op.Wait(WithSleep(30 * time.Second))
 
 				// Scenario 2: Make one or more hits to methods returning LROs, and wait for these to complete.
-				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}))
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}...))
 
 				// Scenario 3: Customise the poll frequency and timeout
-				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithTimeout(10*time.Minute), WithPollFrequency(30*time.Second))
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}...), WithTimeout(10*time.Minute), WithPollFrequency(30*time.Second))
 
 				// Scenario 4: If the underlying operations are from another product, you would need to use a different client to poll
 				// the relevant GetOperation methods.  The service you connect to needs to satisfy the LRO interface as defined by google.longrunning package
 				var conn grpc.ClientConnInterface // create a connection to the relevant gRPC server
 				myLroClient := longrunningpb.NewOperationsClient(conn)
-				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithService(myLroClient))
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}...), WithService(myLroClient))
 
 				// Scenario 5: If, however the operations from another product does not implement the google.longrunning service, you could use
 				// any service that implements a GetOperation() method, therefore satisfying the OperationsService interface defined in this package.
 				var myProductClient OperationsService
-				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithService(myProductClient))
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}...), WithService(myProductClient))
 
 				// Scenario 6: Wait asynchronously for a longer time.
 				op.SetState(&MyState{}) // Explicitly set the state before waiting asynchronously
