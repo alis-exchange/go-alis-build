@@ -13,7 +13,7 @@ import (
 // origin is an interface that wraps the GetOperation method. This allows us
 // to use the GetOperation method of the service from which the operation originated,
 // which should implement this interface if it produces longrunning operations.
-type LroService interface {
+type OperationsService interface {
 	GetOperation(ctx context.Context, in *longrunningpb.GetOperationRequest, opts ...grpc.CallOption) (*longrunningpb.Operation, error)
 }
 
@@ -25,7 +25,7 @@ type LroService interface {
 //   - timeout: The period after which the method time outs and returns an error.
 //
 // Before using this method consider using the op.Wait() method with the lro.WithClient() option to use a custom LRO client.
-func WaitOperation(ctx context.Context, operation string, service LroService, timeout time.Duration,
+func WaitOperation(ctx context.Context, operation string, service OperationsService, timeout time.Duration,
 ) (*longrunningpb.Operation, error) {
 	// Set the default timeout
 	if timeout == 0 {

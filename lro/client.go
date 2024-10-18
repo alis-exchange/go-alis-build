@@ -3,12 +3,14 @@ package lro
 import (
 	"context"
 	"fmt"
-	"time"
+	"os"
+	"strings"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"cloud.google.com/go/spanner"
 	executions "cloud.google.com/go/workflows/executions/apiv1"
 	"go.alis.build/sproto"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -19,13 +21,14 @@ const (
 	// OperationColumnName is the column name used in spanner to store LROs
 	OperationColumnName = "Operation"
 	// StateColumnName is the column name used in spanner to store states (if used)
-	StateColumnName                 = "State"
-	CheckpointIndexColumnName       = "CheckpointIndex"
-	CheckpointColumnName            = "Checkpoint"
-	CheckpointProgressionColumnName = "CheckpointProgression"
+	StateColumnName = "State"
+	// ResumePointColumnName is the column name used in spanner to the point to resume to.
+	ResumePointColumnName = "ResumePoint"
 )
 
 type ClientOptions struct {
+	Project         string
+	Location        string
 	SpannerConfig   *SpannerConfig
 	WorkflowsConfig *WorkflowsConfig
 }
@@ -33,48 +36,65 @@ type ClientOptions struct {
 // ClientOption is a functional option for the NewClient method.
 type ClientOption func(*ClientOptions)
 
-// WithWorkflows enables Google Cloud Workflows integration for handling resumable Long-Running Operations (LROs).
-func WithWorkflows(workflowsConfig *WorkflowsConfig) ClientOption {
+/*
+WithWorkflows enables Google Cloud Workflows integration for handling resumable Long-Running Operations (LROs).
+The host needs to be of the format: https://myservice-v1-...app
+*/
+func WithWorkflows(host string) ClientOption {
 	return func(opts *ClientOptions) {
-		opts.WorkflowsConfig = workflowsConfig
+		opts.WorkflowsConfig = &WorkflowsConfig{
+			Host: host,
+		}
+	}
+}
+
+/*
+WithProject sets the default Google Cloud Project, which allows one to override the project as per the ALIS_OS_PROJECT env.
+*/
+func WithProject(project string) ClientOption {
+	return func(opts *ClientOptions) {
+		opts.Project = project
 	}
 }
 
 type Client struct {
-	spanner         *sproto.Client
-	workflows       *executions.Client
-	spannerConfig   *SpannerConfig
+	// Google Cloud Spanner configurations.
+	spanner      *sproto.Client
+	spannerTable string
+
+	// Google Cloud Workflows configurations.
 	workflowsConfig *WorkflowsConfig
+	workflows       *executions.Client
 }
 
 // WorkflowsConfig is used to configre the underlying Google Workflows client.
 type WorkflowsConfig struct {
 	// Name of the workflow for which an execution should be created.
 	// Format: projects/{project}/locations/{location}/workflows/{workflow}
-	// Example: projects/myabc-123/locations/europe-west1/workflows/my-lro
+	// Example: projects/myabc-123/locations/europe-west1/workflows/operations
 	name string
-	// Project in which Workflow is deployed, for example myproject-123
-	Project string
-	// Location of workflow, for example: europe-west1
-	Location string
-	// Workflow name, for example: my-lro-workflow
-	Workflow string
 	// Set a default host for resumable operations, which can be overwritten via options on NewResumableOperation.
+	// Format: https://myservice-v1-...app
 	Host string
 }
 
 // SpannerConfig is used to configure the underlygin Google Cloud Spanner client.
 type SpannerConfig struct {
 	// Project
+	// The Project where the Database is deployed
 	Project string
 	// Spanner Instance
+	// The instance name of the dabase, for example 'primary'
 	Instance string
 	// Spanner Database
+	// The database name, for example 'myorganisation-myproduct'
 	Database string
 	// The name of the Spanner table used to keep track of LROs
-	Table string
+	// This is managed by the Alis Build Platform, for example + "...._AlisManagedOperations",
+	table string
 	// Database role
-	Role string
+	// This is managed by the Alis Build Platform
+	role string
 }
 
 /*
@@ -84,43 +104,43 @@ NewClient creates a new lro Client object. The function takes five arguments:
   - workflowsConfig: The (optional) configuration to setup the underlyging Google Cloud Workflows client
 */
 func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...ClientOption) (*Client, error) {
-	// Add all the provided options to the ClientOptions object
-	options := &ClientOptions{}
+	// Spanner config is required
+	if spannerConfig == nil {
+		return nil, fmt.Errorf("spanner configuration cannot be empty")
+	}
+
+	// Configure the default options
+	options := &ClientOptions{
+		Project:       os.Getenv("ALIS_OS_PROJECT"),
+		Location:      os.Getenv("ALIS_REGION"),
+		SpannerConfig: spannerConfig,
+	}
+	// Add the user provided overrides.
 	for _, opt := range opts {
 		opt(options)
 	}
 
 	// Create a new Client object
-	client := &Client{
-		spannerConfig: spannerConfig,
-	}
+	client := &Client{}
 
-	if spannerConfig != nil {
-		client.spannerConfig = spannerConfig
-		// Establish sproto spanner connection with fine grained table-level role
-		c, err := sproto.NewClient(ctx, spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database, spannerConfig.Role)
-		if err != nil {
-			return nil, err
-		}
-		client.spanner = c
+	// Instantiate a Spanner client and set the table.
+	role := strings.ReplaceAll(options.Project, "-", "_") // As configured by the Alis Build Platform
+	if spanner, err := sproto.NewClient(ctx, spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database, role); err != nil {
+		return nil, err
 	} else {
-		return nil, fmt.Errorf("spannerConfig is required but not provided")
+		client.spanner = spanner
+		client.spannerTable = strings.ReplaceAll(options.Project, "-", "_") + "_AlisManagedOperations"
 	}
 
-	// Instantiate a new Workflows client if provided
+	// Instantiate a Workflows client if provided
 	if options.WorkflowsConfig != nil {
-		if options.WorkflowsConfig.Project == "" {
-			return nil, fmt.Errorf("workflowsConfig.project is required but not provided")
+		location := options.Location
+		// TODO: remove this override once the South African region for Google Cloud Workflows become available.
+		if location == "africa-south1" {
+			location = "europe-west1"
 		}
-		if options.WorkflowsConfig.Location == "" {
-			return nil, fmt.Errorf("workflowsConfig.location is required but not provided")
-		}
-		if options.WorkflowsConfig.Workflow == "" {
-			return nil, fmt.Errorf("workflowsConfig.workflow is required but not provided")
-		}
-		options.WorkflowsConfig.name = fmt.Sprintf("projects/%s/locations/%s/workflows/%s",
-			options.WorkflowsConfig.Project, options.WorkflowsConfig.Location, options.WorkflowsConfig.Workflow)
-		client.workflowsConfig = options.WorkflowsConfig
+		client.workflowsConfig.name = fmt.Sprintf(
+			"projects/%s/locations/%s/workflows/alis-managed-operations", options.Project, options.Location)
 		c, err := executions.NewClient(ctx)
 		if err != nil {
 			return nil, err
@@ -138,22 +158,22 @@ func (c *Client) Close() {
 	c.spanner.Close()
 }
 
-// getOperation is an internal method use to get a specified operation.
-func (c *Client) Get(ctx context.Context, operation string) (*longrunningpb.Operation, error) {
+// GetOperation retrieves a LRO from the database.
+func (c *Client) GetOperation(ctx context.Context, req *longrunningpb.GetOperationRequest, opts ...grpc.CallOption) (*longrunningpb.Operation, error) {
 	// validate arguments
-	err := validate.Argument("name", operation, validate.OperationRegex)
+	err := validate.Argument("name", req.GetName(), validate.OperationRegex)
 	if err != nil {
 		return nil, err
 	}
 
 	// read operation resource from spanner
 	op := &longrunningpb.Operation{}
-	err = c.spanner.ReadProto(ctx, c.spannerConfig.Table, spanner.Key{operation}, OperationColumnName, op, nil)
+	err = c.spanner.ReadProto(ctx, c.spannerTable, spanner.Key{req.GetName()}, OperationColumnName, op, nil)
 	if err != nil {
 		if _, ok := err.(sproto.ErrNotFound); ok {
 			// Handle the ErrNotFound case.
 			return nil, ErrNotFound{
-				Operation: operation,
+				Operation: req.GetName(),
 			}
 		} else {
 			// Handle other error types.
@@ -164,79 +184,15 @@ func (c *Client) Get(ctx context.Context, operation string) (*longrunningpb.Oper
 	return op, nil
 }
 
-// Wait polls the provided operation and waits until done.
-func (c *Client) Wait(ctx context.Context, operation string, timeout time.Duration, response, metadata proto.Message) (err error) {
-	// Set the default timeout
-	if timeout == 0 {
-		timeout = time.Second * 77
-	}
-	startTime := time.Now()
-
-	// start loop to check if operation is done or timeout has passed
-	var op *longrunningpb.Operation
-	for {
-		op, err = c.Get(ctx, operation)
-		if err != nil {
-			return err
-		}
-		if op.Done {
-			err := UnmarshalOperation(op, response, metadata)
-			if err != nil {
-				return err
-			}
-			return nil
-		}
-
-		timePassed := time.Since(startTime)
-		if timePassed.Seconds() > timeout.Seconds() {
-			return ErrWaitDeadlineExceeded{
-				message: fmt.Sprintf("operation (%s) exceeded timeout deadline of %0.0f seconds",
-					operation, timeout.Seconds()),
-			}
-		}
-		time.Sleep(777 * time.Millisecond)
-	}
-}
-
-// // BatchWait is a batch version of the WaitOperation method.
-// // Takes three agruments:
-// //   - ctx: The Context header
-// //   - operations: An array of LRO names, for example: []string{"operations/123", "operations/456", ...}
-// //   - timeoute: the timeout duration to apply with each operation
-// func (c *Client) BatchWait(ctx context.Context, operations []string, timeout time.Duration) ([]*longrunningpb.Operation, error) {
-// 	// iterate through the requests
-// 	errs, ctx := errgroup.WithContext(ctx)
-// 	results := make([]*longrunningpb.Operation, len(operations))
-// 	for i, operation := range operations {
-// 		i := i
-// 		errs.Go(func() error {
-// 			op, err := c.Wait(ctx, operation, timeout)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			results[i] = op
-
-// 			return nil
-// 		})
-// 		// Add some spacing between the api hits.
-// 		time.Sleep(time.Millisecond * 77)
-// 	}
-
-// 	err := errs.Wait()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return results, nil
-// }
-
 // SetResponse retrieves the underlying LRO and unmarshals the Response into the provided response object.
 // It takes three arguments
 //   - ctx: Context
 //   - operation: The resource name of the operation in the format `operations/*`
 //   - response: The response object into which the underlyging response of the LRO should be marshalled into.
 func (c *Client) UnmarshalOperation(ctx context.Context, operation string, response, metadata proto.Message) error {
-	op, err := c.Get(ctx, operation)
+	op, err := c.GetOperation(ctx, &longrunningpb.GetOperationRequest{
+		Name: operation,
+	})
 	if err != nil {
 		return err
 	}

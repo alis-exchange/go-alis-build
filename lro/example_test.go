@@ -1,124 +1,79 @@
 package lro
 
-// func ExampleNewOperation() {
-// 	// Create a global context object.
-// 	ctx := context.Background()
+import (
+	"context"
+	"time"
 
-// 	// create client (preferably only once at a global level in the init function of your package/service)
-// 	client, _ := NewClient(ctx, &SpannerConfig{}, nil)
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
+)
 
-// 	// An simple illustration of using an LRO
-// 	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
-// 		// Create an Operation object used to manage LRO activities
-// 		op, err := NewOperation(ctx, client)
-// 		if err != nil {
-// 			return nil, err
-// 		}
+func ExampleNewOperation() {
+	// Create a global context object.
+	ctx := context.Background()
 
-// 		// 2. We'll ship the business logic to a go routine to run as a background task
-// 		go func() error {
-// 			// Set the context for this background task, to avoid context.Cancel events from the parent ctx.
-// 			ctx := context.WithoutCancel(ctx)
-// 			_ = ctx
+	// create client (preferably only once at a global level in the init function of your package/service)
+	client, _ := NewClient(ctx, &SpannerConfig{}, WithWorkflows(""))
 
-// 			// Simulating some longer running tasks...
-// 			time.Sleep(45 * time.Second)
+	// An simple illustration of using an LRO
+	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
+		// Create an Operation object used to manage LRO activities
+		type MyState struct{}
+		op, err := NewOperation[MyState](ctx, client)
+		if err != nil {
+			return nil, err
+		}
 
-// 			var res proto.Message // replace with actual Response definition.
-// 			return op.Done(res)
-// 		}()
+		// 2. We'll ship the business logic to a go routine to run as a background task
+		go func() error {
+			// If relevant get the ResumePoint
+			switch op.ResumePoint() {
+			case "resumePoint1":
+				goto point1
+			}
 
-// 		// 3. Return the LRO to the caller
-// 		return op.ReturnRPC()
-// 	}
-// 	_, _ = exampleRpcMethod(ctx, nil)
-// }
+			{
+				// This is where we will wait...
+				// Scenario 1: simply wait for 30 seconds.
+				op.Wait(WithSleep(30 * time.Second))
 
-// func ExampleNewResumableOperation() {
-// 	// Create a global context object.
-// 	ctx := context.Background()
+				// Scenario 2: Make one or more hits to methods returning LROs, and wait for these to complete.
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}))
 
-// 	// create client (preferably only once at a global level in the init function of your package/service)
-// 	client, _ := NewClient(ctx, &SpannerConfig{}, WithWorkflows(&WorkflowsConfig{}))
+				// Scenario 3: Customise the poll frequency and timeout
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithTimeout(10*time.Minute), WithPollFrequency(30*time.Second))
 
-// 	// An illustration of using a resumable LRO
-// 	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
-// 		// Checkpoint is a custom object used to keep track of the next step, state of variable etc.
-// 		type MyCheckpoint struct {
-// 			Next string
-// 			Lro2 string
-// 		}
-// 		op, err := NewOperation(ctx, client, WithResumeState[*MyCheckpoint](&MyCheckpoint{
-// 			Next: "",
-// 			Lro2: "",
-// 		}))
-// 		if err != nil {
-// 			return nil, err
-// 		}
+				// Scenario 4: If the underlying operations are from another product, you would need to use a different client to poll
+				// the relevant GetOperation methods.  The service you connect to needs to satisfy the LRO interface as defined by google.longrunning package
+				var conn grpc.ClientConnInterface // create a connection to the relevant gRPC server
+				myLroClient := longrunningpb.NewOperationsClient(conn)
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithService(myLroClient))
 
-// 		// 2. We'll ship the business logic to a go routine to run as a background task
-// 		go func() {
-// 			// Set the context for this background task, to avoid context.Cancel events from the parent ctx.
-// 			ctx := context.WithoutCancel(ctx)
-// 			_ = ctx
+				// Scenario 5: If, however the operations from another product does not implement the google.longrunning service, you could use
+				// any service that implements a GetOperation() method, therefore satisfying the OperationsService interface defined in this package.
+				var myProductClient OperationsService
+				op.Wait(WithChildOperations([]string{"operations/123", "operations/456"}), WithService(myProductClient))
 
-// 			// If a checkpoint was found in the context, simply jump to the relevant point.
-// 			if checkpoint != nil {
-// 				switch checkpoint.Next {
-// 				case "step1":
-// 					goto step1
-// 				}
-// 			}
+				// Scenario 6: Wait asynchronously for a longer time.
+				op.SetState(&MyState{}) // Explicitly set the state before waiting asynchronously
+				op.Wait(WithSleep(24*time.Hour), WithAsync("resumePoint1"))
+				// since we explicitly configure the Async option, we need to exit this method now.
+				return nil
+			}
 
-// 			// Perform some longrunning task which require a long (more than 10min?) waiting period
-// 			{
-// 				// Make a hit to a method requiring us to wait for a short period.
-// 				lro1 := &longrunningpb.Operation{}
-// 				client.Wait(ctx, lro1.GetName(), time.Minute*3, nil, nil)
+		point1:
+			// Once resumed, get the last available State and do some cool stuff.
+			state := op.State()
+			_ = state
 
-// 				// Make a heit to a method requiring us to wait for a long period
-// 				lro2 := &longrunningpb.Operation{}
+			// And finally mark the LRO as complete.
+			var res proto.Message // replace with actual Response definition.
+			return op.Done(res)
+		}()
 
-// 				// We'll now make use of the resume functionality.
-// 				// First, we will keep track of the name, which we'll use when we resume.
-// 				checkpoint.Lro2 = lro2.GetName()
-
-// 				// In development mode, simply wait for the relevant LRO(s) to complete.
-// 				if op.DevMode() {
-// 					op.WaitSync([]string{lro2.Name}, nil)
-// 				} else {
-// 					pollEndpoint := "https://..."
-// 					err = op.WaitAsync([]string{lro2.GetName()}, checkpoint, WithPollEndpoint(pollEndpoint))
-// 					if err != nil {
-// 						op.Error(err)
-// 						return
-// 					}
-// 				}
-// 			}
-
-// 		step1:
-// 			{
-// 				// We'll now use the value in the Checkpoint to retrieve the relevant
-// 				// metadata and response values
-// 				var lro2Response proto.Message = nil // replace with actual non-nil types
-// 				var lro2Metadata proto.Message = nil // replace with actual non-nil types
-// 				err := client.UnmarshalOperation(ctx, checkpoint.Lro2, lro2Response, lro2Metadata)
-// 				if err != nil {
-// 					op.Error(err)
-// 					return
-// 				}
-// 			}
-
-// 			var res proto.Message // replace with actual Response definition.
-// 			err = op.Done(res)
-// 			if err != nil {
-// 				// Alert, this should never happen
-// 				return
-// 			}
-// 		}()
-
-// 		// 3. Return the LRO to the caller
-// 		return op.Get()
-// 	}
-// 	_, _ = exampleRpcMethod(ctx, nil)
-// }
+		// 3. Return the LRO to the caller
+		return op.ReturnRPC()
+	}
+	_, _ = exampleRpcMethod(ctx, nil)
+}
