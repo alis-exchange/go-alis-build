@@ -14,7 +14,7 @@ func ExampleNewOperation() {
 	ctx := context.Background()
 
 	// create client (preferably only once at a global level in the init function of your package/service)
-	client, _ := NewClient(ctx, &SpannerConfig{}, WithWorkflows(""))
+	client, _ := NewClient(ctx, &SpannerConfig{})
 
 	// An simple illustration of using an LRO
 	exampleRpcMethod := func(ctx context.Context, req *proto.Message) (*longrunningpb.Operation, error) {
