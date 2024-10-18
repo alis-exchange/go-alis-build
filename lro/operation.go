@@ -625,6 +625,22 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 		//  - Production: Using Google Cloud Workflows to wait
 		//  - Testing Locally: Using a callback function to call the relevant method again.
 
+		// First, save the State and Resumepoint to Spanner before handing over.
+		buffer := bytes.Buffer{}
+		enc := gob.NewEncoder(&buffer)
+		if err := enc.Encode(o.state); err != nil {
+			return err
+		}
+
+		err := o.client.spanner.UpdateRow(o.ctx, o.client.spannerTable, map[string]interface{}{
+			"key":                 o.name,
+			StateColumnName:       buffer.Bytes(),
+			ResumePointColumnName: w.resumePoint,
+		})
+		if err != nil {
+			return err
+		}
+
 		if w.devModeEnabled {
 			// First we'll wait asynchronously
 			err := waitSynchronouslyFn()
@@ -633,7 +649,11 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 			}
 			// And then run the callback function to 'simulate' a resumable operation
 			// TODO: make hit to callback function
-			return w.asyncCallbackFn(o.ctx, nil)
+			if w.asyncCallbackFn == nil {
+				return fmt.Errorf("callback function for local development has not been provided.  use the WithLocalCallbackFn() option when instantiating your Operation")
+			} else {
+				return w.asyncCallbackFn(o.ctx, nil)
+			}
 
 		} else {
 			// Hand over the wait task to Google Cloud Workflows.
