@@ -700,7 +700,7 @@ func (o *Operation[T]) waitWithGoogleWorkflows(cfg *WaitConfig) error {
 		return err
 	}
 
-	// Launch Google Cloud Workflows to wait...
+	// Hand over the task of waiting to a dedicated Google Cloud Workflow
 	_, err = o.client.workflows.CreateExecution(o.ctx, &executionspb.CreateExecutionRequest{
 		Parent: o.client.workflowName,
 		Execution: &executionspb.Execution{
