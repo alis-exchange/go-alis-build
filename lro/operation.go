@@ -64,19 +64,24 @@ type OperationOptions struct {
 // ClientOption is a functional option for the NewOperation method.
 type OperationOption func(*OperationOptions)
 
-// WithExistingOperation allows one to instantiate a new Operation object from an
-// existing LRO. If this is provided the underlygin NewOperation method will
-// not create a new Operation resource or infer it from the ctx.
+/*
+WithExistingOperation allows one to instantiate a new Operation object from an
+existing LRO. If this is provided the underlyging NewOperation method will
+not create a new Operation resource nor infer one from the ctx.
+*/
 func WithExistingOperation(name string) OperationOption {
 	return func(opts *OperationOptions) {
 		opts.existingOperation = name
 	}
 }
 
-// WithResumeMethod sets the fully qualified method name to be resumed
-// In most scenarios this will not be required since the method name will
-// be automatically made avaialable by the grpc server exposed by the grpc.Method()
-// Example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
+/*
+WithResumeMethod sets the fully qualified method name to be resumed
+
+In most scenarios this will not be required since the method name will
+be automatically made avaialable by the grpc server exposed by the grpc.Method()
+Example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
+*/
 func WithResumeMethod(name string) OperationOption {
 	return func(opts *OperationOptions) {
 		opts.resumeMethod = name
@@ -86,10 +91,19 @@ func WithResumeMethod(name string) OperationOption {
 /*
 NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
 
-Example:
+Example (non-resumable):
 
+	// No need to create a custom State object, simply add 'any' type
+	op, _ := lro.NewOperation[any](ctx, client)
+
+Example (resumable lro with internal state):
+
+	// In this case, define your own state object which could be used to transfer state between async wait operations.
 	type MyState struct{}
 	op, _ := lro.NewOperation[MyState](ctx, client)
+
+	// Retrieve the state object.
+	state = op.State()
 */
 func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationOption) (*Operation[T], error) {
 	var err error
@@ -405,7 +419,7 @@ func WithPollFrequency(timeout time.Duration) WaitOption {
 
 // WithChildOperations specifies operations for which to wait.
 // Format: ["operations/123", "operations/456", "operations/789"]
-func WithChildOperations(operations []string) WaitOption {
+func WithChildOperations(operations ...string) WaitOption {
 	return func(w *WaitConfig) error {
 		if operations == nil {
 			w.childOperations = []string{}
