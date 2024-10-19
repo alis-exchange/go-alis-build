@@ -29,51 +29,33 @@ import (
 // OperationIdHeaderKey is use to indicate the the LRO already exists, and does not need to be created
 const OperationIdHeaderKey = "x-alis-operation-id"
 
-// AsyncConfig is used when the particular op needs to wait asynchronously.
-type AsyncConfig struct {
-	// Host at which the workflow needs to be resumed at.
-	// Example:
-	Host string
-	// Method to resume
-	Method string
-
-	// ResumeEndpoint is used by Google Cloud Workflows to resume the partciular method.
-	ResumeEndpoint string
-	// PollEndpoint specifies the enpoint Google Cloud Workflows should use to poll the underlygin Long-running Options.
-	PollEndpoint string
-	// LocalResumeCallback is used for local testing
-	LocalResumeCallbackFn func(context.Context) error
-}
-
 // Operation is an object to to manage the lifecycle of a Google Longrunning-Operation.
 type Operation[T any] struct {
-	ctx         context.Context
-	client      *Client
-	name        string // The Operation resource name
+	ctx    context.Context
+	client *Client
+	// The Operation resource name
+	name string
+	// The custom State object used by the main business logic to transfer state between async wait operations
+	state *T
+	// The label that could be used in the main business logic with 'goto' or 'switch' statements
 	resumePoint string
-	asyncConfig *AsyncConfig
-	state       *T
+	// The fully qualified method name to be resumed
+	// For example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
+	resumeMethod string
+	// LocalResumeCallback is used for local testing
+	asyncCallbackFn func(context.Context, *proto.Message) error
 }
 
 type OperationOptions struct {
-	host              string
+	// The fully qualified method name to be resumed
+	// For example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
+	resumeMethod string
+	// The name of an existing Operation resource
 	existingOperation string
-	resumeMethod      string
 }
 
 // ClientOption is a functional option for the NewOperation method.
 type OperationOption func(*OperationOptions)
-
-/*
-WithExistingOperation allows one to instantiate a new Operation object from an
-existing LRO. If this is provided the underlyging NewOperation method will
-not create a new Operation resource nor infer one from the ctx.
-*/
-func WithExistingOperation(name string) OperationOption {
-	return func(opts *OperationOptions) {
-		opts.existingOperation = name
-	}
-}
 
 /*
 WithResumeMethod sets the fully qualified method name to be resumed
@@ -85,6 +67,17 @@ Example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
 func WithResumeMethod(name string) OperationOption {
 	return func(opts *OperationOptions) {
 		opts.resumeMethod = name
+	}
+}
+
+/*
+WithExistingOperation allows one to instantiate a new Operation object from an
+existing LRO. If this is provided the underlyging NewOperation method will
+not create a new Operation resource nor infer one from the ctx.
+*/
+func WithExistingOperation(name string) OperationOption {
+	return func(opts *OperationOptions) {
+		opts.existingOperation = name
 	}
 }
 
@@ -109,9 +102,8 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 	var err error
 	// Configure the defualt options
 	options := &OperationOptions{
-		host:              "",
-		existingOperation: "",
 		resumeMethod:      "",
+		existingOperation: "",
 	}
 	// Add the user provided overrides.
 	for _, opt := range opts {
@@ -120,36 +112,25 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 
 	// Construct an Operation object
 	operation := &Operation[T]{
-		ctx:         context.WithoutCancel(ctx),
-		client:      client,
-		name:        "",
-		resumePoint: "",
-		asyncConfig: &AsyncConfig{
-			Host:                  "",
-			Method:                "",
-			ResumeEndpoint:        "",
-			PollEndpoint:          "",
-			LocalResumeCallbackFn: nil,
+		ctx:          context.WithoutCancel(ctx),
+		client:       client,
+		name:         "",
+		state:        new(T),
+		resumePoint:  "",
+		resumeMethod: "",
+		asyncCallbackFn: func(context.Context, *proto.Message) error {
+			return fmt.Errorf("callback function is not provided for local development.  Use WithAsyncCallBackFn() option")
 		},
-		state: new(T),
-	}
-
-	// Set the Host details, if provided via options.
-	if options.host != "" {
-		operation.asyncConfig.Host = options.host
-	} else {
-		// Alternatively, default to the host set when the Client was instantiated.
-		operation.asyncConfig.Host = client.workflowsResumeHost
 	}
 
 	// Set the method if the user specified it, otherwise ry to get from the context.
 	if options.resumeMethod != "" {
-		operation.asyncConfig.Method = options.resumeMethod
+		operation.resumeMethod = options.resumeMethod
 	} else {
 		// Try to determine the method from the ctx
 		methodName, ok := grpc.Method(operation.ctx)
 		if ok {
-			operation.asyncConfig.Method = methodName
+			operation.resumeMethod = methodName
 		}
 	}
 
@@ -382,9 +363,7 @@ type WaitConfig struct {
 	// Async configurations
 	asyncEnabled                   bool
 	resumePoint                    string // Once the wait is complete, resume at this point.
-	asyncCallbackFn                func(context.Context, *proto.Message) error
 	asyncChildGetOperationEndpoint string // The API endpoint which exposes a GetOperation method
-	asyncResumeEndpoint            string // The API endpoint which exposes a GetOperation method
 
 	// Developer mode attributes
 	devModeEnabled bool
@@ -438,26 +417,10 @@ func WithService(service OperationsService) WaitOption {
 	}
 }
 
-// WithCallbackFn is used for local development
-func WithCallbackFn(fn func(context.Context, *proto.Message) error) WaitOption {
-	return func(w *WaitConfig) error {
-		w.asyncCallbackFn = fn
-		return nil
-	}
-}
-
 // WithChildGetOperationEndpoint is used for local development
 func WithChildGetOperationEndpoint(endpoint string) WaitOption {
 	return func(w *WaitConfig) error {
 		w.asyncChildGetOperationEndpoint = endpoint
-		return nil
-	}
-}
-
-// WithResumeEndpoint sets the Endpoint the Google Cloud Workflow needs to hit at the end of its process to resume the operation.
-func WithResumeEndpoint(endpoint string) WaitOption {
-	return func(w *WaitConfig) error {
-		w.asyncResumeEndpoint = endpoint
 		return nil
 	}
 }
@@ -532,12 +495,10 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 		timeout:                        7 * time.Minute,
 		pollFrequency:                  3 * time.Second,
 		childOperations:                []string{},
-		service:                        nil,
+		service:                        o.client,
 		asyncEnabled:                   false,
 		resumePoint:                    "",
-		asyncCallbackFn:                nil,
-		asyncChildGetOperationEndpoint: "",
-		asyncResumeEndpoint:            "",
+		asyncChildGetOperationEndpoint: o.client.resumeHost + "/google.longrunning.Operations/GetOperation",
 		devModeEnabled:                 true,
 	}
 
@@ -546,12 +507,6 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 		w.devModeEnabled = false
 	}
 
-	// Set the default host, inline with google.longrunning package.
-	w.asyncChildGetOperationEndpoint = o.asyncConfig.Host + "/google.longrunning.Operations/GetOperation"
-
-	// From the parent Operation get the ResumeEndpoint
-	w.asyncResumeEndpoint = o.asyncConfig.ResumeEndpoint
-
 	// Now override any values explicity configured with the WaitOptions.
 	for _, opt := range opts {
 		err := opt(w)
@@ -559,11 +514,6 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 		if err != nil {
 			return err
 		}
-	}
-
-	// If the service is not specified, use the default operations service configured at the client level.
-	if w.service == nil {
-		w.service = o.client
 	}
 
 	// All options have been configures, start the wait.
@@ -648,13 +598,7 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 				return err
 			}
 			// And then run the callback function to 'simulate' a resumable operation
-			// TODO: make hit to callback function
-			if w.asyncCallbackFn == nil {
-				return fmt.Errorf("callback function for local development has not been provided.  use the WithLocalCallbackFn() option when instantiating your Operation")
-			} else {
-				return w.asyncCallbackFn(o.ctx, nil)
-			}
-
+			return o.asyncCallbackFn(o.ctx, nil)
 		} else {
 			// Hand over the wait task to Google Cloud Workflows.
 			err := o.waitWithGoogleWorkflows(w)
@@ -684,6 +628,7 @@ func (o *Operation[T]) waitWithGoogleWorkflows(cfg *WaitConfig) error {
 	}
 
 	operationId := strings.Split(o.name, "/")[1]
+	resumeEndpoint := o.client.resumeHost + o.resumeMethod
 	args := Args{
 		OperationId:            operationId,
 		InitialWaitDuration:    int64(cfg.sleep.Seconds()),
@@ -691,15 +636,15 @@ func (o *Operation[T]) waitWithGoogleWorkflows(cfg *WaitConfig) error {
 		PollFrequency:          int64(cfg.pollFrequency.Seconds()),
 		PollEndpoint:           cfg.asyncChildGetOperationEndpoint,
 		PollEndpointAudience:   "",
-		ResumeEndpoint:         cfg.asyncResumeEndpoint,
+		ResumeEndpoint:         resumeEndpoint,
 		ResumeEndpointAudience: "",
 		Timeout:                int64(cfg.timeout.Seconds()),
 	}
 
 	// From the Resume Endpoint, get the Audience
-	resumeUrl, err := url.Parse(cfg.asyncResumeEndpoint)
+	resumeUrl, err := url.Parse(resumeEndpoint)
 	if err != nil {
-		return fmt.Errorf("could not resolve resume url, invalid resume endpoint (%s): %w", cfg.asyncResumeEndpoint, err)
+		return fmt.Errorf("could not resolve resume url, invalid resume endpoint (%s): %w", resumeEndpoint, err)
 	}
 	args.ResumeEndpointAudience = "https://" + resumeUrl.Host
 

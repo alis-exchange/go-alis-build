@@ -31,20 +31,20 @@ type ClientOptions struct {
 	location string
 	// Set a default host for resumable operations, which can be overwritten via options on NewOperation.
 	// Example: "https://internal-gateway-....run.app"
-	workflowsResumeHost string
+	resumeHost string
 }
 
 // ClientOption is a functional option for the NewClient method.
 type ClientOption func(*ClientOptions)
 
 /*
-WithWorkflowsResumeHost enables Google Cloud Workflows integration for handling resumable Long-Running Operations (LROs).
+WithResumeHost enables Google Cloud Workflows integration for handling resumable Long-Running Operations (LROs).
 The default host is the relevant internal gateway inferred from the ALIS_RUN_HASH env.  Use this method to override the host.
 Example host: https://internal-gateway-....run.app
 */
-func WithWorkflowsResumeHost(host string) ClientOption {
+func WithResumeHost(host string) ClientOption {
 	return func(opts *ClientOptions) {
-		opts.workflowsResumeHost = host
+		opts.resumeHost = host
 	}
 }
 
@@ -80,7 +80,7 @@ type Client struct {
 	workflowName string
 	// Set a default host for resumable operations, which can be overwritten via options on NewOperation.
 	// Example: "https://internal-gateway-....run.app"
-	workflowsResumeHost string
+	resumeHost string
 }
 
 // SpannerConfig is used to configure the underlygin Google Cloud Spanner client.
@@ -130,7 +130,7 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 
 	// Try to set the Resume host from the env, which is likely to be the internal gateway in most scenarios.
 	if os.Getenv("ALIS_RUN_HASH") != "" {
-		options.workflowsResumeHost = fmt.Sprintf("https://internal-gateway-%s.run.app", os.Getenv("ALIS_RUN_HASH"))
+		options.resumeHost = fmt.Sprintf("https://internal-gateway-%s.run.app", os.Getenv("ALIS_RUN_HASH"))
 	}
 
 	// Now that the defaults have been set, add any user provided overrides.
@@ -139,7 +139,10 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 	}
 
 	// Create a new Client object
-	client := &Client{}
+	client := &Client{
+		workflowName: fmt.Sprintf("projects/%s/locations/%s/workflows/alis-managed-operations", options.project, options.location),
+		resumeHost:   options.resumeHost,
+	}
 
 	// Instantiate a Spanner client and set the table.
 	role := strings.ReplaceAll(options.project, "-", "_") // As configured by the Alis Build Platform
@@ -149,12 +152,6 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 		client.spanner = spanner
 		client.spannerTable = strings.ReplaceAll(options.project, "-", "_") + "_AlisManagedOperations"
 	}
-
-	// Set the Google Cloud Workflow resource name
-	client.workflowName = fmt.Sprintf("projects/%s/locations/%s/workflows/alis-managed-operations", options.project, options.location)
-
-	// Set the ResumeHost if available
-	client.workflowsResumeHost = options.workflowsResumeHost
 
 	// Set the client
 	if executionsClient, err := executions.NewClient(ctx); err != nil {
