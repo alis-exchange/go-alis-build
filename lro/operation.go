@@ -52,6 +52,8 @@ type OperationOptions struct {
 	resumeMethod string
 	// The name of an existing Operation resource
 	existingOperation string
+	// LocalResumeCallback is used for local testing
+	asyncCallbackFn func(context.Context, *proto.Message) error
 }
 
 // ClientOption is a functional option for the NewOperation method.
@@ -78,6 +80,15 @@ not create a new Operation resource nor infer one from the ctx.
 func WithExistingOperation(name string) OperationOption {
 	return func(opts *OperationOptions) {
 		opts.existingOperation = name
+	}
+}
+
+/*
+WithCallbackFn sets the function to call back when running an Async method locally.
+*/
+func WithCallbackFn(fn func(context.Context, *proto.Message) error) OperationOption {
+	return func(opts *OperationOptions) {
+		opts.asyncCallbackFn = fn
 	}
 }
 
@@ -177,29 +188,27 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 		}
 		// Populate the State if available.
 		if row[StateColumnName] != nil {
-			// If type T is Any, ignore the state column.
-			if _, ok := any(operation.state).(interface{}); !ok {
-				// If the state is not of type any, we need to decode the state data from the database.
-				// Decode from base64
-				stateString, ok := row[StateColumnName].(string)
-				if !ok {
-					return nil, fmt.Errorf("state data is not string")
-				}
+			// If the state is not of type any, we need to decode the state data from the database.
+			// Decode from base64
+			stateString, ok := row[StateColumnName].(string)
+			if !ok {
+				return nil, fmt.Errorf("state data is not string")
+			}
 
-				// Decode from base64
-				decodedData, err := base64.StdEncoding.DecodeString(stateString)
-				if err != nil {
-					return nil, fmt.Errorf("decode state string data: %w", err)
-				}
+			// Decode from base64
+			decodedData, err := base64.StdEncoding.DecodeString(stateString)
+			if err != nil {
+				return nil, fmt.Errorf("decode state string data: %w", err)
+			}
 
-				var buffer bytes.Buffer
-				buffer.Write(decodedData)
-				decoder := gob.NewDecoder(&buffer)
+			var buffer bytes.Buffer
+			buffer.Write(decodedData)
+			decoder := gob.NewDecoder(&buffer)
 
-				err = decoder.Decode(&operation.state)
-				if err != nil {
-					return nil, fmt.Errorf("decode state: %w", err)
-				}
+			// We'll try to populate the state, but fail softly if unable to.
+			err = decoder.Decode(&operation.state)
+			if err != nil {
+				// return nil, fmt.Errorf("decode state: %w", err)
 			}
 		}
 
