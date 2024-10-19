@@ -194,7 +194,7 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 
 			err = decoder.Decode(&operation.state)
 			if err != nil {
-				return nil, fmt.Errorf("decode state")
+				return nil, fmt.Errorf("decode state: %w", err)
 			}
 		}
 
