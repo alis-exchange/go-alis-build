@@ -43,7 +43,9 @@ type Operation[T any] struct {
 	// For example: "/myorg.co.jobs.v1.JobsService/GenerateClientReports"
 	resumeMethod string
 	// LocalResumeCallback is used for local testing
-	asyncCallbackFn func(context.Context, *proto.Message) error
+	asyncCallbackFn func(ctx context.Context)
+	// Devmode enabled
+	devMode bool
 }
 
 type OperationOptions struct {
@@ -53,7 +55,7 @@ type OperationOptions struct {
 	// The name of an existing Operation resource
 	existingOperation string
 	// LocalResumeCallback is used for local testing
-	asyncCallbackFn func(context.Context, *proto.Message) error
+	asyncCallbackFn func(ctx context.Context)
 }
 
 // ClientOption is a functional option for the NewOperation method.
@@ -86,7 +88,7 @@ func WithExistingOperation(name string) OperationOption {
 /*
 WithCallbackFn sets the function to call back when running an Async method locally.
 */
-func WithCallbackFn(fn func(context.Context, *proto.Message) error) OperationOption {
+func WithCallbackFn(fn func(ctx context.Context)) OperationOption {
 	return func(opts *OperationOptions) {
 		opts.asyncCallbackFn = fn
 	}
@@ -115,6 +117,7 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 	options := &OperationOptions{
 		resumeMethod:      "",
 		existingOperation: "",
+		asyncCallbackFn:   func(ctx context.Context) {},
 	}
 	// Add the user provided overrides.
 	for _, opt := range opts {
@@ -123,15 +126,19 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 
 	// Construct an Operation object
 	operation := &Operation[T]{
-		ctx:          context.WithoutCancel(ctx),
-		client:       client,
-		name:         "",
-		state:        new(T),
-		resumePoint:  "",
-		resumeMethod: "",
-		asyncCallbackFn: func(context.Context, *proto.Message) error {
-			return fmt.Errorf("callback function is not provided for local development.  Use WithAsyncCallBackFn() option")
-		},
+		ctx:             context.WithoutCancel(ctx),
+		client:          client,
+		name:            "",
+		state:           new(T),
+		resumePoint:     "",
+		resumeMethod:    "",
+		asyncCallbackFn: options.asyncCallbackFn,
+		devMode:         false,
+	}
+
+	// Enable the devMode if not running on Cloud Run.
+	if os.Getenv("K_SERVICE") == "" {
+		operation.devMode = true
 	}
 
 	// Set the method if the user specified it, otherwise ry to get from the context.
@@ -156,6 +163,14 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 			if len(md.Get(OperationIdHeaderKey)) > 0 {
 				// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
 				operation.name = "operations/" + md.Get(OperationIdHeaderKey)[0]
+			}
+		} else {
+			// In dev mode, lets see if we can find the operation id in the header
+			if operation.devMode {
+				operationId, ok := ctx.Value(OperationIdHeaderKey).(string)
+				if ok {
+					operation.name = "operations/" + operationId
+				}
 			}
 		}
 	}
@@ -361,6 +376,12 @@ func (o *Operation[T]) State() *T {
 	return o.state
 }
 
+// InDevMode returns a true if the Operation is running locally
+func (o *Operation[T]) InDevMode() bool {
+	// We'll deactivate development mode if the service is running on Cloud Run
+	return o.devMode
+}
+
 // WaitConfig is used to store the waiting configurations specified as functional WaitOption(s) in the Wait() and WaitAsync() methods.
 type WaitConfig struct {
 	// Standard Wait Configurations
@@ -378,9 +399,6 @@ type WaitConfig struct {
 	asyncEnabled                   bool
 	resumePoint                    string // Once the wait is complete, resume at this point.
 	asyncChildGetOperationEndpoint string // The API endpoint which exposes a GetOperation method
-
-	// Developer mode attributes
-	devModeEnabled bool
 }
 
 // WaitOption is a functional option for WaitConfig.
@@ -513,12 +531,6 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 		asyncEnabled:                   false,
 		resumePoint:                    "",
 		asyncChildGetOperationEndpoint: o.client.resumeHost + "/google.longrunning.Operations/GetOperation",
-		devModeEnabled:                 true,
-	}
-
-	// We'll deactivate development mode if the service is running on Cloud Run
-	if os.Getenv("K_SERVICE") != "" {
-		w.devModeEnabled = false
 	}
 
 	// Now override any values explicity configured with the WaitOptions.
@@ -605,14 +617,20 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 			return err
 		}
 
-		if w.devModeEnabled {
+		// Always wait locally when in dev mode, we'll use some seriously cool recursion magic 😎.
+		if o.devMode {
 			// First we'll wait asynchronously
 			err := waitSynchronouslyFn()
 			if err != nil {
 				return err
 			}
 			// And then run the callback function to 'simulate' a resumable operation
-			return o.asyncCallbackFn(o.ctx, nil)
+			// We'll first add the operation id to the context
+			fmt.Println("CALLBACK....")
+			operationId := strings.Split(o.name, "/")[1]
+			ctx := context.WithValue(o.ctx, OperationIdHeaderKey, operationId)
+			// ctx := metadata.AppendToOutgoingContext(o.ctx, OperationIdHeaderKey, operationId)
+			o.asyncCallbackFn(ctx)
 		} else {
 			// Hand over the wait task to Google Cloud Workflows.
 			err := o.waitWithGoogleWorkflows(w)
