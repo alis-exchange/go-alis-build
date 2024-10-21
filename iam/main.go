@@ -2,10 +2,14 @@ package iam
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 
 	"go.alis.build/alog"
+	"google.golang.org/protobuf/proto"
+	openConfig "open.alis.services/protobuf/alis/open/config/v1"
 	openIam "open.alis.services/protobuf/alis/open/iam/v1"
 )
 
@@ -31,14 +35,35 @@ type IAM struct {
 	openPermissions map[string]bool
 }
 
-// New creates a new IAM object which keeps track of the given roles and deployment service account email.
-func New(roles []*openIam.Role, deploymentServiceAccountEmail string) (*IAM, error) {
-	// check if deployment service account email is valid
-	if !strings.HasSuffix(deploymentServiceAccountEmail, ".gserviceaccount.com") {
-		return nil, fmt.Errorf("invalid deployment service account email: %s", deploymentServiceAccountEmail)
+// New creates a new IAM object.
+// ALIS_OS_PROJECT and ALIS_PRODUCT_CONFIG environment variables must be set.
+func New() (*IAM, error) {
+	// determine deployment service account email
+	projectId := os.Getenv("ALIS_OS_PROJECT")
+	if projectId == "" {
+		alog.Fatal(context.Background(), "ALIS_OS_PROJECT not set")
 	}
+	deploymentServiceAccount := fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", projectId)
+
+	// determine roles
+	productConfigStr := os.Getenv("ALIS_PRODUCT_CONFIG")
+	if productConfigStr == "" {
+		alog.Fatal(context.Background(), "ALIS_PRODUCT_CONFIG not set")
+	}
+	productConfigBytes, err := base64.StdEncoding.DecodeString(productConfigStr)
+	if err != nil {
+		alog.Fatalf(context.Background(), "error base64 decoding product config: %v", err)
+	}
+	productConfig := &openConfig.ProductConfig{}
+	err = proto.Unmarshal(productConfigBytes, productConfig)
+	if err != nil {
+		alog.Fatalf(context.Background(), "error proto unmarshalling product config: %v", err)
+	}
+	roles := productConfig.Roles
+
+	// create IAM object
 	i := &IAM{
-		deploymentServiceAccountEmail: deploymentServiceAccountEmail,
+		deploymentServiceAccountEmail: deploymentServiceAccount,
 		roles:                         roles,
 		memberResolver:                make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
 		openPermissions:               make(map[string]bool),
