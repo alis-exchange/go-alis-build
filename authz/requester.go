@@ -306,3 +306,25 @@ func (r *Requester) PolicySources(usersClient openIam.UsersServiceClient, resour
 	}
 	return []*PolicySource{}
 }
+
+// Returns the local policy sources of the requester.
+// Only used by the UsersService itself.
+func (r *Requester) LocalPolicySources(server openIam.UsersServiceServer, resourceTypes []string) []*PolicySource {
+	if !slices.Contains(resourceTypes, "alis.open.iam.v1.User") {
+		return []*PolicySource{}
+	}
+	getter := func(ctx context.Context) (*iampb.Policy, error) {
+		return r.policy, nil
+	}
+	if r.policy == nil {
+		getter = func(ctx context.Context) (*iampb.Policy, error) {
+			return server.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+				Resource: r.UserName(),
+			})
+		}
+	}
+	return []*PolicySource{{
+		Resource: r.UserName(),
+		Getter:   getter,
+	}}
+}
