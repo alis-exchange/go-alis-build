@@ -273,13 +273,13 @@ func (a *Authorizer) AddIdentityPolicy() {
 	if a.Identity.policy != nil {
 		a.AddPolicy(a.Identity.policy)
 	} else {
-		if a.iam.usersClient != nil {
+		if a.iam.UsersClient != nil {
 			// async fetch the policy
 			fetchFunc := func() *iampb.Policy {
 				req := &iampb.GetIamPolicyRequest{
 					Resource: a.Identity.UserName(),
 				}
-				policy, err := a.iam.usersClient.GetIamPolicy(a.ctx, req)
+				policy, err := a.iam.UsersClient.GetIamPolicy(a.ctx, req)
 				if err != nil {
 					alog.Alertf(a.ctx, "error fetching policy for user %s: %v", a.Identity.UserName(), err)
 					return nil
