@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"go.alis.build/alog"
+	"go.alis.build/client"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	openConfig "open.alis.services/protobuf/alis/open/config/v1"
 	openIam "open.alis.services/protobuf/alis/open/iam/v1"
@@ -29,7 +31,7 @@ type IAM struct {
 	rolePermissionMap map[string]map[string]bool
 
 	// the users client to use for fetching user policies in case they are not provided in the JWT token
-	usersClient openIam.UsersServiceClient
+	UsersClient openIam.UsersServiceClient
 
 	// open permissions are always allowed
 	openPermissions map[string]bool
@@ -38,14 +40,14 @@ type IAM struct {
 // New creates a new IAM object.
 // ALIS_OS_PROJECT and ALIS_PRODUCT_CONFIG environment variables must be set.
 func New() (*IAM, error) {
-	// determine deployment service account email
+	// determine deployment service account email based on project id
 	projectId := os.Getenv("ALIS_OS_PROJECT")
 	if projectId == "" {
 		alog.Fatal(context.Background(), "ALIS_OS_PROJECT not set")
 	}
 	deploymentServiceAccount := fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", projectId)
 
-	// determine roles
+	// extract roles from product config
 	productConfigStr := os.Getenv("ALIS_PRODUCT_CONFIG")
 	if productConfigStr == "" {
 		alog.Fatal(context.Background(), "ALIS_PRODUCT_CONFIG not set")
@@ -82,6 +84,15 @@ func New() (*IAM, error) {
 		}
 	}
 
+	// initialise users client which is used as a fallback to fetch user policies in case they are not provided in the JWT token
+	ctx := context.Background()
+	maxSizeOptions := grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(2000000000), grpc.MaxCallRecvMsgSize(2000000000))
+	conn, err := client.NewConnWithRetry(ctx, "iam-users-"+os.Getenv("ALIS_RUN_HASH")+".run.app:443", false, maxSizeOptions)
+	if err != nil {
+		return nil, fmt.Errorf("error creating users client: %v", err)
+	}
+	i.UsersClient = openIam.NewUsersServiceClient(conn)
+
 	return i, nil
 }
 
@@ -112,12 +123,6 @@ func (s *IAM) WithMemberResolver(groupTypes []string, resolver func(ctx context.
 		}
 		s.memberResolver[groupType] = resolver
 	}
-	return s
-}
-
-// WithUsersClient registers the users client to use for fetching user policies in case they are not provided in the JWT token.
-func (s *IAM) WithUsersClient(usersClient openIam.UsersServiceClient) *IAM {
-	s.usersClient = usersClient
 	return s
 }
 
