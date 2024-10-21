@@ -626,7 +626,6 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 			}
 			// And then run the callback function to 'simulate' a resumable operation
 			// We'll first add the operation id to the context
-			fmt.Println("CALLBACK....")
 			operationId := strings.Split(o.name, "/")[1]
 			ctx := context.WithValue(o.ctx, OperationIdHeaderKey, operationId)
 			// ctx := metadata.AppendToOutgoingContext(o.ctx, OperationIdHeaderKey, operationId)
