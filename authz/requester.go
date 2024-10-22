@@ -85,7 +85,7 @@ func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail stri
 
 			if !requester.IsServiceAccount() {
 				// policy is base64 encoded version of the bytes of the policy
-				policyString, ok := payload.Claims["iam_policy"].(string)
+				policyString, ok := payload.Claims["policy"].(string)
 				if ok && payload.Issuer == "alis.build" {
 					policyBytes, err := base64.StdEncoding.DecodeString(policyString)
 					if err != nil {
@@ -97,6 +97,7 @@ func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail stri
 						if err != nil {
 							return nil, status.Errorf(codes.Unauthenticated, "unable to unmarshal jwt iam policy: %s", err)
 						}
+						requester.policy = policy
 					}
 				}
 			}
@@ -120,7 +121,7 @@ func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail stri
 	}
 	if principal == nil {
 		// if no principal is found, return a super admin
-		return &Requester{
+		principal = &Requester{
 			email:        deploymentServiceAccountEmail,
 			isSuperAdmin: true,
 		}

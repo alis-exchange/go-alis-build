@@ -119,7 +119,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			// If the Identity is not a service account, see if we could extract the iam Policy object.
 			if !identity.IsServiceAccount() {
 				// policy is base64 encoded version of the bytes of the policy
-				policyString, ok := payload.Claims["iam_policy"].(string)
+				policyString, ok := payload.Claims["policy"].(string)
 				if ok && payload.Issuer == "alis.build" {
 					policyBytes, err := base64.StdEncoding.DecodeString(policyString)
 					if err != nil {
