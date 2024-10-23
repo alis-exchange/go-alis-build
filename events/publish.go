@@ -23,6 +23,8 @@ type PublishOptions struct {
 	jitter *jitter
 	// Topic
 	topic string
+	// Async Publish
+	async bool
 }
 
 // Jitter is used to configure any randomness within the Publish method.
@@ -83,6 +85,15 @@ func WithTopic(topic string) PublishOption {
 }
 
 /*
+WithSync configures the Publish method to run synchronously.
+*/
+func WithSync() PublishOption {
+	return func(opts *PublishOptions) {
+		opts.async = false
+	}
+}
+
+/*
 Publish publishes the given event to the configured Pub/Sub topic.
 
 The event's type is derived from the message type, using proto reflection.
@@ -105,18 +116,10 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 	}
 
 	// Set the default options.
-
-	// The type is derived from the message type, using proto reflection.
-	// For example: myorg.co.files.v1.EmailCreatedEvent
-	eventType := string(event.ProtoReflect().Descriptor().FullName())
-
-	// With the Alis Build Platform, each event has their own topic, for example:
-	// Example: projects/my-project-123/topics/myorg.aa.files.v1.EmailCreatedEvent
-	topicName := fmt.Sprintf("projects/%s/topics/%s", os.Getenv("ALIS_OS_PROJECT"), eventType)
-
-	// Configure the defualt options
+	// The topic is derived from the message type, using proto reflection.
 	options := &PublishOptions{
-		topic: topicName,
+		topic: string(event.ProtoReflect().Descriptor().FullName()), // -> myorg.co.files.v1.EmailCreatedEvent
+		async: true,
 	}
 
 	// Add any user overrides, if provided.
@@ -136,18 +139,23 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 		time.Sleep(delay)
 	}
 
-	topic := c.pubsub.Topic(topicName)
-	defer topic.Stop()
+	topic := c.pubsub.Topic(options.topic)
 	result := topic.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: options.orderingKey,
 	})
 
-	// Use the Get method to block until the Publish call completes or the context is done
-	_, err = result.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("waiting for publish event to complete: %w", err)
+	if options.async {
+		defer topic.Stop()
+		// Use the Get method to block until the Publish call completes or the context is done
+		_, err = result.Get(ctx)
+		if err != nil {
+			return fmt.Errorf("waiting for publish event to complete: %w", err)
+		}
+	} else {
+		go topic.Stop()
 	}
+
 	return nil
 }
 

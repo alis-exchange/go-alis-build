@@ -32,7 +32,7 @@ func main() {
 	ctx := context.Background()
 
 	// Create a new events Client
-	client, err := events.NewClient()
+	client, err := events.NewClient(ctx)
 	if err != nil {
 		// TODO: Handle error.
 		fmt.Println(err)

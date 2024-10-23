@@ -34,7 +34,7 @@ func WithProject(project string) ClientOption {
 }
 
 // New creates a new instance of the Client object.
-func NewClient(opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 	// Configure the defualt options
 	options := &ClientOptions{
 		project: os.Getenv("ALIS_OS_PROJECT"),
@@ -48,7 +48,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, fmt.Errorf("project is required but not provided. either set ALIS_OS_PROJECT env explicitly or use the WithProject() option")
 	}
 
-	client, err := pubsub.NewClient(context.Background(), options.project)
+	client, err := pubsub.NewClient(ctx, options.project)
 	if err != nil {
 		return nil, err
 	}
