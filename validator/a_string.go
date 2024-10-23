@@ -406,6 +406,52 @@ func (s *str) IsValidDomain() *Rule {
 	return newPrimitiveRule(id, descr, args, isViolatedFunc)
 }
 
+func (s *str) IsValidTopLevelDomain() *Rule {
+	id := fmt.Sprintf("tld(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid top level domain", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid top level domain", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid top level domain", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid top level domain", s.getDescription()),
+	}
+	args := []argI{s}
+	// can be alis.build but cannot be console.alis.build
+	// in essence, no subdomains
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			tldRegex := `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(tldRegex).MatchString(val) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
+func (s *str) IsValidSubDomain() *Rule {
+	id := fmt.Sprintf("subdomain(%s)", s.description)
+	descr := &Descriptions{
+		rule:         fmt.Sprintf("%s must be a valid sub domain", s.getDescription()),
+		notRule:      fmt.Sprintf("%s must not be a valid sub domain", s.getDescription()),
+		condition:    fmt.Sprintf("%s is a valid sub domain", s.getDescription()),
+		notCondition: fmt.Sprintf("%s is not a valid sub domain", s.getDescription()),
+	}
+	args := []argI{s}
+	// can be console.alis.build but cannot be alis.build
+	// in essence, must have a subdomain
+	isViolatedFunc := func(msg protoreflect.ProtoMessage) (bool, error) {
+		for _, val := range s.getValues(s.v, msg) {
+			subDomainRegex := `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.){2,}[a-zA-Z]{2,}$`
+			if !regexp.MustCompile(subDomainRegex).MatchString(val) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return newPrimitiveRule(id, descr, args, isViolatedFunc)
+}
+
 func (s *str) IsValidEmail() *Rule {
 	id := fmt.Sprintf("email(%s)", s.description)
 	descr := &Descriptions{
