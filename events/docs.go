@@ -3,6 +3,6 @@
 // license that can be found in the LICENSE file.
 
 /*
-Package events provides a lightweight set of methods which Builders could use to publish events.
+Package events provides a lightweight set of methods which Builders on the Alis Build Platform could use to publish events.
 */
 package events // import "go.alis.build/events"
