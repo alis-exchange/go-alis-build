@@ -106,11 +106,19 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 	// ensure all requests not going to /auth have a valid access token
 	accessTokenCookie, err := req.Cookie("access_token")
 	if err != nil || accessTokenCookie.Value == "" {
-		http.SetCookie(resp, &http.Cookie{
-			Name:  "post_auth_redirect_uri",
-			Value: req.RequestURI,
-			Path:  "/",
-		})
+		if h.fixedPostAuthRedirect != "" {
+			http.SetCookie(resp, &http.Cookie{
+				Name:  "post_auth_redirect_uri",
+				Value: h.fixedPostAuthRedirect,
+				Path:  "/",
+			})
+		} else {
+			http.SetCookie(resp, &http.Cookie{
+				Name:  "post_auth_redirect_uri",
+				Value: req.RequestURI,
+				Path:  "/",
+			})
+		}
 
 		http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 		return true
@@ -121,18 +129,15 @@ func (h *AuthProxy) HandleAuth(resp http.ResponseWriter, req *http.Request) bool
 			if h.fixedPostAuthRedirect != "" {
 				http.SetCookie(resp, &http.Cookie{
 					Name:  "post_auth_redirect_uri",
-					Value: req.RequestURI,
+					Value: h.fixedPostAuthRedirect,
+					Path:  "/",
 				})
 			} else {
-				// if cookie set, expire it
-				_, err := req.Cookie("post_auth_redirect_uri")
-				if err == nil {
-					http.SetCookie(resp, &http.Cookie{
-						Name:   "post_auth_redirect_uri",
-						Value:  "",
-						MaxAge: -1,
-					})
-				}
+				http.SetCookie(resp, &http.Cookie{
+					Name:  "post_auth_redirect_uri",
+					Value: req.RequestURI,
+					Path:  "/",
+				})
 			}
 			http.Redirect(resp, req, "/auth/refresh", http.StatusTemporaryRedirect)
 			return true
