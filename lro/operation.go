@@ -156,21 +156,22 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 	if options.existingOperation != "" {
 		operation.name = options.existingOperation
 	} else {
-		// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-		// Determine whether the operation argument is carried in context key x-alis-operation-id
-		md, ok := metadata.FromIncomingContext(ctx)
-		if ok {
-			if len(md.Get(OperationIdHeaderKey)) > 0 {
-				// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
-				operation.name = "operations/" + md.Get(OperationIdHeaderKey)[0]
+		// If in prod mode, try to get from the gRPC server
+		if !operation.devMode {
+			// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
+			// Determine whether the operation argument is carried in context key x-alis-operation-id
+			md, ok := metadata.FromIncomingContext(ctx)
+			if ok {
+				if len(md.Get(OperationIdHeaderKey)) > 0 {
+					// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
+					operation.name = "operations/" + md.Get(OperationIdHeaderKey)[0]
+				}
 			}
 		} else {
-			// In dev mode, lets see if we can find the operation id in the header
-			if operation.devMode {
-				operationId, ok := ctx.Value(OperationIdHeaderKey).(string)
-				if ok {
-					operation.name = "operations/" + operationId
-				}
+			// in dev mode, the operation may be in the local ctx value passed in by the provided callback function.
+			operationId, ok := ctx.Value(OperationIdHeaderKey).(string)
+			if ok {
+				operation.name = "operations/" + operationId
 			}
 		}
 	}
