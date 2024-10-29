@@ -53,7 +53,7 @@ The `timestamp` function converts a string into a timestamp. Should be an RFC 33
     stmt, err := filter.Parse("Proto.create_time > timestamp('2021-01-01T00:00:00Z')")
 ```
 
-Native spanner TIMESTAMP data type columns should not use this function. Instead just a RFC 3339 timestamp string with should be used.
+Native spanner TIMESTAMP data type columns should not use this function. Instead just a RFC 3339 timestamp string should be used.
 
 ```go
     stmt, err := filter.Parse("create_time > '2021-01-01T00:00:00Z'")
@@ -75,8 +75,36 @@ The `date` function converts a string into a date. Should be an ISO 8601(YYYY-MM
     stmt, err := filter.Parse("Proto.date > date('2021-01-01')")
 ```
 
-Native spanner DATE data type columns should not use this function. Instead just a ISO 8601 date string with should be used.
+Native spanner DATE data type columns should not use this function. Instead just a ISO 8601 date string should be used.
 
 ```go
     stmt, err := filter.Parse("effective_date > '2021-01-01'")
+```
+
+## Other Supported functions
+
+The package also supports the following scalar column/field functions:
+
+### Prefix
+
+The `prefix` function checks if a string column starts with a given prefix.
+
+```go
+    stmt, err := filter.Parse("prefix(key, 'resources/ABC')")
+```
+
+### Suffix
+
+The `suffix` function checks if a string column ends with a given suffix.
+
+```go
+    stmt, err := filter.Parse("suffix(key, 'ABC')")
+```
+
+### IN
+
+The `IN` function checks if a column value is in a list of values.
+
+```go
+    stmt, err := filter.Parse("key IN ['value1', 'value2']")
 ```

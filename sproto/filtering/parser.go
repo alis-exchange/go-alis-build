@@ -215,6 +215,36 @@ func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string
 			params[paramName] = dateStr
 
 			return fmt.Sprintf("DATE(@%s)", paramName), params, true, nil
+		case "prefix", "PREFIX":
+			identSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			if err != nil {
+				return "", nil, false, err
+			}
+
+			constSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			if err != nil {
+				return "", nil, false, err
+			}
+
+			paramName := fmt.Sprintf("p%d", len(params))
+			params[paramName] = constSQL
+
+			return fmt.Sprintf("STARTS_WITH(%s, @%s)", identSQL, paramName), params, false, nil
+		case "suffix", "SUFFIX":
+			identSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			if err != nil {
+				return "", nil, false, err
+			}
+
+			constSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			if err != nil {
+				return "", nil, false, err
+			}
+
+			paramName := fmt.Sprintf("p%d", len(params))
+			params[paramName] = constSQL
+
+			return fmt.Sprintf("ENDS_WITH(%s, @%s)", identSQL, paramName), params, false, nil
 		case "@in":
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
 			if err != nil {

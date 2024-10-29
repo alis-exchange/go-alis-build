@@ -191,17 +191,37 @@ getPrimaryKeyColumns returns the primary key columns for a given table in Spanne
 The order of the columns is the same as the order in the primary key
 */
 func getPrimaryKeyColumns(ctx context.Context, client *spanner.Client, tableName string) ([]*primaryKeyColumn, error) {
+	//stmt := spanner.Statement{
+	//	SQL: `
+	//		SELECT INDEX_COLUMNS.COLUMN_NAME, COLUMNS.IS_GENERATED, COLUMNS.IS_STORED
+	//		FROM
+	//			INFORMATION_SCHEMA.INDEX_COLUMNS
+	//		INNER JOIN
+	//			INFORMATION_SCHEMA.COLUMNS
+	//		ON
+	//			INDEX_COLUMNS.COLUMN_NAME = COLUMNS.COLUMN_NAME AND INDEX_COLUMNS.TABLE_NAME = COLUMNS.TABLE_NAME
+	//			WHERE INDEX_COLUMNS.TABLE_NAME = @tableName AND INDEX_COLUMNS.INDEX_NAME = 'PRIMARY_KEY'
+	//			ORDER BY INDEX_COLUMNS.ORDINAL_POSITION
+	//		`,
+	//	Params: map[string]interface{}{
+	//		"tableName": tableName,
+	//	},
+	//}
 	stmt := spanner.Statement{
 		SQL: `
-			SELECT INDEX_COLUMNS.COLUMN_NAME, COLUMNS.IS_GENERATED, COLUMNS.IS_STORED
-			FROM 
-  				INFORMATION_SCHEMA.INDEX_COLUMNS
-			INNER JOIN 
-  				INFORMATION_SCHEMA.COLUMNS 
-			ON
-  				INDEX_COLUMNS.COLUMN_NAME = COLUMNS.COLUMN_NAME AND INDEX_COLUMNS.TABLE_NAME = COLUMNS.TABLE_NAME
-				WHERE INDEX_COLUMNS.TABLE_NAME = @tableName AND INDEX_COLUMNS.INDEX_NAME = 'PRIMARY_KEY'
-				ORDER BY INDEX_COLUMNS.ORDINAL_POSITION
+			SELECT IC.COLUMN_NAME, C.IS_GENERATED, C.IS_STORED
+			FROM (
+			  SELECT COLUMN_NAME, ORDINAL_POSITION
+			  FROM INFORMATION_SCHEMA.INDEX_COLUMNS
+			  WHERE TABLE_NAME = @tableName AND INDEX_NAME = 'PRIMARY_KEY'
+			) AS IC
+			INNER JOIN (
+			  SELECT COLUMN_NAME, IS_GENERATED, IS_STORED
+			  FROM INFORMATION_SCHEMA.COLUMNS
+			  WHERE TABLE_NAME = @tableName
+			) AS C
+			ON IC.COLUMN_NAME = C.COLUMN_NAME
+			ORDER BY IC.ORDINAL_POSITION;
 			`,
 		Params: map[string]interface{}{
 			"tableName": tableName,

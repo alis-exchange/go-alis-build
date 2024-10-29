@@ -312,7 +312,7 @@ func (rt *ResourceClient) BatchRead(ctx context.Context, names []string, fieldMa
 	return resourceRows, notFound, nil
 }
 
-func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOptions) ([]*ResourceRow, string, error) {
+func (rt *ResourceClient) List(ctx context.Context, parent string, filter *spanner.Statement, opts *QueryOptions) ([]*ResourceRow, string, error) {
 	var err error
 	var spannerStatement spanner.Statement
 	if parent != "" {
@@ -321,7 +321,23 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, opts *QueryOp
 		if err != nil {
 			return nil, "", status.Errorf(codes.Internal, "Failed to convert parent name to row key prefix: %v", err)
 		}
+		// Append filter to the statement
+		if filter != nil {
+			spannerStatement.SQL += " AND " + filter.SQL
+			for k, v := range filter.Params {
+				spannerStatement.Params[k] = v
+			}
+		}
+	} else {
+		// Append filter to the statement
+		if filter != nil {
+			spannerStatement = spanner.Statement{
+				SQL:    filter.SQL,
+				Params: filter.Params,
+			}
+		}
 	}
+
 	msgs := []proto.Message{proto.Clone(rt.resourceMsg)}
 	if rt.hasIamPolicy {
 		msgs = append(msgs, &iampb.Policy{})

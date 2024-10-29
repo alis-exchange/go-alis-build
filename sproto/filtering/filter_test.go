@@ -37,6 +37,22 @@ func TestNewFilter(t *testing.T) {
 			want:    &spanner.Statement{},
 			wantErr: false,
 		},
+		{
+			name: "TestFilter_Prefix",
+			args: args{
+				filter: "age > 18 AND prefix(name, 'Alice') AND suffix(name, 'Alice')",
+			},
+			want:    &spanner.Statement{},
+			wantErr: false,
+		},
+		{
+			name: "TestFilter_In",
+			args: args{
+				filter: "name IN ['Alice', 'Bob']",
+			},
+			want:    &spanner.Statement{},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
