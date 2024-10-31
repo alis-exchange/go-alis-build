@@ -20,6 +20,9 @@ import (
 type IAM struct {
 	// the email of the deployment service account
 	deploymentServiceAccountEmail string
+	// additional super admin principals, if not only the deployment service account is a
+	// super admin
+	superAdmins map[string]bool
 	// the roles
 	roles []*openIam.Role
 	// the function per group type that resolves whether a requester is a member of a group
@@ -69,6 +72,7 @@ func New() (*IAM, error) {
 		roles:                         roles,
 		memberResolver:                make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
 		openPermissions:               make(map[string]bool),
+		superAdmins:                   make(map[string]bool),
 	}
 
 	// populate rolePermissionMap
@@ -94,6 +98,18 @@ func New() (*IAM, error) {
 	i.UsersClient = openIam.NewUsersServiceClient(conn)
 
 	return i, nil
+}
+
+/*
+Sets the additional super admins. By default, only the deployment service account is a super admin.
+Arguments:
+  - superAdmins: the additional super admin principals in the format 'user:<id>' or 'serviceAccount:<email>'
+*/
+func (s *IAM) WithSuperAdmins(superAdmins ...string) *IAM {
+	for _, superAdmin := range superAdmins {
+		s.superAdmins[superAdmin] = true
+	}
+	return s
 }
 
 /*
