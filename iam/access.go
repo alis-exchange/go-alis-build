@@ -98,6 +98,11 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	}
 	authorizer.Identity = identity
 
+	// Skip auth if the identity is the deployment service account
+	if authorizer.Identity.isDeploymentServiceAccount {
+		authorizer.skipAuth = true
+	}
+
 	// Skip auth if the identity is a super admin. Normally deployment service account is the only super admin.
 	if i.superAdmins[authorizer.Identity.PolicyMember()] {
 		authorizer.skipAuth = true

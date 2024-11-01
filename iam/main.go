@@ -92,7 +92,7 @@ func New(opts ...IamOption) (*IAM, error) {
 
 	// Configure final options from default and user overrides
 	options := &IamOptions{
-		SuperAdmins: []string{deploymentServiceAccount},
+		SuperAdmins: []string{"serviceAccount:" + deploymentServiceAccount},
 	}
 	for _, opt := range opts {
 		opt(options)
