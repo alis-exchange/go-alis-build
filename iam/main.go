@@ -20,8 +20,8 @@ import (
 type IAM struct {
 	// the email of the deployment service account
 	deploymentServiceAccountEmail string
-	// additional super admin principals, if not only the deployment service account is a
-	// super admin
+	// principals that have all permissions
+	// by default, only the deployment service account is a super admin
 	superAdmins map[string]bool
 	// the roles
 	roles []*openIam.Role
@@ -36,19 +36,65 @@ type IAM struct {
 	// the users client to use for fetching user policies in case they are not provided in the JWT token
 	UsersClient openIam.UsersServiceClient
 
+	// the users server to use for fetching user policies in case they are not provided in the JWT token
+	UsersServer openIam.UsersServiceServer
+
 	// open permissions are always allowed
 	openPermissions map[string]bool
 }
 
+// IamOptions are the options for creating a new IAM object.
+type IamOptions struct {
+	WithoutDefaultUsersClient bool
+	UserServer                openIam.UsersServiceServer
+	SuperAdmins               []string
+}
+
+// IamOption is a functional option for the New method.
+type IamOption func(*IamOptions)
+
+// Should only be used by the alis managed users service.
+// WithUserServer sets the user server to use for fetching user policies in case they are not provided in the JWT token.
+// If set, the default users client is not used.
+func WithUserServer(userServer openIam.UsersServiceServer) IamOption {
+	return func(opts *IamOptions) {
+		opts.UserServer = userServer
+		opts.WithoutDefaultUsersClient = true
+	}
+}
+
+// WithoutDefaultUsersClient disables the default users client which is normally called at "iam-users-{hash}.run.app:443"
+// to fetch user policies in case they are not provided in the JWT token.
+func WithoutDefaultUsersClient() IamOption {
+	return func(opts *IamOptions) {
+		opts.WithoutDefaultUsersClient = true
+	}
+}
+
+// Sets the additional super admins. By default, only the deployment service account is a super admin.
+func WithAdditionalSuperAdmins(superAdmins ...string) IamOption {
+	return func(opts *IamOptions) {
+		opts.SuperAdmins = append(opts.SuperAdmins, superAdmins...)
+	}
+}
+
 // New creates a new IAM object.
 // ALIS_OS_PROJECT and ALIS_PRODUCT_CONFIG environment variables must be set.
-func New() (*IAM, error) {
+func New(opts ...IamOption) (*IAM, error) {
 	// determine deployment service account email based on project id
 	projectId := os.Getenv("ALIS_OS_PROJECT")
 	if projectId == "" {
 		alog.Fatal(context.Background(), "ALIS_OS_PROJECT not set")
 	}
 	deploymentServiceAccount := fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", projectId)
+
+	// Configure final options from default and user overrides
+	options := &IamOptions{
+		SuperAdmins: []string{deploymentServiceAccount},
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
 
 	// extract roles from product config
 	productConfigStr := os.Getenv("ALIS_PRODUCT_CONFIG")
@@ -88,28 +134,29 @@ func New() (*IAM, error) {
 		}
 	}
 
-	// initialise users client which is used as a fallback to fetch user policies in case they are not provided in the JWT token
-	ctx := context.Background()
-	maxSizeOptions := grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(2000000000), grpc.MaxCallRecvMsgSize(2000000000))
-	conn, err := client.NewConnWithRetry(ctx, "iam-users-"+os.Getenv("ALIS_RUN_HASH")+".run.app:443", false, maxSizeOptions)
-	if err != nil {
-		return nil, fmt.Errorf("error creating users client: %v", err)
+	// initialise super admins
+	i.superAdmins[deploymentServiceAccount] = true
+	for _, superAdmin := range options.SuperAdmins {
+		i.superAdmins[superAdmin] = true
 	}
-	i.UsersClient = openIam.NewUsersServiceClient(conn)
+
+	// initialise users server if specified
+	if options.UserServer != nil {
+		i.UsersServer = options.UserServer
+	}
+
+	// create users client if not disabled
+	if !options.WithoutDefaultUsersClient {
+		ctx := context.Background()
+		maxSizeOptions := grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(2000000000), grpc.MaxCallRecvMsgSize(2000000000))
+		conn, err := client.NewConnWithRetry(ctx, "iam-users-"+os.Getenv("ALIS_RUN_HASH")+".run.app:443", false, maxSizeOptions)
+		if err != nil {
+			return nil, fmt.Errorf("error creating users client: %v", err)
+		}
+		i.UsersClient = openIam.NewUsersServiceClient(conn)
+	}
 
 	return i, nil
-}
-
-/*
-Sets the additional super admins. By default, only the deployment service account is a super admin.
-Arguments:
-  - superAdmins: the additional super admin principals in the format 'user:<id>' or 'serviceAccount:<email>'
-*/
-func (s *IAM) WithSuperAdmins(superAdmins ...string) *IAM {
-	for _, superAdmin := range superAdmins {
-		s.superAdmins[superAdmin] = true
-	}
-	return s
 }
 
 /*
