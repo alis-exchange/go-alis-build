@@ -72,6 +72,8 @@ func WithoutDefaultUsersClient() IamOption {
 }
 
 // Sets the additional super admins. By default, only the deployment service account is a super admin.
+// Arguments:
+//   - superAdmins: the additional super admins e.g. 'user:<userId>', 'serviceAccount:<email>'
 func WithAdditionalSuperAdmins(superAdmins ...string) IamOption {
 	return func(opts *IamOptions) {
 		opts.SuperAdmins = append(opts.SuperAdmins, superAdmins...)
