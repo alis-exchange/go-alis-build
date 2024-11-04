@@ -31,6 +31,12 @@ type ResourceTblOptions struct {
 	ReturnPermissionDeniedForNotFound bool
 	// The name of the column that contains the row key in the table. If not provided, 'key' is used.
 	KeyColumnName string
+	// Whether the table only has standard columns, i.e.
+	// - the primary key column called "key"
+	// - a proto column with the same name as the last part of the proto message (e.g. "Time" for "google.protobuf.Time")
+	// - a proto column with the name "Policy" for the google.iam.v1.Policy message
+	// If true, startup would be faster since the columns do not need to be fetched from the database to setup the client.
+	StandardColumnsOnly bool
 }
 
 /*
@@ -104,6 +110,11 @@ func (rr *ResourceRow) Delete(ctx context.Context) error {
 NewResourceClient creates a new ResourceClient for the given table name and resource message.
 */
 func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, options *ResourceTblOptions) *ResourceClient {
+	// get msg type using protoreflect
+	msgType := msg.ProtoReflect().Type()
+	msgName := string(msgType.Descriptor().FullName())
+	shortName := string(msgType.Descriptor().Name())
+
 	if options == nil {
 		options = &ResourceTblOptions{}
 	}
@@ -113,7 +124,21 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 	if options.KeyColumnName == "" {
 		options.KeyColumnName = "key"
 	}
-	tableClient, err := d.NewTableClient(tableName, options.DefaultLimit)
+	tblOptions := []TableClientOption{}
+	if options.StandardColumnsOnly {
+		tblOptions = append(tblOptions, WithPrimaryKeyColumns([]*primaryKeyColumn{
+			{
+				columnName:  "key",
+				isGenerated: false,
+				isStored:    true,
+			},
+		}))
+		tblOptions = append(tblOptions, WithMsgTypeToColumnMap(map[string]string{
+			msgName:                shortName,
+			"google.iam.v1.Policy": "Rolicy",
+		}))
+	}
+	tableClient, err := d.NewTableClient(tableName, options.DefaultLimit, tblOptions...)
 	if err != nil {
 		// TODO: Return error instead.
 		//  I strongly believe the user should decide on how to handle the error.

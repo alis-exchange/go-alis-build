@@ -85,33 +85,62 @@ func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole stri
 	}, nil
 }
 
+type TableClientOptions struct {
+	primaryKeyColumns []*primaryKeyColumn
+	msgTypeToColumn   map[string]string
+}
+
+type TableClientOption func(*TableClientOptions)
+
+func WithPrimaryKeyColumns(pkCols []*primaryKeyColumn) TableClientOption {
+	return func(o *TableClientOptions) {
+		o.primaryKeyColumns = pkCols
+	}
+}
+
+func WithMsgTypeToColumnMap(msgTypeToColumn map[string]string) TableClientOption {
+	return func(o *TableClientOptions) {
+		o.msgTypeToColumn = msgTypeToColumn
+	}
+}
+
 // NewTableClient creates a new Table Client instance with the provided table name.
 // During setup, it queries the table to get the primary key columns and the mapping of proto message types to columns.
 // The defaultQueryRowLimit is used as the default limit for queries if not provided in the QueryOptions.
-func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int) (*TableClient, error) {
+func (d *DbClient) NewTableClient(tableName string, defaultQueryRowLimit int, tableClientOptions ...TableClientOption) (*TableClient, error) {
 	ctx := context.Background()
+	opts := &TableClientOptions{}
+	for _, opt := range tableClientOptions {
+		opt(opts)
+	}
+
 	// use go routines
-	var pkCols []*primaryKeyColumn
-	var msgTypeToColumn map[string]string
+	pkCols := opts.primaryKeyColumns
+	msgTypeToColumn := opts.msgTypeToColumn
 	wg := sync.WaitGroup{}
 	errChannel := make(chan error, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		var err error
-		pkCols, err = getPrimaryKeyColumns(ctx, d.client, tableName)
-		if err != nil {
-			errChannel <- fmt.Errorf("Error getting primary key columns for table %s: %v", tableName, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		msgTypeToColumn, err = getProtoTypeToColumnMap(ctx, d.client, tableName)
-		if err != nil {
-			errChannel <- fmt.Errorf("Error getting proto type to column map for table %s: %v", tableName, err)
-		}
-	}()
+	if opts.primaryKeyColumns == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var err error
+			pkCols, err = getPrimaryKeyColumns(ctx, d.client, tableName)
+			if err != nil {
+				errChannel <- fmt.Errorf("Error getting primary key columns for table %s: %v", tableName, err)
+			}
+		}()
+	}
+	if opts.msgTypeToColumn == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var err error
+			msgTypeToColumn, err = getProtoTypeToColumnMap(ctx, d.client, tableName)
+			if err != nil {
+				errChannel <- fmt.Errorf("Error getting proto type to column map for table %s: %v", tableName, err)
+			}
+		}()
+	}
 	wg.Wait()
 	close(errChannel)
 	for err := range errChannel {
