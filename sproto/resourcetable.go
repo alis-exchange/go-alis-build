@@ -130,7 +130,7 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 			{
 				columnName:  "key",
 				isGenerated: false,
-				isStored:    true,
+				isStored:    false,
 			},
 		}))
 		tblOptions = append(tblOptions, WithMsgTypeToColumnMap(map[string]string{
