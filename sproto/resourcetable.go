@@ -182,8 +182,9 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 		return nil, err
 	}
 	resourceRow := &ResourceRow{
-		RowKey:   rowKey,
-		Resource: resource,
+		RowKey:         rowKey,
+		Resource:       resource,
+		resourceClient: rt,
 	}
 	if rt.hasIamPolicy {
 		if policy.Etag == nil {
