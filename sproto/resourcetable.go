@@ -135,7 +135,7 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 		}))
 		tblOptions = append(tblOptions, WithMsgTypeToColumnMap(map[string]string{
 			msgName:                shortName,
-			"google.iam.v1.Policy": "Rolicy",
+			"google.iam.v1.Policy": "Policy",
 		}))
 	}
 	tableClient, err := d.NewTableClient(tableName, options.DefaultLimit, tblOptions...)
