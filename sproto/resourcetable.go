@@ -79,7 +79,8 @@ func (rr *ResourceRow) SetRowKey(name string) error {
 Merge merges the updatedMsg into the resource. The fieldMaskPaths are the paths of the fields to update.
 */
 func (rr *ResourceRow) Merge(updatedMsg proto.Message, fieldMaskPaths ...string) {
-	fmutils.Filter(updatedMsg, fieldMaskPaths)
+	clonedUpdatedMsg := proto.Clone(updatedMsg)
+	fmutils.Filter(clonedUpdatedMsg, fieldMaskPaths)
 	fmutils.Prune(rr.Resource, fieldMaskPaths)
 	proto.Merge(rr.Resource, updatedMsg)
 }
