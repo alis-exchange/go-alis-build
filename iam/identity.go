@@ -68,7 +68,7 @@ func (r *Identity) IsGoogleIdentity() bool {
 
 // Returns whether the requester is a service account.
 func (r *Identity) IsServiceAccount() bool {
-	return strings.HasSuffix(r.email, "@gserviceaccount.com")
+	return strings.HasSuffix(r.email, ".gserviceaccount.com")
 }
 
 // Returns the policy member string of the requester.
