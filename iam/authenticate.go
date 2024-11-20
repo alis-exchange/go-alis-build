@@ -23,12 +23,10 @@ type Authenticator struct {
 	publicKeys *sync.Map
 }
 
-type AuthenticatorOption func(*Authenticator)
-
 const ForwardedHostHeader = "x-forwarded-host"
 
 // Creates a new Authenticator instance that can be used to authenticate users via the alis-build managed iam service.
-func NewAuthenticator(opts ...AuthenticatorOption) *Authenticator {
+func NewAuthenticator() *Authenticator {
 	runHash := os.Getenv("ALIS_RUN_HASH")
 	if runHash == "" {
 		alog.Fatalf(context.Background(), "ALIS_RUN_HASH not set")
@@ -37,9 +35,6 @@ func NewAuthenticator(opts ...AuthenticatorOption) *Authenticator {
 	an := &Authenticator{
 		authHost:   authHost,
 		publicKeys: &sync.Map{},
-	}
-	for _, opt := range opts {
-		opt(an)
 	}
 	return an
 }
