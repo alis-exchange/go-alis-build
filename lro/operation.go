@@ -422,9 +422,9 @@ func WithTimeout(timeout time.Duration) WaitOption {
 }
 
 // WithPollFrequency specified a constant duration to use when polling the underlyging Child Operations to wait for.
-func WithPollFrequency(timeout time.Duration) WaitOption {
+func WithPollFrequency(pollFrequency time.Duration) WaitOption {
 	return func(w *WaitConfig) error {
-		w.timeout = timeout
+		w.pollFrequency = pollFrequency
 		return nil
 	}
 }
