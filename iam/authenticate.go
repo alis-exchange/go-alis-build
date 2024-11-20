@@ -263,7 +263,11 @@ func (h *Authenticator) validateJwt(accessToken string) error {
 
 // ForwardAuthorizationHeader forwards the Authorization header in the incoming ctx to the outgoing ctx.
 // Use this at the very top of your unary and streaming interceptors in the context of a gRPC web server.
-func (h *Authenticator) ForwardAuthorizationHeader(ctx context.Context) (context.Context, error) {
+//   - ctx: the context
+//   - allowMissingAuthHeader: whether to not return an error if the Authorization header is missing. Only set to true
+//     if you have checked for authentication when required in the http server layer and you have some methods that
+//     do not require authentication.
+func (h *Authenticator) ForwardAuthorizationHeader(ctx context.Context, allowMissingAuthHeader bool) (context.Context, error) {
 	// forward authorization header as metadata in x-alis-forwarded-authorization
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
@@ -271,9 +275,15 @@ func (h *Authenticator) ForwardAuthorizationHeader(ctx context.Context) (context
 		if len(accessToken) > 0 {
 			ctx = metadata.AppendToOutgoingContext(ctx, AlisForwardingHeader, accessToken[0])
 		} else {
+			if allowMissingAuthHeader {
+				return ctx, nil
+			}
 			return ctx, fmt.Errorf("authorization header not found")
 		}
 	} else {
+		if allowMissingAuthHeader {
+			return ctx, nil
+		}
 		return ctx, fmt.Errorf("metadata not found")
 	}
 	return ctx, nil
