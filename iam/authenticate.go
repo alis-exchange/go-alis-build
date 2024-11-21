@@ -31,7 +31,7 @@ func NewAuthenticator() *Authenticator {
 	if runHash == "" {
 		alog.Fatalf(context.Background(), "ALIS_RUN_HASH not set")
 	}
-	authHost := fmt.Sprintf("https://iam-users-%s.run.app:443", runHash)
+	authHost := fmt.Sprintf("https://iam-auth-%s.run.app:443", runHash)
 	an := &Authenticator{
 		authHost:   authHost,
 		publicKeys: &sync.Map{},
