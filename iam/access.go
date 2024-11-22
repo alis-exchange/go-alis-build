@@ -174,7 +174,7 @@ func (a *Authorizer) HasAccess(permission string, policies ...*iampb.Policy) boo
 	policiesToCheck := append(a.Policies(), policies...)
 	for _, policy := range policiesToCheck {
 		// Now iterate through the bindings
-		for _, binding := range policy.Bindings {
+		for _, binding := range policy.GetBindings() {
 			// If the binding role has the relevant permission
 			if a.iam.RoleHasPermission(binding.Role, permission) {
 				// Check whether the identity is present in the policy members.
@@ -198,7 +198,7 @@ func (a *Authorizer) HasRole(policies []*iampb.Policy, role string) bool {
 	role = ensureCorrectRoleName(role)
 	for _, policy := range policies {
 		// Now iterate through the bindings
-		for _, binding := range policy.Bindings {
+		for _, binding := range policy.GetBindings() {
 			// accomodating legacy bindings where role was either just roleId
 			// or alis-build role name, e.g. organisations/*/products/*/roles/*
 			bindingRole := ensureCorrectRoleName(binding.Role)
