@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"go.alis.build/validation"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type TestStruct struct {
@@ -48,7 +46,13 @@ func (t *TestStruct) GetValid() bool {
 // }
 
 func Test_Validation(t *testing.T) {
-	req := &TestStruct{}
+	v := validation.NewValidator(context.Background())
+	v.Gt("age", 10, 18)
+	err := v.Validate()
+	if err != nil {
+		t.Error(err)
+	}
+	// req := &TestStruct{}
 	// v := validation.NewValidator(context.Background())
 
 	// // name must be populated
@@ -75,27 +79,25 @@ func Test_Validation(t *testing.T) {
 	// 	v.AddRule(v.OR(
 	// 		v.SF("name", req.GetName).Populated(), v.SF("surname", req.GetSurname).Populated(),
 	// 	))
+	// // }
+
+	// err := validation.NewValidator(context.Background())
+	// .Required("name", req.GetName()).MatchesRegex("name", req.GetName(), "^[a-zA-Z]+$").InRange("age", req.GetAge(), 18, 100).CustomRule("the sum of all the percentages in column A must sum up to 100",func() error { return errors.New("currently summing up to 104")})
+
+	// // combine "rule: failureReason"
+	// v.IsEmail("email", req.GetEmail())
+
+	// v.MatchesRegex("subfield.somesub.name")
+	// v.AddRule(v.StringField("name", req.GetName).Populated())
+	// err := v.AddEvalutedRule("name must be populated", func() bool { return req.Name != "" }).AddBasicRule("age must be greater than 18", req.Age > 18)
+	// if err != nil {
+	// 	return err
 	// }
 
-	err := validation.NewValidator(context.Background())
-	.Required("name", req.GetName()).MatchesRegex("name", req.GetName(), "^[a-zA-Z]+$").InRange("age", req.GetAge(), 18, 100).CustomRule("the sum of all the percentages in column A must sum up to 100",func() error { return errors.New("currently summing up to 104")})
-
-	// combine "rule: failureReason"
-	v.IsEmail("email", req.GetEmail())
-
-	v.MatchesRegex("subfield.somesub.name")
-	v.AddRule(v.StringField("name", req.GetName).Populated())
-	err := v.AddEvalutedRule("name must be populated", func() bool { return req.Name != "" }).AddBasicRule("age must be greater than 18", req.Age > 18)
-	if err != nil {
-		return err
-	}
-
-	v.CustomRule()
-	v.Matches()
-	v.MatchesOneof()
-	v.String("name",req.GetName()).Matches(req.Regex,validation.WithValueDescription(""))
-	v.Timestamp("create_time",req.GetCreateTime()).After(req.GetUpdateTime(), validation.WithDescription("update_time")).If
-	v.Enum("status", req.Status).Is("ACTIVE", "INACTIVE")
-
-
+	// v.CustomRule()
+	// v.Matches()
+	// v.MatchesOneof()
+	// v.String("name",req.GetName()).Matches(req.Regex,validation.WithValueDescription(""))
+	// v.Timestamp("create_time",req.GetCreateTime()).After(req.GetUpdateTime(), validation.WithDescription("update_time")).If
+	// v.Enum("status", req.Status).Is("ACTIVE", "INACTIVE")
 }
