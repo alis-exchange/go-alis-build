@@ -193,7 +193,11 @@ type primaryKeyColumn struct {
 //
 // In most cases, isGenerated and isStored are the same, very rarely is one true and the other false
 func NewPrimaryKeyColumn(name string, isGenerated, isStored bool) *primaryKeyColumn {
-	return &primaryKeyColumn{}
+	return &primaryKeyColumn{
+		columnName:  name,
+		isGenerated: isGenerated,
+		isStored:    isStored,
+	}
 }
 
 /*
