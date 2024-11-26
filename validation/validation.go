@@ -1,60 +1,39 @@
 package validation
 
 import (
-	"context"
 	"errors"
 	"strings"
 )
 
-type Validator struct {
-	ctx   context.Context
-	rules []*Rule
-}
-
-type Condition struct {
-	satisfied   bool
-	description string
-}
-
 type Rule struct {
 	description   string
 	satisfiedFunc func() bool
-	dependsOn     []*Rule
 	satisfied     bool
-	// only apply rule if condition is met
-	condition *Condition
+	condition     *Condition
+	wrapped       bool
 }
 
-// Options for values in rules
-type ValueOptions struct {
-	valueReferences []string
+type Condition struct {
+	v           *Validator
+	description string
+	satisfied   bool
 }
 
-// A functional option to set the value options
-type ValueOption func(*ValueOptions)
-
-// Use if one/more of the values provided for the rule are not constant but retrieved from other paths in the struct.
-// Will update the rule description to include the paths of the values.
-// E.g. "'create_time' must be before 'update_time'"
-func WithReferencedValues(paths ...string) ValueOption {
-	return func(o *ValueOptions) {
-		o.valueReferences = paths
+func (c *Condition) Then(field Field, fields ...Field) {
+	rule := &Rule{satisfied: field.rule().satisfied, description: field.rule().description}
+	for _, f := range fields {
+		rule.satisfied = rule.satisfied && f.rule().satisfied
+		rule.description += " and " + f.rule().description
 	}
-}
-
-// Adds one/more dependencies to the rule, which if not satisfied, will cause the rule to also be unsatisfied.
-// The rule itself is not evaluated if any of its dependencies are not satisfied.
-func (r *Rule) DependsOn(rules ...*Rule) {
-	r.dependsOn = rules
+	rule.condition = c
+	c.v.rules = append(c.v.rules, rule)
 }
 
 // Returns whether the rule is satisfied
 func (r *Rule) Satisfied() bool {
-	// rule is not satisfied if any of its dependencies are not satisfied
-	for _, d := range r.dependsOn {
-		if !d.Satisfied() {
-			return false
-		}
+	// if rule was combined/wrapped it would have been made nil, so as not to be evaluated
+	if r == nil || r.wrapped {
+		return true
 	}
 
 	// rule is satisfied if the condition for its application is not met
@@ -71,6 +50,10 @@ func (r *Rule) Satisfied() bool {
 }
 
 func (r *Rule) Description() string {
+	if r == nil || r.wrapped {
+		return ""
+	}
+
 	descr := r.description
 	if r.condition != nil {
 		descr = "if " + r.condition.description + ", " + descr
@@ -78,73 +61,80 @@ func (r *Rule) Description() string {
 	return descr
 }
 
-func NewValidator(ctx context.Context) *Validator {
-	return &Validator{
-		ctx: ctx,
-	}
+type Validator struct {
+	rules []*Rule
 }
 
-func (v *Validator) AddRule(description string, satisfied bool) *Validator {
-	r := &Rule{
-		description: description,
-		satisfied:   satisfied,
-	}
-	v.rules = append(v.rules, r)
-	return v
-}
-
-func (v *Validator) AddEvaluatedRule(description string, satisfiedFunc func() bool) *Validator {
-	r := &Rule{
-		description:   description,
-		satisfiedFunc: satisfiedFunc,
-	}
-	v.rules = append(v.rules, r)
-	return v
-}
-
-type ErrorOptions struct {
-	returnFirst bool
-}
-
-type ErrorOption func(*ErrorOptions)
-
-func ReturnFirstError() ErrorOption {
-	return func(o *ErrorOptions) {
-		o.returnFirst = true
-	}
-}
-
-func (v *Validator) Validate(opts ...ErrorOption) error {
-	options := &ErrorOptions{}
-	for _, o := range opts {
-		o(options)
-	}
-	errs := []string{}
-	for _, r := range v.rules {
-		if !r.Satisfied() {
-			errs = append(errs, r.Description())
-			if !options.returnFirst {
-				break
-			}
-		}
-	}
-
-	if len(errs) == 0 {
-		return nil
-	}
-	return errors.New(strings.Join(errs, "; "))
+func NewValidator() *Validator {
+	return &Validator{}
 }
 
 func (v *Validator) Rules() []*Rule {
-	return v.rules
+	finalRules := []*Rule{}
+	for _, r := range v.rules {
+		if r != nil && !r.wrapped {
+			finalRules = append(finalRules, r)
+		}
+	}
+	return finalRules
 }
 
 func (v *Validator) BrokenRules() []*Rule {
 	broken := []*Rule{}
-	for _, r := range v.rules {
+	for _, r := range v.Rules() {
 		if !r.Satisfied() {
 			broken = append(broken, r)
 		}
 	}
 	return broken
+}
+
+func (v *Validator) Error() error {
+	broken := v.BrokenRules()
+	errDescriptions := []string{}
+	for _, r := range broken {
+		errDescriptions = append(errDescriptions, r.Description())
+	}
+	if len(errDescriptions) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(errDescriptions, "; "))
+}
+
+func (v *Validator) String(path, value string) *StringField {
+	return stringField(v, path, value)
+}
+
+func (v *Validator) Int32(path string, value int32) *NumberField[int32] {
+	return numberField(v, path, value)
+}
+
+func (v *Validator) Int64(path string, value int64) *NumberField[int64] {
+	return numberField(v, path, value)
+}
+
+func (v *Validator) Float32(path string, value float32) *NumberField[float32] {
+	return numberField(v, path, value)
+}
+
+func (v *Validator) Float64(path string, value float64) *NumberField[float64] {
+	return numberField(v, path, value)
+}
+
+func (v *Validator) If(field Field, fields ...Field) *Condition {
+	condition := &Condition{v: v, description: field.condition().description, satisfied: field.condition().Satisfied()}
+	for _, f := range fields {
+		condition.satisfied = condition.satisfied && f.condition().Satisfied()
+		condition.description += " and " + f.condition().description
+	}
+	return condition
+}
+
+func (v *Validator) Or(field Field, fields ...Field) {
+	rule := &Rule{satisfied: field.rule().satisfied, description: field.rule().description}
+	for _, f := range fields {
+		rule.satisfied = rule.satisfied || f.rule().satisfied
+		rule.description += " or " + f.rule().description
+	}
+	v.rules = append(v.rules, rule)
 }
