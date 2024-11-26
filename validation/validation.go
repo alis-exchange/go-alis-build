@@ -11,29 +11,71 @@ type Validator struct {
 	rules []*Rule
 }
 
-type Rule struct {
-	Description     string
-	satisfied       func() bool
-	dependsOn       []*Rule
-	combo           bool
-	evaluated       bool
-	satisfiedResult bool
+type Condition struct {
+	satisfied   bool
+	description string
 }
 
+type Rule struct {
+	description   string
+	satisfiedFunc func() bool
+	dependsOn     []*Rule
+	satisfied     bool
+	// only apply rule if condition is met
+	condition *Condition
+}
+
+// Options for values in rules
+type ValueOptions struct {
+	valueReferences []string
+}
+
+// A functional option to set the value options
+type ValueOption func(*ValueOptions)
+
+// Use if one/more of the values provided for the rule are not constant but retrieved from other paths in the struct.
+// Will update the rule description to include the paths of the values.
+// E.g. "'create_time' must be before 'update_time'"
+func WithReferencedValues(paths ...string) ValueOption {
+	return func(o *ValueOptions) {
+		o.valueReferences = paths
+	}
+}
+
+// Adds one/more dependencies to the rule, which if not satisfied, will cause the rule to also be unsatisfied.
+// The rule itself is not evaluated if any of its dependencies are not satisfied.
 func (r *Rule) DependsOn(rules ...*Rule) {
 	r.dependsOn = rules
 }
 
+// Returns whether the rule is satisfied
 func (r *Rule) Satisfied() bool {
-	if !r.evaluated {
-		r.satisfiedResult = r.satisfied()
-	}
+	// rule is not satisfied if any of its dependencies are not satisfied
 	for _, d := range r.dependsOn {
 		if !d.Satisfied() {
 			return false
 		}
 	}
-	return r.satisfiedResult
+
+	// rule is satisfied if the condition for its application is not met
+	if r.condition != nil && !r.condition.satisfied {
+		return true
+	}
+
+	// evaluate the rule if it hasn't been evaluated yet
+	if r.satisfiedFunc != nil {
+		r.satisfied = r.satisfiedFunc()
+		r.satisfiedFunc = nil
+	}
+	return r.satisfied
+}
+
+func (r *Rule) Description() string {
+	descr := r.description
+	if r.condition != nil {
+		descr = "if " + r.condition.description + ", " + descr
+	}
+	return descr
 }
 
 func NewValidator(ctx context.Context) *Validator {
@@ -42,98 +84,33 @@ func NewValidator(ctx context.Context) *Validator {
 	}
 }
 
-type IntField struct {
-	path  string
-	value int
-}
-
-func (v *Validator) InRange(path string, value float64, min float64, max float64) *Rule {
+func (v *Validator) AddRule(description string, satisfied bool) *Validator {
 	r := &Rule{
-		satisfied: func() bool {
-			return value >= min && value <= max
-		},
-	}
-	return r
-}
-
-func (v *Validator) OR(rules ...*Rule) *Rule {
-	satisfiedFunc := func() bool {
-		for _, r := range rules {
-			if r.Satisfied() {
-				return true
-			}
-		}
-		return false
-	}
-	descriptions := []string{}
-	for _, r := range rules {
-		descriptions = append(descriptions, r.Description)
-	}
-	r := &Rule{
-		satisfied:   satisfiedFunc,
-		Description: strings.Join(descriptions, " OR "),
-		combo:       true,
-	}
-	return r
-}
-
-func (v *Validator) AND(rules ...*Rule) *Rule {
-	satisfiedFunc := func() bool {
-		for _, r := range rules {
-			if !r.Satisfied() {
-				return false
-			}
-		}
-		return true
-	}
-	descriptions := []string{}
-	for _, r := range rules {
-		descrToAdd := r.Description
-		if r.combo {
-			descrToAdd = "(" + descrToAdd + ")"
-		}
-		descriptions = append(descriptions, descrToAdd)
-	}
-	r := &Rule{
-		satisfied:   satisfiedFunc,
-		Description: strings.Join(descriptions, " AND "),
-		combo:       true,
-	}
-	return r
-}
-
-func (v *Validator) AddBasicRule(description string, satisfied bool) *Validator {
-	r := &Rule{
-		Description: description,
-		satisfied:   func() bool { return satisfied },
-	}
-	v.rules = append(v.rules, r)
-	return v
-}
-
-func (v *Validator) AddEvaluatedRule(description string, satisfied func() bool) *Validator {
-	r := &Rule{
-		Description: description,
+		description: description,
 		satisfied:   satisfied,
 	}
 	v.rules = append(v.rules, r)
 	return v
 }
 
-func (v *Validator) AddRule(rule *Rule) *Validator {
-	v.rules = append(v.rules, rule)
+func (v *Validator) AddEvaluatedRule(description string, satisfiedFunc func() bool) *Validator {
+	r := &Rule{
+		description:   description,
+		satisfiedFunc: satisfiedFunc,
+	}
+	v.rules = append(v.rules, r)
 	return v
 }
 
 type ErrorOptions struct {
-	returnAll bool
+	returnFirst bool
 }
 
 type ErrorOption func(*ErrorOptions)
 
-func WithReturnFirstError() ErrorOption {
+func ReturnFirstError() ErrorOption {
 	return func(o *ErrorOptions) {
-		o.returnAll = true
+		o.returnFirst = true
 	}
 }
 
@@ -145,8 +122,8 @@ func (v *Validator) Validate(opts ...ErrorOption) error {
 	errs := []string{}
 	for _, r := range v.rules {
 		if !r.Satisfied() {
-			errs = append(errs, r.Description)
-			if !options.returnAll {
+			errs = append(errs, r.Description())
+			if !options.returnFirst {
 				break
 			}
 		}
@@ -162,22 +139,12 @@ func (v *Validator) Rules() []*Rule {
 	return v.rules
 }
 
-func (v *Validator) SF(path string, valueFn func() string) *StringField {
-	return v.StringField(path, valueFn)
-}
-
-func (v *Validator) StringField(path string, valueFn func() string) *StringField {
-	return &StringField{
-		path:  path,
-		value: valueFn,
+func (v *Validator) BrokenRules() []*Rule {
+	broken := []*Rule{}
+	for _, r := range v.rules {
+		if !r.Satisfied() {
+			broken = append(broken, r)
+		}
 	}
+	return broken
 }
-
-type SF struct {
-	path  string
-	value string
-}
-
-type Rgx interface{}
-
-func Matches(rgx Rgx)
