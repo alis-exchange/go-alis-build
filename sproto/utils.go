@@ -185,6 +185,17 @@ type primaryKeyColumn struct {
 	isStored bool
 }
 
+// NewPrimaryKeyColumn creates a new instance of primaryKeyColumn
+//
+//   - name - the name of the column
+//   - isGenerated - whether the column is generated
+//   - isStored - whether the column is stored
+//
+// In most cases, isGenerated and isStored are the same, very rarely is one true and the other false
+func NewPrimaryKeyColumn(name string, isGenerated, isStored bool) *primaryKeyColumn {
+	return &primaryKeyColumn{}
+}
+
 /*
 getPrimaryKeyColumns returns the primary key columns for a given table in Spanner
 
