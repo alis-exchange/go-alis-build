@@ -1,8 +1,8 @@
 package validation_test
 
 import (
-	"context"
 	"testing"
+	"time"
 
 	"go.alis.build/validation"
 )
@@ -46,12 +46,55 @@ func (t *TestStruct) GetValid() bool {
 // }
 
 func Test_Validation(t *testing.T) {
-	v := validation.NewValidator(context.Background())
-	v.Gt("age", 10, 18)
-	err := v.Validate()
-	if err != nil {
-		t.Error(err)
+	var v uint64 = 23987234928234
+	t.Log(v)
+	// time the conversion
+	startT := time.Now()
+	// f := float64(v)
+	t.Log(time.Since(startT).Nanoseconds())
+
+	v := validation.NewValidator()
+	v.IfEnum("status").Is("ACTIVE").Then(
+		v.String("country", req.GetCountry()).Populated().Matches("^[a-zA-Z]+$"),
+		v.String("city", req.GetCity()).Populated().Matches("^[a-zA-Z]+$"),
+	)
+
+	v.StringList("names", req.GetNames()).LengthEq(2).EachStartsWith("A")
+	v.UInt32("age", req.GetAge()).Gt(18).Lt(100)
+
+	v.OR(
+		v.String("name", req.GetName()).Populated(),
+		v.String("surname", req.GetSurname()).Populated(),
+	)
+
+	v.Custom("if status is active, either country or city must be populated", func() bool {
+		if req.GetStatus() == "ACTIVE" {
+			return req.GetCountry() != "" || req.GetCity() != ""
+		}
+	})
+
+	allRules := v.Rules()
+	for _, rule := range allRules {
+		println(rule.Description())
 	}
+
+	brokenRules := v.BrokenRules()
+	for _, rule := range brokenRules {
+		println(rule.Description())
+	}
+
+	v.Matches("name", req.GetName(), "^[a-zA-Z]+$")
+	// t.Log(f)
+	// v := validation.NewValidator(context.Background())
+	// v.Lt("age", "a", 180)
+	// v.Domain("domain", "google.com")
+	// // v.LengthEq("update_mask.paths", []string{"a", "b"}, 2)
+	// listOfGoogleTimestamps := []*timestamppb.Timestamp{}
+	// v.LengthEq("timestamps", len(listOfGoogleTimestamps), 1)
+	// err := v.Validate()
+	// if err != nil {
+	// 	t.Error(err)
+	// }
 	// req := &TestStruct{}
 	// v := validation.NewValidator(context.Background())
 

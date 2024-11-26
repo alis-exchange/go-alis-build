@@ -1,7 +1,10 @@
 package validation
 
 import (
+	"context"
 	"fmt"
+
+	"go.alis.build/alog"
 )
 
 // Require a primitive (string, number, bool) value at a given path to be equal to a given value.
@@ -66,7 +69,7 @@ func (v *Validator) Gt(path string, value, threshold any) *Validator {
 func (v *Validator) GtR(path string, value, threshold any) *Rule {
 	r := &Rule{
 		description: fmt.Sprintf("%s must be greater than %v", path, threshold),
-		satisfied:   convertToFloat64(value) > convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) > convertToFloat(path, threshold),
 	}
 	v.rules = append(v.rules, r)
 	return r
@@ -76,7 +79,7 @@ func (v *Validator) GtR(path string, value, threshold any) *Rule {
 // Returns new condition in order to "or" conditions together.
 func (r *Rule) IfGt(path string, value, threshold any) *Condition {
 	r.condition = &Condition{
-		satisfied:   convertToFloat64(value) > convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) > convertToFloat(path, threshold),
 		description: fmt.Sprintf("%s is greater than %v", path, threshold),
 	}
 	return r.condition
@@ -85,14 +88,14 @@ func (r *Rule) IfGt(path string, value, threshold any) *Condition {
 // Condition also met if the value is greater than the threshold value.
 func (c *Condition) OrGt(path string, value, threshold any) *Condition {
 	c.description += fmt.Sprintf(" or %s is greater than %v", path, threshold)
-	c.satisfied = c.satisfied || convertToFloat64(value) > convertToFloat64(threshold)
+	c.satisfied = c.satisfied || convertToFloat(path, value) > convertToFloat(path, threshold)
 	return c
 }
 
 // Rule also satisfied if the value is greater than the threshold value.
 func (r *Rule) OrGt(path string, value, threshold any) *Rule {
 	r.description += fmt.Sprintf(" or %s must be greater than %v", path, threshold)
-	r.satisfied = r.satisfied || convertToFloat64(value) > convertToFloat64(threshold)
+	r.satisfied = r.satisfied || convertToFloat(path, value) > convertToFloat(path, threshold)
 	return r
 }
 
@@ -112,7 +115,7 @@ func (v *Validator) Gte(path string, value, threshold any) *Validator {
 func (v *Validator) GteR(path string, value, threshold any) *Rule {
 	r := &Rule{
 		description: fmt.Sprintf("%s must be greater than or equal to %v", path, threshold),
-		satisfied:   convertToFloat64(value) >= convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) >= convertToFloat(path, threshold),
 	}
 	v.rules = append(v.rules, r)
 	return r
@@ -122,7 +125,7 @@ func (v *Validator) GteR(path string, value, threshold any) *Rule {
 // Returns new condition in order to "or" conditions together.
 func (r *Rule) IfGte(path string, value, threshold any) *Condition {
 	r.condition = &Condition{
-		satisfied:   convertToFloat64(value) >= convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) >= convertToFloat(path, threshold),
 		description: fmt.Sprintf("%s is greater than or equal to %v", path, threshold),
 	}
 	return r.condition
@@ -131,14 +134,14 @@ func (r *Rule) IfGte(path string, value, threshold any) *Condition {
 // Condition also met if the value is greater than or equal to the threshold value.
 func (c *Condition) OrGte(path string, value, threshold any) *Condition {
 	c.description += fmt.Sprintf(" or %s is greater than or equal to %v", path, threshold)
-	c.satisfied = c.satisfied || convertToFloat64(value) >= convertToFloat64(threshold)
+	c.satisfied = c.satisfied || convertToFloat(path, value) >= convertToFloat(path, threshold)
 	return c
 }
 
 // Rule also satisfied if the value is greater than or equal to the threshold value.
 func (r *Rule) OrGte(path string, value, threshold any) *Rule {
 	r.description += fmt.Sprintf(" or %s must be greater than or equal to %v", path, threshold)
-	r.satisfied = r.satisfied || convertToFloat64(value) >= convertToFloat64(threshold)
+	r.satisfied = r.satisfied || convertToFloat(path, value) >= convertToFloat(path, threshold)
 	return r
 }
 
@@ -158,7 +161,7 @@ func (v *Validator) Lt(path string, value, threshold any) *Validator {
 func (v *Validator) LtR(path string, value, threshold any) *Rule {
 	r := &Rule{
 		description: fmt.Sprintf("%s must be less than %v", path, threshold),
-		satisfied:   convertToFloat64(value) < convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) < convertToFloat(path, threshold),
 	}
 	v.rules = append(v.rules, r)
 	return r
@@ -168,7 +171,7 @@ func (v *Validator) LtR(path string, value, threshold any) *Rule {
 // Returns new condition in order to "or" conditions together.
 func (r *Rule) IfLt(path string, value, threshold any) *Condition {
 	r.condition = &Condition{
-		satisfied:   convertToFloat64(value) < convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) < convertToFloat(path, threshold),
 		description: fmt.Sprintf("%s is less than %v", path, threshold),
 	}
 	return r.condition
@@ -177,14 +180,14 @@ func (r *Rule) IfLt(path string, value, threshold any) *Condition {
 // Condition also met if the value is less than the threshold value.
 func (c *Condition) OrLt(path string, value, threshold any) *Condition {
 	c.description += fmt.Sprintf(" or %s is less than %v", path, threshold)
-	c.satisfied = c.satisfied || convertToFloat64(value) < convertToFloat64(threshold)
+	c.satisfied = c.satisfied || convertToFloat(path, value) < convertToFloat(path, threshold)
 	return c
 }
 
 // Rule also satisfied if the value is less than the threshold value.
 func (r *Rule) OrLt(path string, value, threshold any) *Rule {
 	r.description += fmt.Sprintf(" or %s must be less than %v", path, threshold)
-	r.satisfied = r.satisfied || convertToFloat64(value) < convertToFloat64(threshold)
+	r.satisfied = r.satisfied || convertToFloat(path, value) < convertToFloat(path, threshold)
 	return r
 }
 
@@ -204,7 +207,7 @@ func (v *Validator) Lte(path string, value, threshold any) *Validator {
 func (v *Validator) LteR(path string, value, threshold any) *Rule {
 	r := &Rule{
 		description: fmt.Sprintf("%s must be less than or equal to %v", path, threshold),
-		satisfied:   convertToFloat64(value) <= convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) <= convertToFloat(path, threshold),
 	}
 	v.rules = append(v.rules, r)
 	return r
@@ -214,7 +217,7 @@ func (v *Validator) LteR(path string, value, threshold any) *Rule {
 // Returns new condition in order to "or" conditions together.
 func (r *Rule) IfLte(path string, value, threshold any) *Condition {
 	r.condition = &Condition{
-		satisfied:   convertToFloat64(value) <= convertToFloat64(threshold),
+		satisfied:   convertToFloat(path, value) <= convertToFloat(path, threshold),
 		description: fmt.Sprintf("%s is less than or equal to %v", path, threshold),
 	}
 	return r.condition
@@ -223,14 +226,14 @@ func (r *Rule) IfLte(path string, value, threshold any) *Condition {
 // Condition also met if the value is less than or equal to the threshold value.
 func (c *Condition) OrLte(path string, value, threshold any) *Condition {
 	c.description += fmt.Sprintf(" or %s is less than or equal to %v", path, threshold)
-	c.satisfied = c.satisfied || convertToFloat64(value) <= convertToFloat64(threshold)
+	c.satisfied = c.satisfied || convertToFloat(path, value) <= convertToFloat(path, threshold)
 	return c
 }
 
 // Rule also satisfied if the value is less than or equal to the threshold value.
 func (r *Rule) OrLte(path string, value, threshold any) *Rule {
 	r.description += fmt.Sprintf(" or %s must be less than or equal to %v", path, threshold)
-	r.satisfied = r.satisfied || convertToFloat64(value) <= convertToFloat64(threshold)
+	r.satisfied = r.satisfied || convertToFloat(path, value) <= convertToFloat(path, threshold)
 	return r
 }
 
@@ -429,7 +432,7 @@ func (r *Rule) OrNoneOf(path string, value any, options ...any) *Rule {
 }
 
 // Helper function to convert any type to float64
-func convertToFloat64(value any) float64 {
+func convertToFloat(path string, value any) float64 {
 	switch v := value.(type) {
 	case int:
 		return float64(v)
@@ -455,7 +458,15 @@ func convertToFloat64(value any) float64 {
 		return float64(v)
 	case float64:
 		return v
+	case string:
+		// get ascii value of all characters and sum them
+		sum := 0
+		for _, c := range v {
+			sum += int(c)
+		}
+		return float64(sum)
 	default:
+		alog.Warnf(context.Background(), "Failed to convert %s to float64. Using 0 for comparison.", path)
 		return 0
 	}
 }
