@@ -8,7 +8,7 @@ import (
 
 func Test_ValidateBasic(t *testing.T) {
 	v := validation.NewValidator()
-	v.String("name", "John").Populated()
+	v.String("name", "ohn").Populated().StartsWith("J")
 	err := v.Error()
 	if err != nil {
 		t.Error(err)
@@ -26,7 +26,7 @@ func Test_ValidateOr(t *testing.T) {
 
 func Test_ValidateIf(t *testing.T) {
 	v := validation.NewValidator()
-	v.If(v.Int32("age", 17).Gt(18)).Then(
+	v.If(v.Int32("age", 19).Gt(18)).Then(
 		v.String("name", "").Populated(),
 	)
 	err := v.Error()

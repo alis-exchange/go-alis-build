@@ -11,7 +11,7 @@ func updateRule(v *Validator, rule *Rule, path string, description string, satis
 	if rule == nil {
 		rule = &Rule{
 			satisfied:   satisfied,
-			description: path + " " + description,
+			description: path + " must " + description,
 		}
 		if v != nil {
 			v.rules = append(v.rules, rule)
@@ -24,7 +24,16 @@ func updateRule(v *Validator, rule *Rule, path string, description string, satis
 }
 
 func updateCondition(condition *Rule, path string, description string, satisfied bool) *Rule {
-	return updateRule(nil, condition, path, description, satisfied)
+	if condition == nil {
+		condition = &Rule{
+			satisfied:   satisfied,
+			description: path + " " + description,
+		}
+	} else {
+		condition.description += " and " + description
+		condition.satisfied = condition.satisfied && satisfied
+	}
+	return condition
 }
 
 type StringField struct {
@@ -55,7 +64,12 @@ func (s *StringField) condition() *Rule {
 }
 
 func (s *StringField) Populated() *StringField {
-	s.addRule("must be populated", "is populated", s.value != "")
+	s.addRule("be populated", "is populated", s.value != "")
+	return s
+}
+
+func (s *StringField) StartsWith(prefix string) *StringField {
+	s.addRule(fmt.Sprintf("start with %v", prefix), fmt.Sprintf("starts with %v", prefix), s.value == "" || s.value[:len(prefix)] == prefix)
 	return s
 }
 
@@ -91,6 +105,6 @@ func (n *NumberField[T]) condition() *Rule {
 }
 
 func (n *NumberField[T]) Gt(expected T) *NumberField[T] {
-	n.addRule(fmt.Sprintf("must be greater than %v", expected), fmt.Sprintf("is greater than %v", expected), n.value > expected)
+	n.addRule(fmt.Sprintf("be greater than %v", expected), fmt.Sprintf("is greater than %v", expected), n.value > expected)
 	return n
 }
