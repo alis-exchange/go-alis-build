@@ -96,6 +96,9 @@ func WithCallbackFn(fn func(ctx context.Context)) OperationOption {
 
 /*
 NewOperation creates a new Operation object used to simplify the management of the underlying LRO.
+Note: The default bahvaiour of this function is to create a new underlying LRO.
+However, If the provided ctx contains a value for the x-alis-operation-id key, the function instantiates an Operation to manage the LRO identified by the x-alis-operation-id.
+The same applies if the WithExistingOperation option is used.
 
 Example (non-resumable):
 
