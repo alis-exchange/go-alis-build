@@ -16,26 +16,31 @@ type String struct {
 	standard[string]
 }
 
+// Adds a rule to the parent validator asserting that the string value is populated.
 func (s *String) IsPopulated() *String {
 	s.add("be populated", "is populated", s.value != "")
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is empty.
 func (s *String) IsEmpty() *String {
 	s.add("be empty", "is empty", s.value == "")
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is equal to the given value.
 func (s *String) Eq(eq string) *String {
 	s.add("be equal to %v", "is equal to %v", s.value == eq, eq)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is not equal to the given value.
 func (s *String) NotEq(neq string) *String {
 	s.add("not be equal to %v", "is not equal to %v", s.value != neq, neq)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is one of the given values.
 func (s *String) IsOneof(values ...string) *String {
 	satisfied := false
 	for _, v := range values {
@@ -48,6 +53,7 @@ func (s *String) IsOneof(values ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is none of the given values.
 func (s *String) IsNoneof(values ...string) *String {
 	satisfied := true
 	for _, v := range values {
@@ -60,11 +66,13 @@ func (s *String) IsNoneof(values ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value starts with the given prefix.
 func (s *String) StartsWith(prefix string) *String {
 	s.add("start with '%v'", "starts with '%v'", strings.HasPrefix(s.value, prefix), prefix)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value starts with one of the given prefixes.
 func (s *String) StartsWithOneof(prefixes ...string) *String {
 	satisfied := false
 	for _, prefix := range prefixes {
@@ -77,6 +85,7 @@ func (s *String) StartsWithOneof(prefixes ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value starts with none of the given prefixes.
 func (s *String) HasNoneofPrefixes(prefixes ...string) *String {
 	satisfied := true
 	for _, prefix := range prefixes {
@@ -89,46 +98,55 @@ func (s *String) HasNoneofPrefixes(prefixes ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value ends with the given suffix.
 func (s *String) EndsWith(suffix string) *String {
 	s.add("end with %v", "ends with %v", strings.HasSuffix(s.value, suffix), suffix)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value contains the given substring.
 func (s *String) Contains(substr string) *String {
 	s.add("contain %v", "contains %v", strings.Contains(s.value, substr), substr)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value does not contain the given substring.
 func (s *String) NotContains(substr string) *String {
 	s.add("not contain %v", "does not contain %v", !strings.Contains(s.value, substr), substr)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value has a length equal to the given length.
 func (s *String) LenEq(length int) *String {
 	s.add("have length equal to %v", "has length equal to %v", len(s.value) == length, length)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value has a length greater than the given length.
 func (s *String) LenGt(length int) *String {
 	s.add("have length greater than %v", "has length greater than %v", len(s.value) > length, length)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value has a length greater than or equal to the given length.
 func (s *String) LenGte(length int) *String {
 	s.add("have length greater than or equal to %v", "has length greater than or equal to %v", len(s.value) >= length, length)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value has a length less than the given length.
 func (s *String) LenLt(length int) *String {
 	s.add("have length less than %v", "has length less than %v", len(s.value) < length, length)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value has a length less than or equal to the given length.
 func (s *String) LenLte(length int) *String {
 	s.add("have length less than or equal to %v", "has length less than or equal to %v", len(s.value) <= length, length)
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value matches the given pattern.
 func (s *String) Match(pattern string) *String {
 	satisfied, err := regexp.MatchString(pattern, s.value)
 	if err != nil {
@@ -138,6 +156,7 @@ func (s *String) Match(pattern string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value matches one of the given patterns.
 func (s *String) MatchesOneof(patterns ...string) *String {
 	satisfied := false
 	for _, pattern := range patterns {
@@ -150,6 +169,7 @@ func (s *String) MatchesOneof(patterns ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value matches none of the given patterns.
 func (s *String) MatchesNoneof(patterns ...string) *String {
 	satisfied := true
 	for _, pattern := range patterns {
@@ -162,6 +182,7 @@ func (s *String) MatchesNoneof(patterns ...string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value does not match the given pattern.
 func (s *String) NotMatch(pattern string) *String {
 	satisfied, err := regexp.MatchString(pattern, s.value)
 	if err != nil {
@@ -171,6 +192,7 @@ func (s *String) NotMatch(pattern string) *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is a valid email.
 func (s *String) IsEmail() *String {
 	satisfied, err := regexp.MatchString(emailRgx, s.value)
 	if err != nil {
@@ -180,6 +202,7 @@ func (s *String) IsEmail() *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is a valid domain.
 func (s *String) IsDomain() *String {
 	satisfied, err := regexp.MatchString(domainRgx, s.value)
 	if err != nil {
@@ -189,6 +212,7 @@ func (s *String) IsDomain() *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is a valid root domain.
 func (s *String) IsRootDomain() *String {
 	satisfied, err := regexp.MatchString(rootDomainRgx, s.value)
 	if err != nil {
@@ -198,6 +222,7 @@ func (s *String) IsRootDomain() *String {
 	return s
 }
 
+// Adds a rule to the parent validator asserting that the string value is a valid sub domain.
 func (s *String) IsSubDomain() *String {
 	satisfied, err := regexp.MatchString(subDomainRgx, s.value)
 	if err != nil {

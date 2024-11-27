@@ -5,48 +5,64 @@ import (
 	"strings"
 )
 
+// Provides rules applicable to list values.
 type List[T any] struct {
 	standard[[]T]
 }
 
+// Returns a new List[T] instance.
 func newList[T any](path string, value []T) List[T] {
 	return List[T]{standard: newStandard(path, value)}
 }
 
+// Adds a rule to the parent validator asserting that the list is populated.
 func (l *List[T]) IsPopulated() *List[T] {
 	l.add("be populated", "is populated", len(l.value) > 0)
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the list is empty.
+func (l *List[T]) IsEmpty() *List[T] {
+	l.add("be empty", "is empty", len(l.value) == 0)
+	return l
+}
+
+// Adds a rule to the parent validator asserting that the length of the list is equal to the given length.
 func (l *List[T]) LengthEq(eq int) *List[T] {
 	l.add("have a length equal to %v", "has a length equal to %v", len(l.value) == eq, eq)
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the length of the list is not equal to the given length.
 func (l *List[T]) LengthGt(min int) *List[T] {
 	l.add("have a length greater than %v", "has a length greater than %v", len(l.value) > min, min)
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the length of the list is greater than or equal to the given length.
 func (l *List[T]) LengthGte(min int) *List[T] {
 	l.add("have a length greater than or equal to %v", "has a length greater than or equal to %v", len(l.value) >= min, min)
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the length of the list is less than the given length.
 func (l *List[T]) LengthLt(max int) *List[T] {
 	l.add("have a length less than %v", "has a length less than %v", len(l.value) < max, max)
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the length of the list is less than or equal to the given length.
 func (l *List[T]) LengthLte(max int) *List[T] {
 	l.add("have a length less than or equal to %v", "has a length less than or equal to %v", len(l.value) <= max, max)
 	return l
 }
 
+// Provides rules applicable to list of string values.
 type StringList struct {
 	List[string]
 }
 
+// Adds a rule to the parent validator asserting that each string in the list is unique.
 func (l *StringList) EachUnique() *StringList {
 	unique := make(map[string]bool)
 	for _, v := range l.value {
@@ -57,6 +73,7 @@ func (l *StringList) EachUnique() *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string in the list is populated.
 func (l *StringList) EachPopulated() *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -69,6 +86,7 @@ func (l *StringList) EachPopulated() *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string matches the given pattern.
 func (l *StringList) EachMatches(pattern string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -81,6 +99,7 @@ func (l *StringList) EachMatches(pattern string) *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string starts with the given prefix.
 func (l *StringList) EachStartsWith(prefix string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -93,6 +112,7 @@ func (l *StringList) EachStartsWith(prefix string) *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string ends with the given suffix.
 func (l *StringList) EachEndsWith(suffix string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -105,6 +125,7 @@ func (l *StringList) EachEndsWith(suffix string) *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string contains the given substring.
 func (l *StringList) EachContains(substr string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -117,12 +138,14 @@ func (l *StringList) EachContains(substr string) *StringList {
 	return l
 }
 
+// Provides rules applicable to list of number values.
 type NumberList[T interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~float32 | ~float64
 }] struct {
 	List[T]
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is unique.
 func (l *NumberList[T]) EachUnique() *NumberList[T] {
 	unique := make(map[T]bool)
 	for _, v := range l.value {
@@ -133,6 +156,7 @@ func (l *NumberList[T]) EachUnique() *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the list is in ascending order.
 func (l *NumberList[T]) IsAscending() *NumberList[T] {
 	satisfied := true
 	for i := 1; i < len(l.value); i++ {
@@ -145,6 +169,7 @@ func (l *NumberList[T]) IsAscending() *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that the list is in descending order.
 func (l *NumberList[T]) IsDescending() *NumberList[T] {
 	satisfied := true
 	for i := 1; i < len(l.value); i++ {
@@ -157,6 +182,7 @@ func (l *NumberList[T]) IsDescending() *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is populated.
 func (l *NumberList[T]) EachPopulated() *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -169,6 +195,7 @@ func (l *NumberList[T]) EachPopulated() *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is equal to the given number.
 func (l *NumberList[T]) EachEq(eq T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -181,6 +208,7 @@ func (l *NumberList[T]) EachEq(eq T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is not equal to the given number.
 func (l *NumberList[T]) EachNeq(neq T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -193,6 +221,7 @@ func (l *NumberList[T]) EachNeq(neq T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is one of the given values.
 func (l *NumberList[T]) EachOneof(values ...T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -212,6 +241,7 @@ func (l *NumberList[T]) EachOneof(values ...T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is none of the given values.
 func (l *NumberList[T]) EachNoneof(values ...T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -226,6 +256,7 @@ func (l *NumberList[T]) EachNoneof(values ...T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is greater than the given number.
 func (l *NumberList[T]) EachGt(min T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -238,6 +269,7 @@ func (l *NumberList[T]) EachGt(min T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is greater than or equal to the given number.
 func (l *NumberList[T]) EachGte(min T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -250,6 +282,7 @@ func (l *NumberList[T]) EachGte(min T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is less than the given number.
 func (l *NumberList[T]) EachLt(max T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -262,6 +295,7 @@ func (l *NumberList[T]) EachLt(max T) *NumberList[T] {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each number in the list is less than or equal to the given number.
 func (l *NumberList[T]) EachLte(max T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
