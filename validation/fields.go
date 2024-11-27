@@ -1,110 +1,190 @@
 package validation
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
-type Field interface {
-	rule() *Rule
-	condition() *Rule
+type Rule interface {
+	Rule() string
+	Satisfied() bool
+	Fields() []string
+	wrap()
+	wrapped() bool
 }
 
-func updateRule(v *Validator, rule *Rule, path string, description string, satisfied bool) *Rule {
-	if rule == nil {
-		rule = &Rule{
-			satisfied:   satisfied,
-			description: path + " must " + description,
-		}
-		if v != nil {
-			v.rules = append(v.rules, rule)
-		}
-	} else {
-		rule.description += " and " + description
-		rule.satisfied = rule.satisfied && satisfied
+type Condition interface {
+	Condition() string
+	Satisfied() bool
+	Fields() []string
+	wrap()
+}
+
+type CustomRule struct {
+	rule          string
+	condition     string
+	satisfiedFunc func() bool
+	paths         []string
+	isWrapped     bool
+}
+
+func customRule(fieldPaths []string, description string, satisfiedFunc func() bool) *CustomRule {
+	return &CustomRule{
+		paths:         fieldPaths,
+		rule:          description,
+		satisfiedFunc: satisfiedFunc,
 	}
-	return rule
 }
 
-func updateCondition(condition *Rule, path string, description string, satisfied bool) *Rule {
-	if condition == nil {
-		condition = &Rule{
-			satisfied:   satisfied,
-			description: path + " " + description,
-		}
+func (c *CustomRule) Rule() string {
+	return c.rule
+}
+
+func (c *CustomRule) Condition() string {
+	return c.condition
+}
+
+func (c *CustomRule) Satisfied() bool {
+	return c.satisfiedFunc()
+}
+
+func (c *CustomRule) Fields() []string {
+	return c.paths
+}
+
+func (c *CustomRule) wrap() {
+	c.isWrapped = true
+}
+
+func (c *CustomRule) wrapped() bool {
+	return c.isWrapped
+}
+
+type standard[T any] struct {
+	rules      []string
+	conditions []string
+	satisfied  bool
+	path       string
+	value      T
+	isWrapped  bool
+}
+
+func (s *standard[T]) Rule() string {
+	if len(s.rules) == 0 {
+		return fmt.Sprintf("%s must be a %T", s.path, s.value)
 	} else {
-		condition.description += " and " + description
-		condition.satisfied = condition.satisfied && satisfied
+		return fmt.Sprintf("%s must %s", s.path, strings.Join(s.rules, " and "))
 	}
-	return condition
 }
 
-type StringField struct {
-	v     *Validator
-	path  string
-	value string
-	r     *Rule
-	c     *Rule
+func (s *standard[T]) Condition() string {
+	if len(s.conditions) == 0 {
+		return fmt.Sprintf("%s is a %T", s.path, s.value)
+	} else {
+		return fmt.Sprintf("%s %s", s.path, strings.Join(s.conditions, " and "))
+	}
 }
 
-func stringField(v *Validator, path string, value string) *StringField {
-	return &StringField{v: v, path: path, value: value}
+func (s *standard[T]) Satisfied() bool {
+	return s.satisfied
 }
 
-func (s *StringField) addRule(rule string, condition string, satisfied bool) {
-	s.r = updateRule(s.v, s.r, s.path, rule, satisfied)
-	s.c = updateCondition(s.c, s.path, condition, satisfied)
+func (s *standard[T]) Fields() []string {
+	return []string{s.path}
 }
 
-func (s *StringField) rule() *Rule {
-	s.r.wrapped = true
-	return s.r
+func (s *standard[T]) wrap() {
+	s.isWrapped = true
 }
 
-func (s *StringField) condition() *Rule {
-	s.r.wrapped = true
-	return s.c
+func (s *standard[T]) wrapped() bool {
+	return s.isWrapped
 }
 
-func (s *StringField) Populated() *StringField {
-	s.addRule("be populated", "is populated", s.value != "")
+func newStandard[T any](path string, value T) standard[T] {
+	return standard[T]{path: path, value: value, satisfied: true}
+}
+
+func (s *standard[T]) add(rule string, condition string, satisfied bool, args ...interface{}) {
+	s.rules = append(s.rules, fmt.Sprintf(rule, args...))
+	s.conditions = append(s.conditions, fmt.Sprintf(condition, args...))
+	s.satisfied = s.satisfied && satisfied
+}
+
+type String struct {
+	standard[string]
+}
+
+func newString(path string, value string) *String {
+	return &String{newStandard(path, value)}
+}
+
+// func (s *String) Rule() string {
+// 	if len(s.rules) == 0 {
+// 		return fmt.Sprintf("%s must be a string", s.path)
+// 	} else {
+// 		return fmt.Sprintf("%s must %s", s.path, strings.Join(s.rules, " and "))
+// 	}
+// }
+
+// func (s *String) Condition() string {
+// 	if len(s.conditions) == 0 {
+// 		return fmt.Sprintf("%s is a string", s.path)
+// 	} else {
+// 		return fmt.Sprintf("%s %s", s.path, strings.Join(s.conditions, " and "))
+// 	}
+// }
+
+// func (s *String) Satisfied() bool {
+// 	return s.satisfied
+// }
+
+// func (s *String) Fields() []string {
+// 	return []string{s.path}
+// }
+
+// func (s *String) wrap() {
+// 	s.isWrapped = true
+// }
+
+// func (s *String) wrapped() bool {
+// 	return s.isWrapped
+// }
+
+func (s *String) Populated() *String {
+	s.add("be populated", "is populated", s.value != "")
 	return s
 }
 
-func (s *StringField) StartsWith(prefix string) *StringField {
-	s.addRule(fmt.Sprintf("start with %v", prefix), fmt.Sprintf("starts with %v", prefix), s.value == "" || s.value[:len(prefix)] == prefix)
-	return s
-}
+// func (s *StringField) StartsWith(prefix string) *StringField {
+// 	s.addRule(fmt.Sprintf("start with %v", prefix), fmt.Sprintf("starts with %v", prefix), s.value == "" || s.value[:len(prefix)] == prefix)
+// 	return s
+// }
 
-type NumberField[T interface {
+type Number[T interface {
 	~int | ~int32 | ~int64 | ~float32 | ~float64
 }] struct {
-	v     *Validator
-	path  string
-	value T
-	r     *Rule
-	c     *Rule
+	standard[T]
 }
 
-func numberField[T interface {
+func newNumber[T interface {
 	~int | ~int32 | ~int64 | ~float32 | ~float64
-}](v *Validator, path string, value T) *NumberField[T] {
-	return &NumberField[T]{v: v, path: path, value: value}
+}](path string, value T) *Number[T] {
+	return &Number[T]{newStandard(path, value)}
 }
 
-func (n *NumberField[T]) addRule(rule string, condition string, satisfied bool) {
-	n.r = updateRule(n.v, n.r, n.path, rule, satisfied)
-	n.c = updateCondition(n.c, n.path, condition, satisfied)
-}
-
-func (n *NumberField[T]) rule() *Rule {
-	n.r.wrapped = true
-	return n.r
-}
-
-func (n *NumberField[T]) condition() *Rule {
-	n.r.wrapped = true
-	return n.c
-}
-
-func (n *NumberField[T]) Gt(expected T) *NumberField[T] {
-	n.addRule(fmt.Sprintf("be greater than %v", expected), fmt.Sprintf("is greater than %v", expected), n.value > expected)
+func (n *Number[T]) Gt(min T) *Number[T] {
+	n.add("be greater than %v", "is greater than %v", n.value > min, min)
 	return n
 }
+
+// func numberField[T interface {
+// 	~int | ~int32 | ~int64 | ~float32 | ~float64
+// }](v *Validator, path string, value T) *NumberField[T] {
+// 	return &NumberField[T]{v: v, path: path, value: value}
+// }
+
+// func (n *NumberField[T]) Gt(expected T) *NumberField[T] {
+// 	// n.addRule(fmt.Sprintf("be greater than %v", expected), fmt.Sprintf("is greater than %v", expected), n.value > expected)
+// 	return n
+// }

@@ -5,82 +5,26 @@ import (
 	"strings"
 )
 
-type Rule struct {
-	description   string
-	satisfiedFunc func() bool
-	satisfied     bool
-	condition     *Condition
-	wrapped       bool
-}
-
-type Condition struct {
-	v           *Validator
-	description string
-	satisfied   bool
-}
-
-func (c *Condition) Then(field Field, fields ...Field) {
-	rule := &Rule{satisfied: field.rule().satisfied, description: field.rule().description}
-	for _, f := range fields {
-		rule.satisfied = rule.satisfied && f.rule().satisfied
-		rule.description += " and " + f.rule().description
-	}
-	rule.condition = c
-	c.v.rules = append(c.v.rules, rule)
-}
-
-// Returns whether the rule is satisfied
-func (r *Rule) Satisfied() bool {
-	// if rule was combined/wrapped it would have been made nil, so as not to be evaluated
-	if r == nil || r.wrapped {
-		return true
-	}
-
-	// rule is satisfied if the condition for its application is not met
-	if r.condition != nil && !r.condition.satisfied {
-		return true
-	}
-
-	// evaluate the rule if it hasn't been evaluated yet
-	if r.satisfiedFunc != nil {
-		r.satisfied = r.satisfiedFunc()
-		r.satisfiedFunc = nil
-	}
-	return r.satisfied
-}
-
-func (r *Rule) Description() string {
-	if r == nil || r.wrapped {
-		return ""
-	}
-
-	descr := r.description
-	if r.condition != nil {
-		descr = "if " + r.condition.description + ", " + descr
-	}
-	return descr
-}
-
 type Validator struct {
-	rules []*Rule
+	rules []Rule
 }
 
 func NewValidator() *Validator {
 	return &Validator{}
 }
 
-func (v *Validator) Rules() []*Rule {
-	finalRules := []*Rule{}
+func (v *Validator) Rules() []Rule {
+	finalRules := []Rule{}
 	for _, r := range v.rules {
-		if r != nil && !r.wrapped {
+		if r != nil && !r.wrapped() {
 			finalRules = append(finalRules, r)
 		}
 	}
 	return finalRules
 }
 
-func (v *Validator) BrokenRules() []*Rule {
-	broken := []*Rule{}
+func (v *Validator) BrokenRules() []Rule {
+	broken := []Rule{}
 	for _, r := range v.Rules() {
 		if !r.Satisfied() {
 			broken = append(broken, r)
@@ -93,7 +37,7 @@ func (v *Validator) Error() error {
 	broken := v.BrokenRules()
 	errDescriptions := []string{}
 	for _, r := range broken {
-		errDescriptions = append(errDescriptions, r.Description())
+		errDescriptions = append(errDescriptions, r.Rule())
 	}
 	if len(errDescriptions) == 0 {
 		return nil
@@ -101,40 +45,108 @@ func (v *Validator) Error() error {
 	return errors.New(strings.Join(errDescriptions, "; "))
 }
 
-func (v *Validator) String(path, value string) *StringField {
-	return stringField(v, path, value)
-}
-
-func (v *Validator) Int32(path string, value int32) *NumberField[int32] {
-	return numberField(v, path, value)
-}
-
-func (v *Validator) Int64(path string, value int64) *NumberField[int64] {
-	return numberField(v, path, value)
-}
-
-func (v *Validator) Float32(path string, value float32) *NumberField[float32] {
-	return numberField(v, path, value)
-}
-
-func (v *Validator) Float64(path string, value float64) *NumberField[float64] {
-	return numberField(v, path, value)
-}
-
-func (v *Validator) If(field Field, fields ...Field) *Condition {
-	condition := &Condition{v: v, description: field.condition().description, satisfied: field.condition().Satisfied()}
-	for _, f := range fields {
-		condition.satisfied = condition.satisfied && f.condition().Satisfied()
-		condition.description += " and " + f.condition().description
+func (v *Validator) Or(rules ...Rule) {
+	// stop if rules are nil
+	if len(rules) == 0 {
+		return
 	}
-	return condition
+	// wrap all the provided rules
+	for _, r := range rules {
+		r.wrap()
+	}
+
+	// setup paths, descriptions, and satisfied
+	paths := []string{}
+	ruleDescriptions := []string{}
+	satisfied := false
+	for _, r := range rules {
+		paths = append(paths, r.Fields()...)
+		ruleDescriptions = append(ruleDescriptions, r.Rule())
+		satisfied = satisfied || r.Satisfied()
+	}
+	description := "either " + strings.Join(ruleDescriptions, " or ")
+
+	// add the rule
+	v.Custom(paths, description, satisfied)
 }
 
-func (v *Validator) Or(field Field, fields ...Field) {
-	rule := &Rule{satisfied: field.rule().satisfied, description: field.rule().description}
-	for _, f := range fields {
-		rule.satisfied = rule.satisfied || f.rule().satisfied
-		rule.description += " or " + f.rule().description
+func (v *Validator) If(conditions ...Condition) *ConditionalApplier {
+	if len(conditions) == 0 {
+		return nil
 	}
+	// wrap all the provided conditions
+	for _, c := range conditions {
+		c.wrap()
+	}
+
+	// setup description and satisfied
+	descriptions := []string{}
+	satisfied := true
+	for _, c := range conditions {
+		descriptions = append(descriptions, c.Condition())
+		satisfied = satisfied && c.Satisfied()
+	}
+	description := strings.Join(descriptions, " and ")
+
+	// return the conditional applier
+	return &ConditionalApplier{v: v, description: description, satisfied: satisfied}
+}
+
+type ConditionalApplier struct {
+	v           *Validator
+	description string
+	satisfied   bool
+}
+
+func (c *ConditionalApplier) Then(rules ...Rule) {
+	// wrap all the provided rules
+	for _, r := range rules {
+		r.wrap()
+	}
+
+	// stop if c or rules are nil
+	if c == nil {
+		return
+	}
+	if len(rules) == 0 {
+		return
+	}
+
+	// setup paths, descriptions, and satisfied
+	paths := []string{}
+	ruleDescriptions := []string{}
+	satisfied := !c.satisfied
+	for _, r := range rules {
+		paths = append(paths, r.Fields()...)
+		ruleDescriptions = append(ruleDescriptions, r.Rule())
+		satisfied = satisfied && r.Satisfied()
+	}
+	description := "if " + c.description + ", " + strings.Join(ruleDescriptions, " and ")
+
+	// add the rule
+	c.v.Custom(paths, description, satisfied)
+}
+
+func (v *Validator) Custom(fieldPaths []string, description string, satisfied bool) *CustomRule {
+	rule := customRule(fieldPaths, description, func() bool { return satisfied })
 	v.rules = append(v.rules, rule)
+	return rule
+}
+
+func (v *Validator) CustomEvaluated(fieldPaths []string, description string, satisfiedFunc func() bool) *CustomRule {
+	rule := customRule(fieldPaths, description, satisfiedFunc)
+	v.rules = append(v.rules, rule)
+	return rule
+}
+
+func (v *Validator) String(path, value string) *String {
+	r := newString(path, value)
+	v.rules = append(v.rules, r)
+	return r
+}
+
+func (v *Validator) Int32(path string, value int32) *Number[int32] {
+	r := newNumber(path, value)
+	v.rules = append(v.rules, r)
+	return r
 }
