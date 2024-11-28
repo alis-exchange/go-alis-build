@@ -71,7 +71,9 @@ Leave databaseRole empty if you are not using fine grained roles on the database
 */
 func NewDbClient(googleProject, spannerInstance, databaseName, databaseRole string) (*DbClient, error) {
 	ctx := context.Background()
-	clientConfig := spanner.ClientConfig{}
+	clientConfig := spanner.ClientConfig{
+		DisableNativeMetrics: true,
+	}
 	if databaseRole != "" {
 		clientConfig.DatabaseRole = databaseRole
 	}

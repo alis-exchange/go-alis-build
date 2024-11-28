@@ -68,7 +68,9 @@ NewClient creates a new Client instance with the provided Google Cloud Spanner c
 Leave databaseRole empty if you are not using fine grained roles on the database.
 */
 func NewClient(ctx context.Context, googleProject, spannerInstance, databaseName, databaseRole string) (*Client, error) {
-	clientConfig := spanner.ClientConfig{}
+	clientConfig := spanner.ClientConfig{
+		DisableNativeMetrics: true,
+	}
 	if databaseRole != "" {
 		clientConfig.DatabaseRole = databaseRole
 	}
