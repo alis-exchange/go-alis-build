@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Can be embedded in standard types to provide common methods needed to satisfy the Rule and Condition interfaces.
 type standard[T any] struct {
 	rules      []string
 	conditions []string
@@ -46,6 +47,7 @@ func (s *standard[T]) wrapped() bool {
 	return s.isWrapped
 }
 
+// Returns a standard instance, which can be embedded in standard types to provide common methods needed to satisfy the Rule and Condition interfaces.
 func newStandard[T any](path string, value T) standard[T] {
 	return standard[T]{path: path, value: value, satisfied: true}
 }

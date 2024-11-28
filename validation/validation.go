@@ -104,7 +104,7 @@ func (v *Validator) Or(rules ...Rule) {
 	description := "either " + strings.Join(ruleDescriptions, " or ")
 
 	// add the rule
-	v.Custom(paths, description, satisfied)
+	v.Custom(description, satisfied, paths...)
 }
 
 // Creates a ConditionalApplier that applies rules if all conditions are satisfied.
@@ -158,16 +158,18 @@ func (c *ConditionalApplier) Then(rules ...Rule) {
 	// setup paths, descriptions, and satisfied
 	paths := []string{}
 	ruleDescriptions := []string{}
-	satisfied := !c.satisfied
+	satisfied := true
 	for _, r := range rules {
 		paths = append(paths, r.Fields()...)
 		ruleDescriptions = append(ruleDescriptions, r.Rule())
-		satisfied = satisfied && r.Satisfied()
+		if c.satisfied {
+			satisfied = satisfied && r.Satisfied()
+		}
 	}
 	description := "if " + c.description + ", " + strings.Join(ruleDescriptions, " and ")
 
 	// add the rule
-	c.v.Custom(paths, description, satisfied)
+	c.v.Custom(description, satisfied, paths...)
 }
 
 // Defines a custom validation rule.
@@ -215,17 +217,17 @@ func (c *CustomRule) wrapped() bool {
 }
 
 // Adds a custom rule with a static satisfaction status.
-func (v *Validator) Custom(fieldPaths []string, description string, satisfied bool) *CustomRule {
-	return v.CustomEvaluated(fieldPaths, description, func() bool { return satisfied })
+func (v *Validator) Custom(description string, satisfied bool, paths ...string) *CustomRule {
+	return v.CustomEvaluated(description, func() bool { return satisfied }, paths...)
 }
 
 // Adds a custom rule with a dynamic satisfaction status.
-func (v *Validator) CustomEvaluated(fieldPaths []string, description string, satisfiedFunc func() bool) *CustomRule {
+func (v *Validator) CustomEvaluated(description string, satisfiedFunc func() bool, paths ...string) *CustomRule {
 	rule := &CustomRule{
 		rule:          description,
 		cond:          description,
 		satisfiedFunc: satisfiedFunc,
-		paths:         fieldPaths,
+		paths:         paths,
 	}
 	v.rules = append(v.rules, rule)
 	return rule
@@ -443,10 +445,10 @@ func (v *Validator) Duration(path string, value *durationpb.Duration) *Duration 
 
 // Returns a temporary object for creating rules on a message field.
 func (v *Validator) MessageIsPopulated(path string, isPopulated bool) *CustomRule {
-	return v.Custom([]string{path}, path+" must be populated", isPopulated)
+	return v.Custom(path+" must be populated", isPopulated, path)
 }
 
 // Returns a temporary object for creating rules on a message field.
 func (v *Validator) EachMessagePopulated(path string, isPopulated bool) *CustomRule {
-	return v.Custom([]string{path}, path+" must have all values populated", isPopulated)
+	return v.Custom(path+" must have all values populated", isPopulated, path)
 }

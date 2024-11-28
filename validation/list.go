@@ -16,42 +16,49 @@ func newList[T any](path string, value []T) List[T] {
 }
 
 // Adds a rule to the parent validator asserting that the list is populated.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) IsPopulated() *List[T] {
 	l.add("be populated", "is populated", len(l.value) > 0)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the list is empty.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) IsEmpty() *List[T] {
 	l.add("be empty", "is empty", len(l.value) == 0)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the length of the list is equal to the given length.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) LengthEq(eq int) *List[T] {
 	l.add("have a length equal to %v", "has a length equal to %v", len(l.value) == eq, eq)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the length of the list is not equal to the given length.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) LengthGt(min int) *List[T] {
 	l.add("have a length greater than %v", "has a length greater than %v", len(l.value) > min, min)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the length of the list is greater than or equal to the given length.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) LengthGte(min int) *List[T] {
 	l.add("have a length greater than or equal to %v", "has a length greater than or equal to %v", len(l.value) >= min, min)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the length of the list is less than the given length.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) LengthLt(max int) *List[T] {
 	l.add("have a length less than %v", "has a length less than %v", len(l.value) < max, max)
 	return l
 }
 
 // Adds a rule to the parent validator asserting that the length of the list is less than or equal to the given length.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *List[T]) LengthLte(max int) *List[T] {
 	l.add("have a length less than or equal to %v", "has a length less than or equal to %v", len(l.value) <= max, max)
 	return l
@@ -63,6 +70,7 @@ type StringList struct {
 }
 
 // Adds a rule to the parent validator asserting that each string in the list is unique.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachUnique() *StringList {
 	unique := make(map[string]bool)
 	for _, v := range l.value {
@@ -74,6 +82,7 @@ func (l *StringList) EachUnique() *StringList {
 }
 
 // Adds a rule to the parent validator asserting that each string in the list is populated.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachPopulated() *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -87,6 +96,7 @@ func (l *StringList) EachPopulated() *StringList {
 }
 
 // Adds a rule to the parent validator asserting that each string matches the given pattern.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachMatches(pattern string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -100,6 +110,7 @@ func (l *StringList) EachMatches(pattern string) *StringList {
 }
 
 // Adds a rule to the parent validator asserting that each string starts with the given prefix.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachStartsWith(prefix string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -113,6 +124,7 @@ func (l *StringList) EachStartsWith(prefix string) *StringList {
 }
 
 // Adds a rule to the parent validator asserting that each string ends with the given suffix.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachEndsWith(suffix string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -126,6 +138,7 @@ func (l *StringList) EachEndsWith(suffix string) *StringList {
 }
 
 // Adds a rule to the parent validator asserting that each string contains the given substring.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachContains(substr string) *StringList {
 	satisfied := true
 	for _, v := range l.value {
@@ -146,6 +159,7 @@ type NumberList[T interface {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is unique.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachUnique() *NumberList[T] {
 	unique := make(map[T]bool)
 	for _, v := range l.value {
@@ -157,6 +171,7 @@ func (l *NumberList[T]) EachUnique() *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that the list is in ascending order.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) IsAscending() *NumberList[T] {
 	satisfied := true
 	for i := 1; i < len(l.value); i++ {
@@ -170,6 +185,7 @@ func (l *NumberList[T]) IsAscending() *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that the list is in descending order.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) IsDescending() *NumberList[T] {
 	satisfied := true
 	for i := 1; i < len(l.value); i++ {
@@ -183,6 +199,7 @@ func (l *NumberList[T]) IsDescending() *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is populated.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachPopulated() *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -196,6 +213,7 @@ func (l *NumberList[T]) EachPopulated() *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is equal to the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachEq(eq T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -209,6 +227,7 @@ func (l *NumberList[T]) EachEq(eq T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is not equal to the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachNeq(neq T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -222,6 +241,7 @@ func (l *NumberList[T]) EachNeq(neq T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is one of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachOneof(values ...T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -242,6 +262,7 @@ func (l *NumberList[T]) EachOneof(values ...T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is none of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachNoneof(values ...T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -257,6 +278,7 @@ func (l *NumberList[T]) EachNoneof(values ...T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is greater than the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachGt(min T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -270,6 +292,7 @@ func (l *NumberList[T]) EachGt(min T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is greater than or equal to the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachGte(min T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -283,6 +306,7 @@ func (l *NumberList[T]) EachGte(min T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is less than the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachLt(max T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
@@ -296,6 +320,7 @@ func (l *NumberList[T]) EachLt(max T) *NumberList[T] {
 }
 
 // Adds a rule to the parent validator asserting that each number in the list is less than or equal to the given number.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *NumberList[T]) EachLte(max T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {

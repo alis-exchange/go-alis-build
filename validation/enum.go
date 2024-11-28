@@ -8,24 +8,28 @@ type Enum struct {
 }
 
 // Adds a rule to the parent validator asserting that the enum value is populated.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (e *Enum) Is(value protoreflect.Enum) *Enum {
 	e.add("be %v", "is %v", e.value == value, value)
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is populated.
-func (e *Enum) IsPopulated() *Enum {
-	e.add("be populated", "is populated", e.value.Number() != 0)
+// Adds a rule to the parent validator asserting that the enum value is specified.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (e *Enum) IsSpecified() *Enum {
+	e.add("be specified", "is specified", e.value.Number() != 0)
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is not populated.
-func (e *Enum) IsNotPopulated() *Enum {
-	e.add("not be populated", "is not populated", e.value.Number() == 0)
+// Adds a rule to the parent validator asserting that the enum value is not specified.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (e *Enum) IsUnspecified() *Enum {
+	e.add("not be specified", "is not specified", e.value.Number() == 0)
 	return e
 }
 
 // Adds a rule to the parent validator asserting that the enum value is one of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (e *Enum) IsOneof(values ...protoreflect.Enum) *Enum {
 	satisfied := false
 	for _, v := range values {
@@ -39,6 +43,7 @@ func (e *Enum) IsOneof(values ...protoreflect.Enum) *Enum {
 }
 
 // Adds a rule to the parent validator asserting that the enum value is not one of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (e *Enum) IsNoneof(values ...protoreflect.Enum) *Enum {
 	satisfied := true
 	for _, v := range values {

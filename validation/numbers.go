@@ -8,24 +8,28 @@ type Number[T interface {
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is not zero.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) IsPopulated() *Number[T] {
 	n.add("be populated", "is populated", n.value != 0)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is equal to the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Eq(eq T) *Number[T] {
 	n.add("be equal to %v", "is equal to %v", n.value == eq, eq)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is not equal to the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) NotEq(neq T) *Number[T] {
 	n.add("not be equal to %v", "is not equal to %v", n.value != neq, neq)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is one of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Oneof(values ...T) *Number[T] {
 	satisfied := false
 	for _, v := range values {
@@ -39,6 +43,7 @@ func (n *Number[T]) Oneof(values ...T) *Number[T] {
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is none of the given values.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Noneof(values ...T) *Number[T] {
 	satisfied := true
 	for _, v := range values {
@@ -52,24 +57,28 @@ func (n *Number[T]) Noneof(values ...T) *Number[T] {
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is greater than the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Gt(min T) *Number[T] {
 	n.add("be greater than %v", "is greater than %v", n.value > min, min)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is greater than or equal to the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Gte(min T) *Number[T] {
 	n.add("be greater than or equal to %v", "is greater than or equal to %v", n.value >= min, min)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is less than the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Lt(max T) *Number[T] {
 	n.add("be less than %v", "is less than %v", n.value < max, max)
 	return n
 }
 
 // Adds a rule to the parent validator asserting that the numeric value is less than or equal to the given value.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (n *Number[T]) Lte(max T) *Number[T] {
 	n.add("be less than or equal to %v", "is less than or equal to %v", n.value <= max, max)
 	return n

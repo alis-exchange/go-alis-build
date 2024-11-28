@@ -63,12 +63,14 @@ func timestampOptions(opts ...TimestampOption) TimestampOptions {
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is populated.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) IsPopulated() *Timestamp {
 	t.add("be populated", "is populated", t.value != nil)
 	return t
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is before the given timestamp.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) Before(other *timestamppb.Timestamp, opts ...TimestampOption) *Timestamp {
 	options := timestampOptions(opts...)
 	t.add("be before %v", "is before %v", t.value.AsTime().Before(other.AsTime()), options.fieldDescription(other))
@@ -76,6 +78,7 @@ func (t *Timestamp) Before(other *timestamppb.Timestamp, opts ...TimestampOption
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is before or equal to the given timestamp.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) BeforeOrEq(other *timestamppb.Timestamp, opts ...TimestampOption) *Timestamp {
 	options := timestampOptions(opts...)
 	t.add("be before or equal to %v", "is before or equal to %v", t.value.AsTime().Before(other.AsTime()) || t.value.AsTime().Equal(other.AsTime()), options.fieldDescription(other))
@@ -83,6 +86,7 @@ func (t *Timestamp) BeforeOrEq(other *timestamppb.Timestamp, opts ...TimestampOp
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is after the given timestamp.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) After(other *timestamppb.Timestamp, opts ...TimestampOption) *Timestamp {
 	options := timestampOptions(opts...)
 	t.add("be after %v", "is after %v", t.value.AsTime().After(other.AsTime()), options.fieldDescription(other))
@@ -90,6 +94,7 @@ func (t *Timestamp) After(other *timestamppb.Timestamp, opts ...TimestampOption)
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is after or equal to the given timestamp.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) AfterOrEq(other *timestamppb.Timestamp, opts ...TimestampOption) *Timestamp {
 	options := timestampOptions(opts...)
 	t.add("be after or equal to %v", "is after or equal to %v", t.value.AsTime().After(other.AsTime()) || t.value.AsTime().Equal(other.AsTime()), options.fieldDescription(other))
@@ -97,6 +102,7 @@ func (t *Timestamp) AfterOrEq(other *timestamppb.Timestamp, opts ...TimestampOpt
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is not in the future.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) NotInFuture() *Timestamp {
 	now := timestamppb.Now().AsTime()
 	t.add("not be in the future", "is not in the future", t.value.AsTime().Before(now) || t.value.AsTime().Equal(now))
@@ -104,6 +110,7 @@ func (t *Timestamp) NotInFuture() *Timestamp {
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is equal to the given timestamp.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) Eq(other *timestamppb.Timestamp, opts ...TimestampOption) *Timestamp {
 	options := timestampOptions(opts...)
 	t.add("be equal to %v", "is equal to %v", t.value.AsTime().Equal(other.AsTime()), options.fieldDescription(other))
@@ -111,24 +118,28 @@ func (t *Timestamp) Eq(other *timestamppb.Timestamp, opts ...TimestampOption) *T
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is in the given year.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) InYear(year int) *Timestamp {
 	t.add("be in year %d", "is in year %d", t.value.AsTime().Year() == year, year)
 	return t
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is in the given month.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) InMonth(month time.Month) *Timestamp {
 	t.add("be in %s", "is in %s", t.value.AsTime().Month() == month, month.String())
 	return t
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is on the given day of the month.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) OnDayOfMonth(day int) *Timestamp {
 	t.add("be on day %d of the month", "is on day %d of the month", t.value.AsTime().Day() == day, day)
 	return t
 }
 
 // Adds a rule to the parent validator asserting that the timestamp is on the given hour of the day.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (t *Timestamp) OnHourOfDay(hour int) *Timestamp {
 	t.add("be on hour %d of the day", "is on hour %d of the day", t.value.AsTime().Hour() == hour, hour)
 	return t
