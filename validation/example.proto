@@ -1,0 +1,19 @@
+syntax="proto3";
+
+package validation;
+option go_package = "go.alis.build/validation";
+import "google/protobuf/timestamp.proto";
+
+message User {
+    string name = 1;
+    int32 age = 2;
+    google.protobuf.Timestamp update_time = 3;
+    Status status = 4;
+    enum Status {
+        UNSPECIFIED = 0;
+        ACTIVE = 1;
+        INACTIVE = 2;
+    }
+    string email = 5;
+    string website = 6;
+}
