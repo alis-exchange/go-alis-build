@@ -95,6 +95,71 @@ func (l *StringList) EachPopulated() *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string in the list is equal to the given string.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) EachEq(eq string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		if v != eq {
+			satisfied = false
+			break
+		}
+	}
+	l.add("have all values equal to %v", "all values equal to %v", satisfied, eq)
+	return l
+}
+
+// Adds a rule to the parent validator asserting that each string in the list is not equal to the given string.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) EachNotEq(neq string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		if v == neq {
+			satisfied = false
+			break
+		}
+	}
+	l.add("have all values not equal to %v", "all values not equal to %v", satisfied, neq)
+	return l
+}
+
+// Adds a rule to the parent validator asserting that each string in the list is equal to one of the given strings.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) EachOneof(values ...string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		found := false
+		for _, value := range values {
+			if v == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			satisfied = false
+			break
+		}
+	}
+	l.add("have all values be one of %v", "all values are one of %v", satisfied, values)
+	return l
+}
+
+// Adds a rule to the parent validator asserting that each string in the list is none of the given strings.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) EachNoneof(values ...string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		for _, value := range values {
+			if v == value {
+				satisfied = false
+				break
+			}
+		}
+	}
+	l.add("have all values be none of %v", "all values are none of %v", satisfied, values)
+	return l
+}
+
 // Adds a rule to the parent validator asserting that each string matches the given pattern.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachMatches(pattern string) *StringList {
