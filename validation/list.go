@@ -69,6 +69,34 @@ type StringList struct {
 	List[string]
 }
 
+// Adds a rule to the parent validator asserting that the list contains the given string.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) Includes(value string) *StringList {
+	satisfied := false
+	for _, v := range l.value {
+		if v == value {
+			satisfied = true
+			break
+		}
+	}
+	l.add("include %v", "includes %v", satisfied, value)
+	return l
+}
+
+// Adds a rule to the parent validator asserting that the list does not contain the given string.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) Excludes(value string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		if v == value {
+			satisfied = false
+			break
+		}
+	}
+	l.add("exclude %v", "excludes %v", satisfied, value)
+	return l
+}
+
 // Adds a rule to the parent validator asserting that each string in the list is unique.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachUnique() *StringList {
@@ -314,7 +342,7 @@ func (l *NumberList[T]) EachEq(eq T) *NumberList[T] {
 
 // Adds a rule to the parent validator asserting that each number in the list is not equal to the given number.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (l *NumberList[T]) EachNeq(neq T) *NumberList[T] {
+func (l *NumberList[T]) EachNotEq(neq T) *NumberList[T] {
 	satisfied := true
 	for _, v := range l.value {
 		if v == neq {
