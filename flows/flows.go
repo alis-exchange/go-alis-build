@@ -7,7 +7,7 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"github.com/google/uuid"
-	alUtils "go.alis.build/utils"
+	"go.alis.build/utils/maps"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -138,7 +138,7 @@ type Flow struct {
 	ctx    context.Context
 	client *Client
 	data   *flows.Flow
-	steps  *alUtils.OrderedMap[string, *Step]
+	steps  *maps.OrderedMap[string, *Step]
 }
 
 // Step represents a single step within the Flow object.
@@ -193,7 +193,7 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 			CreateTime: timestamppb.Now(),
 		},
 		client: c,
-		steps:  alUtils.NewOrderedMap[string, *Step](),
+		steps:  maps.NewOrderedMap[string, *Step](),
 	}, nil
 }
 
@@ -344,7 +344,7 @@ Example Usage:
 	})
 	stepsMap["step1"].Done()
 */
-func (f *Flow) Steps() *alUtils.OrderedMap[string, *Step] {
+func (f *Flow) Steps() *maps.OrderedMap[string, *Step] {
 	return f.steps
 }
 
