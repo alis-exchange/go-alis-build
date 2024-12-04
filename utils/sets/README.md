@@ -4,6 +4,12 @@ The set package provides a simple implementation of a set data structure in Go.
 
 ## Usage
 
+Import the package
+
+```go
+import "go.alis.build/utils/sets"
+```
+
 Create a new Set instance using `NewSet`
 
 ```go
