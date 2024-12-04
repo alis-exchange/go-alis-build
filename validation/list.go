@@ -109,6 +109,27 @@ func (l *StringList) EachMatches(pattern string) *StringList {
 	return l
 }
 
+// Adds a rule to the parent validator asserting that each string matches the given pattern.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (l *StringList) EachMatchesOneof(patterns ...string) *StringList {
+	satisfied := true
+	for _, v := range l.value {
+		found := false
+		for _, pattern := range patterns {
+			if regexp.MustCompile(pattern).MatchString(v) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			satisfied = false
+			break
+		}
+	}
+	l.add("have all values match one of %v", "all values match one of %v", satisfied, patterns)
+	return l
+}
+
 // Adds a rule to the parent validator asserting that each string starts with the given prefix.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
 func (l *StringList) EachStartsWith(prefix string) *StringList {
