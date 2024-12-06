@@ -165,7 +165,7 @@ func (s *String) LenLte(length int) *String {
 
 // Adds a rule to the parent validator asserting that the string value matches the given pattern.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) Match(pattern string) *String {
+func (s *String) Matches(pattern string) *String {
 	satisfied, err := regexp.MatchString(pattern, s.value)
 	if err != nil {
 		satisfied = false
