@@ -82,7 +82,7 @@ func (rr *ResourceRow) Merge(updatedMsg proto.Message, fieldMaskPaths ...string)
 	clonedUpdatedMsg := proto.Clone(updatedMsg)
 	fmutils.Filter(clonedUpdatedMsg, fieldMaskPaths)
 	fmutils.Prune(rr.Resource, fieldMaskPaths)
-	proto.Merge(rr.Resource, updatedMsg)
+	proto.Merge(rr.Resource, clonedUpdatedMsg)
 }
 
 /*
