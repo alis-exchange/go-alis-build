@@ -199,7 +199,6 @@ func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
 
 // Publish the Flow as an event.
 func (f *Flow) Publish() error {
-
 	// Using the data object add all the steps
 	steps := make([]*flows.Flow_Step, f.steps.Len())
 	f.steps.Range(func(idx int, key string, value *Step) bool {
@@ -223,6 +222,8 @@ func (f *Flow) Publish() error {
 	}
 
 	topic := f.client.pubsub.Topic(f.client.topic)
+	topic.EnableMessageOrdering = true
+
 	defer topic.Stop()
 	result := topic.Publish(f.ctx, &pubsub.Message{
 		Data:        data,
