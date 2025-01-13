@@ -164,6 +164,9 @@ func (rt *ResourceClient) Client() *spanner.Client {
 	return rt.tbl.db.client
 }
 
+/*
+Create inserts a resource in the database. If the resource already exists, the method will return an error.
+*/
 func (rt *ResourceClient) Create(ctx context.Context, name string, resource proto.Message, policy *iampb.Policy) (*ResourceRow, error) {
 	if policy == nil && rt.hasIamPolicy {
 		return nil, status.Error(codes.InvalidArgument, "Policy required because resource type has iam policies")
@@ -196,6 +199,9 @@ func (rt *ResourceClient) Create(ctx context.Context, name string, resource prot
 	return resourceRow, nil
 }
 
+/*
+BatchCreate inserts multiple resources in the database. If any of the resources already exist, the method will return an error.
+*/
 func (rt *ResourceClient) BatchCreate(ctx context.Context, names []string, resources []proto.Message, policies []*iampb.Policy) ([]*ResourceRow, error) {
 	if len(resources) != len(names) {
 		return nil, status.Error(codes.InvalidArgument, "names and resources must be of the same length")
@@ -222,6 +228,88 @@ func (rt *ResourceClient) BatchCreate(ctx context.Context, names []string, resou
 	}
 
 	err := rt.tbl.BatchCreate(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	resourceRows := make([]*ResourceRow, len(names))
+	for i, row := range rows {
+		resourceRow := &ResourceRow{
+			RowKey:         row.Key.String(),
+			Resource:       row.Messages[0],
+			resourceClient: rt,
+		}
+		if rt.hasIamPolicy {
+			resourceRow.Policy = row.Messages[1].(*iampb.Policy)
+		}
+		resourceRows[i] = resourceRow
+	}
+	return resourceRows, nil
+}
+
+/*
+Write inserts or updates a resource in the database.
+*/
+func (rt *ResourceClient) Write(ctx context.Context, name string, resource proto.Message, policy *iampb.Policy) (*ResourceRow, error) {
+	if policy == nil && rt.hasIamPolicy {
+		return nil, status.Error(codes.InvalidArgument, "Policy required because resource type has iam policies")
+	} else if policy != nil && !rt.hasIamPolicy {
+		return nil, status.Error(codes.InvalidArgument, "Policy not allowed because resource type does not have iam policies")
+	}
+	rowKey, err := rt.RowKeyConv.GetRowKey(name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+	}
+	msgs := []proto.Message{resource}
+	if rt.hasIamPolicy {
+		msgs = append(msgs, policy)
+	}
+	err = rt.tbl.Write(ctx, spanner.Key{rowKey}, msgs...)
+	if err != nil {
+		return nil, err
+	}
+	resourceRow := &ResourceRow{
+		RowKey:         rowKey,
+		Resource:       resource,
+		resourceClient: rt,
+	}
+	if rt.hasIamPolicy {
+		if policy.Etag == nil {
+			return nil, status.Error(codes.InvalidArgument, "Policy etag is required")
+		}
+		resourceRow.Policy = policy
+	}
+	return resourceRow, nil
+}
+
+/*
+BatchWrite inserts or updates multiple resources in the database.
+*/
+func (rt *ResourceClient) BatchWrite(ctx context.Context, names []string, resources []proto.Message, policies []*iampb.Policy) ([]*ResourceRow, error) {
+	if len(resources) != len(names) {
+		return nil, status.Error(codes.InvalidArgument, "names and resources must be of the same length")
+	}
+	if rt.hasIamPolicy && len(policies) != len(names) {
+		return nil, status.Error(codes.InvalidArgument, "policies must be of the same length as names")
+	}
+	rows := []*Row{}
+	for i, name := range names {
+		rowKey, err := rt.RowKeyConv.GetRowKey(name)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to convert resource name to row key: %v", err)
+		}
+		row := &Row{
+			Key: spanner.Key{rowKey},
+			Messages: []proto.Message{
+				resources[i],
+			},
+		}
+		if rt.hasIamPolicy {
+			row.Messages = append(row.Messages, policies[i])
+		}
+		rows = append(rows, row)
+	}
+
+	err := rt.tbl.BatchWrite(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
