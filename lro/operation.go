@@ -161,13 +161,18 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 	} else {
 		// If in prod mode, try to get from the gRPC server
 		if !operation.devMode {
-			// In order to handle the resumable LRO design pattern, we add the relevant headers to the outgoing context.
-			// Determine whether the operation argument is carried in context key x-alis-operation-id
+
+			// Extract operation ID from incoming context metadata to support resumable long-running operations (LROs).
+			// If x-alis-operation-id header exists, this is a continuation of an existing operation. In this case,
+			// construct the operation name and remove the header to prevent unintended propagation in the local context.
 			md, ok := metadata.FromIncomingContext(ctx)
 			if ok {
 				if len(md.Get(OperationIdHeaderKey)) > 0 {
 					// We found a special header x-alis-operation-id, it suggests that the LRO is an existing one.
 					operation.name = "operations/" + md.Get(OperationIdHeaderKey)[0]
+
+					// Now that we 'used' the header key, let's remove it.
+					md.Delete(OperationIdHeaderKey)
 				}
 			}
 		} else {
