@@ -37,6 +37,8 @@ type ResourceTblOptions struct {
 	// - a proto column with the name "Policy" for the google.iam.v1.Policy message
 	// If true, startup would be faster since the columns do not need to be fetched from the database to setup the client.
 	StandardColumnsOnly bool
+	// If set, the resource name will not be shortened by using the first letter of each collection identifier.
+	KeepFullCollectionIdentifiers bool
 }
 
 /*
@@ -146,9 +148,12 @@ func (d *DbClient) NewResourceClient(tableName string, msg proto.Message, option
 		alog.Fatalf(context.Background(), "Failed to create table client: %v", err)
 	}
 	rt := &ResourceClient{
-		tbl:                               tableClient,
-		resourceMsg:                       msg,
-		RowKeyConv:                        &RowKeyConverter{AbbreviateCollectionIdentifiers: true, LatestVersionFirst: options.IsVersion},
+		tbl:         tableClient,
+		resourceMsg: msg,
+		RowKeyConv: &RowKeyConverter{
+			AbbreviateCollectionIdentifiers: !options.KeepFullCollectionIdentifiers,
+			LatestVersionFirst:              options.IsVersion,
+		},
 		hasIamPolicy:                      options.HasIamPolicy,
 		returnPermissionDeniedForNotFound: options.ReturnPermissionDeniedForNotFound,
 		keyColumnName:                     options.KeyColumnName,
