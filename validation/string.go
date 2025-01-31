@@ -10,6 +10,7 @@ const (
 	domainRgx     = `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$`
 	rootDomainRgx = `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)[a-zA-Z]{2,}$`
 	subDomainRgx  = `^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.){2,}[a-zA-Z]{2,}$`
+	httpsUrlRgx   = `^https://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)`
 )
 
 type String struct {
@@ -254,5 +255,16 @@ func (s *String) IsSubDomain() *String {
 		satisfied = false
 	}
 	s.add("be a valid sub domain", "is a valid sub domain", satisfied)
+	return s
+}
+
+// Adds a rule to the parent validator asserting that the string value is a valid https url.
+// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+func (s *String) IsHttpsDomain() *String {
+	satisfied, err := regexp.MatchString(httpsUrlRgx, s.value)
+	if err != nil {
+		satisfied = false
+	}
+	s.add("be a valid https domain", "is a valid https domain", satisfied)
 	return s
 }
