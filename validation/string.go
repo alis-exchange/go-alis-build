@@ -260,7 +260,7 @@ func (s *String) IsSubDomain() *String {
 
 // Adds a rule to the parent validator asserting that the string value is a valid https url.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsHttpsDomain() *String {
+func (s *String) IsHttpsUrl() *String {
 	satisfied, err := regexp.MatchString(httpsUrlRgx, s.value)
 	if err != nil {
 		satisfied = false
