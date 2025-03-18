@@ -214,57 +214,117 @@ func (s *String) NotMatch(pattern string) *String {
 	return s
 }
 
+type StringValidationOptions struct {
+	allowEmpty bool
+}
+type StringValidationOption func(*StringValidationOptions)
+
+// An option to add to some string validation rules to allow empty strings.
+func AllowEmptyString() StringValidationOption {
+	return func(options *StringValidationOptions) {
+		options.allowEmpty = true
+	}
+}
+
+func mergeStringValidationOptions(opts ...StringValidationOption) *StringValidationOptions {
+	options := &StringValidationOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+	return options
+}
+
 // Adds a rule to the parent validator asserting that the string value is a valid email.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsEmail() *String {
+func (s *String) IsEmail(opts ...StringValidationOption) *String {
+	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(emailRgx, s.value)
 	if err != nil {
 		satisfied = false
 	}
-	s.add("be a valid email", "is a valid email", satisfied)
+	if options.allowEmpty {
+		if s.value == "" {
+			satisfied = true
+		}
+		s.add("be empty or a valid email", "is empty or a valid email", satisfied)
+	} else {
+		s.add("be a valid email", "is a valid email", satisfied)
+	}
 	return s
 }
 
 // Adds a rule to the parent validator asserting that the string value is a valid domain.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsDomain() *String {
+func (s *String) IsDomain(opts ...StringValidationOption) *String {
+	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(domainRgx, s.value)
 	if err != nil {
 		satisfied = false
 	}
-	s.add("be a valid domain", "is a valid domain", satisfied)
+	if options.allowEmpty {
+		if s.value == "" {
+			satisfied = true
+		}
+		s.add("be empty or a valid domain", "is empty or a valid domain", satisfied)
+	} else {
+		s.add("be a valid domain", "is a valid domain", satisfied)
+	}
 	return s
 }
 
 // Adds a rule to the parent validator asserting that the string value is a valid root domain.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsRootDomain() *String {
+func (s *String) IsRootDomain(opts ...StringValidationOption) *String {
+	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(rootDomainRgx, s.value)
 	if err != nil {
 		satisfied = false
 	}
-	s.add("be a valid root domain", "is a valid root domain", satisfied)
+	if options.allowEmpty {
+		if s.value == "" {
+			satisfied = true
+		}
+		s.add("be empty or a valid root domain", "is empty or a valid root domain", satisfied)
+	} else {
+		s.add("be a valid root domain", "is a valid root domain", satisfied)
+	}
 	return s
 }
 
 // Adds a rule to the parent validator asserting that the string value is a valid sub domain.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsSubDomain() *String {
+func (s *String) IsSubDomain(opts ...StringValidationOption) *String {
+	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(subDomainRgx, s.value)
 	if err != nil {
 		satisfied = false
 	}
-	s.add("be a valid sub domain", "is a valid sub domain", satisfied)
+	if options.allowEmpty {
+		if s.value == "" {
+			satisfied = true
+		}
+		s.add("be empty or a valid sub domain", "is empty or a valid sub domain", satisfied)
+	} else {
+		s.add("be a valid sub domain", "is a valid sub domain", satisfied)
+	}
 	return s
 }
 
 // Adds a rule to the parent validator asserting that the string value is a valid https url.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (s *String) IsHttpsUrl() *String {
+func (s *String) IsHttpsUrl(opts ...StringValidationOption) *String {
+	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(httpsUrlRgx, s.value)
 	if err != nil {
 		satisfied = false
 	}
-	s.add("be a valid https domain", "is a valid https domain", satisfied)
+	if options.allowEmpty {
+		if s.value == "" {
+			satisfied = true
+		}
+		s.add("be empty or a valid https url", "is empty or a valid https url", satisfied)
+	} else {
+		s.add("be a valid https url", "is a valid https url", satisfied)
+	}
 	return s
 }
