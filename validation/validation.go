@@ -452,3 +452,11 @@ func (v *Validator) MessageIsPopulated(path string, isPopulated bool) *CustomRul
 func (v *Validator) EachMessagePopulated(path string, isPopulated bool) *CustomRule {
 	return v.Custom(path+" must have all values populated", isPopulated, path)
 }
+
+// Returns the given pointer if it is not nil, otherwise returns the provided fallback
+func SetIfNil[T any](pointer *T, fallback *T) *T {
+	if pointer == nil {
+		return fallback
+	}
+	return pointer
+}
