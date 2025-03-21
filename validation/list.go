@@ -265,6 +265,22 @@ func (l *StringList) EachContains(substr string) *StringList {
 	return l
 }
 
+func (s *StringList) EachIsEmail() *StringList {
+	satisfied := true
+	emailP, err := regexp.Compile(emailRgx)
+	if err != nil {
+		satisfied = false
+	} else {
+		for _, v := range s.value {
+			if satisfied = emailP.MatchString(v); !satisfied {
+				break
+			}
+		}
+	}
+	s.add("have all values be email addresses", "all values are email addresses", satisfied)
+	return s
+}
+
 // Provides rules applicable to list of number values.
 type NumberList[T interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~float32 | ~float64
