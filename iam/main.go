@@ -3,12 +3,16 @@ package iam
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	parametermanager "cloud.google.com/go/parametermanager/apiv1"
+	"cloud.google.com/go/parametermanager/apiv1/parametermanagerpb"
 	"go.alis.build/alog"
 	"go.alis.build/client"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	openConfig "open.alis.services/protobuf/alis/open/config/v1"
@@ -81,12 +85,14 @@ func WithAdditionalSuperAdmins(superAdmins ...string) IamOption {
 }
 
 // New creates a new IAM object.
-// ALIS_OS_PROJECT and ALIS_PRODUCT_CONFIG environment variables must be set.
+// ALIS_OS_PROJECT environment variable must be set.
+// ALIS_PRODUCT_CONFIG environment variable must be set if the product_config parameter is not set in Parameter Manager(https://console.cloud.google.com/security/parametermanager/locations/global/parameters/product_config).
 func New(opts ...IamOption) (*IAM, error) {
+	ctx := context.Background()
 	// determine deployment service account email based on project id
 	projectId := os.Getenv("ALIS_OS_PROJECT")
 	if projectId == "" {
-		alog.Fatal(context.Background(), "ALIS_OS_PROJECT not set")
+		alog.Fatal(ctx, "ALIS_OS_PROJECT not set")
 	}
 	deploymentServiceAccount := fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", projectId)
 
@@ -99,18 +105,62 @@ func New(opts ...IamOption) (*IAM, error) {
 	}
 
 	// extract roles from product config
-	productConfigStr := os.Getenv("ALIS_PRODUCT_CONFIG")
+	var productConfigStr string
+	if os.Getenv("ALIS_PRODUCT_CONFIG") != "" {
+		productConfigStr = os.Getenv("ALIS_PRODUCT_CONFIG")
+	} else {
+		// Initiate parameter manager client
+		parameterManagerClient, err := parametermanager.NewClient(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("error creating parameter manager client: %v", err)
+		}
+		defer parameterManagerClient.Close()
+
+		// List available versions
+		// Only get the latest version
+		versionsIt := parameterManagerClient.ListParameterVersions(ctx, &parametermanagerpb.ListParameterVersionsRequest{
+			Parent:  fmt.Sprintf("projects/%s/locations/global/parameters/product_config", projectId),
+			OrderBy: "name desc",
+		})
+		for {
+			parameterVersion, err := versionsIt.Next()
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("error getting parameter version: %v", err)
+			}
+
+			// Get the latest version
+			// We have to explicitly get the version because the payload is not returned by ListParameterVersions
+			// TODO: Change after this is fixed
+			version, err := parameterManagerClient.GetParameterVersion(ctx, &parametermanagerpb.GetParameterVersionRequest{
+				Name: parameterVersion.GetName(),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("error getting parameter version: %v", err)
+			}
+
+			productConfigBytes := version.GetPayload().GetData()
+			if len(productConfigBytes) > 0 {
+				productConfigStr = string(productConfigBytes)
+				break
+			}
+		}
+	}
+
+	// If product config is still empty, return error
 	if productConfigStr == "" {
-		alog.Fatal(context.Background(), "ALIS_PRODUCT_CONFIG not set")
+		alog.Fatal(ctx, "ALIS_PRODUCT_CONFIG environment variable or product_config parameter is required")
 	}
 	productConfigBytes, err := base64.StdEncoding.DecodeString(productConfigStr)
 	if err != nil {
-		alog.Fatalf(context.Background(), "error base64 decoding product config: %v", err)
+		alog.Fatalf(ctx, "error base64 decoding product config: %v", err)
 	}
 	productConfig := &openConfig.ProductConfig{}
 	err = proto.Unmarshal(productConfigBytes, productConfig)
 	if err != nil {
-		alog.Fatalf(context.Background(), "error proto unmarshalling product config: %v", err)
+		alog.Fatalf(ctx, "error proto unmarshalling product config: %v", err)
 	}
 	roles := productConfig.Roles
 
@@ -149,7 +199,6 @@ func New(opts ...IamOption) (*IAM, error) {
 
 	// create users client if not disabled
 	if !options.WithoutDefaultUsersClient {
-		ctx := context.Background()
 		maxSizeOptions := grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(2000000000), grpc.MaxCallRecvMsgSize(2000000000))
 		conn, err := client.NewConnWithRetry(ctx, "iam-users-"+os.Getenv("ALIS_RUN_HASH")+".run.app:443", false, maxSizeOptions)
 		if err != nil {

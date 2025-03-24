@@ -11,6 +11,7 @@ require (
 	google.golang.org/grpc v1.67.1
 	google.golang.org/protobuf v1.34.2
 	open.alis.services/protobuf v1.92.0
+	cloud.google.com/go/parametermanager v0.1.1
 )
 
 require (
