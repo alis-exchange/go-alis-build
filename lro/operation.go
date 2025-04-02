@@ -637,8 +637,11 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 			// We'll first add the operation id to the context
 			operationId := strings.Split(o.name, "/")[1]
 			ctx := context.WithValue(o.ctx, OperationIdHeaderKey, operationId)
-			// ctx := metadata.AppendToOutgoingContext(o.ctx, OperationIdHeaderKey, operationId)
-			o.asyncCallbackFn(ctx)
+			m, _ := metadata.FromIncomingContext(ctx)
+			m.Delete("x-alis-forwarded-authorization")
+			m.Delete("authorization")
+			ctx = metadata.NewIncomingContext(ctx, m)
+			go o.asyncCallbackFn(ctx)
 		} else {
 			// Hand over the wait task to Google Cloud Workflows.
 			err := o.waitWithGoogleWorkflows(w)
