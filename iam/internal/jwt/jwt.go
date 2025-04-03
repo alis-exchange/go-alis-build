@@ -17,6 +17,7 @@ type Payload struct {
 	IssuedAt int64                  `json:"iat"`
 	Subject  string                 `json:"sub,omitempty"`
 	Email    string                 `json:"email"`
+	Groups   []string               `json:"groups"`
 	Claims   map[string]interface{} `json:"-"`
 }
 
