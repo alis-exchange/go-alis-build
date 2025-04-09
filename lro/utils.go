@@ -8,6 +8,7 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // origin is an interface that wraps the GetOperation method. This allows us
@@ -94,4 +95,44 @@ func UnmarshalOperation(operation *longrunningpb.Operation, response, metadata p
 	}
 
 	return nil
+}
+
+/*
+parseStructPbValue parses a *structpb.Value to the respective underlying type
+
+It returns the parsed value as an interface{}
+  - Value_NullValue is parsed to nil
+  - Value_StringValue is parsed to a string
+  - Value_NumberValue is parsed to a float64
+  - Value_BoolValue is parsed to a boolean
+  - Value_ListValue is parsed to a []interface{}, where each item is parsed recursively
+  - Value_StructValue is parsed to a map[string]interface{}, where each item is parsed recursively
+*/
+func parseStructPbValue(value *structpb.Value) interface{} {
+	var res interface{}
+
+	switch value.GetKind().(type) {
+	case *structpb.Value_NullValue:
+		res = nil
+	case *structpb.Value_StringValue:
+		res = value.GetStringValue()
+	case *structpb.Value_NumberValue:
+		res = value.GetNumberValue()
+	case *structpb.Value_BoolValue:
+		res = value.GetBoolValue()
+	case *structpb.Value_ListValue:
+		res = []interface{}{}
+		for _, v := range value.GetListValue().GetValues() {
+			val := parseStructPbValue(v)
+			res = append(res.([]interface{}), val)
+		}
+	case *structpb.Value_StructValue:
+		res = map[string]interface{}{}
+		for k, v := range value.GetStructValue().GetFields() {
+			val := parseStructPbValue(v)
+			res.(map[string]interface{})[k] = val
+		}
+	}
+
+	return res
 }

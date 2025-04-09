@@ -196,20 +196,33 @@ func NewOperation[T any](ctx context.Context, client *Client, opts ...OperationO
 		}
 		operation.name = op.GetName()
 
-		// write operation and parent to respective spanner columns
-		row := map[string]interface{}{"Operation": op}
-		err = operation.client.spanner.InsertRow(operation.ctx, operation.client.spannerTable, row)
+		// add operation to database.
+		_, err = operation.client.spanner.Apply(ctx, []*spanner.Mutation{
+			spanner.Insert(operation.client.spannerTable, []string{"Operation"}, []any{op}),
+		})
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// The operation exists, get the details from the Spanner database.
 		// No need to actually retrieve the Operation data from the database, only need the State and ResumePoint details, if available
-		row, err := operation.client.spanner.ReadRow(operation.ctx, operation.client.spannerTable,
-			spanner.Key{operation.name}, []string{StateColumnName, ResumePointColumnName}, nil)
+		// row, err := operation.client.spanner.ReadRow(operation.ctx, operation.client.spannerTable,
+		// 	spanner.Key{operation.name}, []string{StateColumnName, ResumePointColumnName}, nil)
+		// if err != nil {
+		// 	return nil, fmt.Errorf("read operation data from database: %w", err)
+		// }
+
+		spannerRow, err := operation.client.spanner.Single().ReadRow(operation.ctx, operation.client.spannerTable,
+			spanner.Key{operation.name}, []string{StateColumnName, ResumePointColumnName})
 		if err != nil {
-			return nil, fmt.Errorf("read operation data from database: %w", err)
+			return nil, err
 		}
+		row := make(map[string]interface{})
+		for i, columnName := range spannerRow.ColumnNames() {
+			columnValue := spannerRow.ColumnValue(i)
+			row[columnName] = parseStructPbValue(columnValue)
+		}
+
 		// Populate the State if available.
 		if row[StateColumnName] != nil {
 			// If the state is not of type any, we need to decode the state data from the database.
@@ -289,9 +302,10 @@ func (o *Operation[T]) Done(response proto.Message) error {
 		op.Result = &longrunningpb.Operation_Response{Response: resultAny}
 	}
 
-	//  write operation and parent to respective spanner columns
-	row := map[string]interface{}{"Operation": op}
-	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerTable, row)
+	// write operation to database.
+	_, err = o.client.spanner.Apply(o.ctx, []*spanner.Mutation{
+		spanner.InsertOrUpdate(o.client.spannerTable, []string{"Operation"}, []any{op}),
+	})
 	if err != nil {
 		return err
 	}
@@ -319,9 +333,10 @@ func (o *Operation[T]) Error(error error) error {
 		Details: nil,
 	}}
 
-	// write operation and parent to respective spanner columns
-	row := map[string]interface{}{"Operation": op}
-	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerTable, row)
+	// write operation to database.
+	_, err = o.client.spanner.Apply(o.ctx, []*spanner.Mutation{
+		spanner.InsertOrUpdate(o.client.spannerTable, []string{"Operation"}, []any{op}),
+	})
 	if err != nil {
 		return err
 	}
@@ -344,9 +359,10 @@ func (o *Operation[T]) SetMetadata(metadata proto.Message) (*longrunningpb.Opera
 	}
 	op.Metadata = metaAny
 
-	// write operation and parent to respective spanner columns
-	row := map[string]interface{}{"Operation": op}
-	err = o.client.spanner.UpsertRow(o.ctx, o.client.spannerTable, row)
+	// write operation to database.
+	_, err = o.client.spanner.Apply(o.ctx, []*spanner.Mutation{
+		spanner.InsertOrUpdate(o.client.spannerTable, []string{"Operation"}, []any{op}),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -363,10 +379,13 @@ func (o *Operation[T]) Delete() error {
 	}
 
 	// delete operation
-	err = o.client.spanner.DeleteRow(o.ctx, o.client.spannerTable, spanner.Key{o.name})
+	_, err = o.client.spanner.Apply(o.ctx, []*spanner.Mutation{
+		spanner.Delete(o.client.spannerTable, spanner.Key{o.name}),
+	})
 	if err != nil {
-		return fmt.Errorf("delete operation (%s): %w", o.name, err)
+		return err
 	}
+
 	return nil
 }
 
@@ -617,10 +636,12 @@ func (o *Operation[T]) Wait(opts ...WaitOption) error {
 			return err
 		}
 
-		err := o.client.spanner.UpdateRow(o.ctx, o.client.spannerTable, map[string]interface{}{
-			"key":                 o.name,
-			StateColumnName:       buffer.Bytes(),
-			ResumePointColumnName: w.resumePoint,
+		// Write the data to the database.
+		_, err := o.client.spanner.Apply(o.ctx, []*spanner.Mutation{
+			spanner.Update(
+				o.client.spannerTable,
+				[]string{"key", StateColumnName, ResumePointColumnName},
+				[]any{o.name, buffer.Bytes(), w.resumePoint}),
 		})
 		if err != nil {
 			return err
