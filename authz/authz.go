@@ -38,6 +38,11 @@ type AuthInfo struct {
 
 	// The principal roles
 	Roles []string
+
+	// The group IDs that the requester is part of.
+	// These groups are provided as part of the JWT payload and
+	// can therefore be extracted.
+	groupIds []string
 }
 
 // Authz is a struct that contains the dependencies required to validate access
@@ -204,6 +209,13 @@ func (a *Authz) IsMember(ctx context.Context, authInfo *AuthInfo, member string,
 	} else {
 		parts := strings.Split(member, ":")
 		partBeforeColon := parts[0]
+		groupId := ""
+		if len(parts) > 1 {
+			groupId = parts[1]
+		}
+		if partBeforeColon == "group" {
+			return slices.Contains(authInfo.groupIds, groupId), nil
+		}
 		for groupType, resolver := range a.memberResolver {
 			if partBeforeColon == groupType {
 				id := ""

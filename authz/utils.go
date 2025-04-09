@@ -90,6 +90,7 @@ func getAuthInfoWithoutRolesFromJwtHeader(ctx context.Context, header string, su
 		authInfo.Jwt = token
 		authInfo.Id = id
 		authInfo.Email = payload.Email
+		authInfo.groupIds = payload.Groups
 		authInfo.IsServiceAccount = strings.HasSuffix(payload.Email, ".gserviceaccount.com")
 
 		if authInfo.IsServiceAccount {
