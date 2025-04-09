@@ -197,6 +197,7 @@ func getPrincipalFromJwtHeader(ctx context.Context, header string, superAdminEma
 		principal.Jwt = token
 		principal.Id = id
 		principal.Email = payload.Email
+		principal.groupIds = payload.Groups
 		principal.IsServiceAccount = strings.HasSuffix(payload.Email, ".gserviceaccount.com")
 
 		if principal.IsServiceAccount {
