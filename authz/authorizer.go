@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"go.alis.build/alog"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -31,6 +32,11 @@ type Principal struct {
 	IsServiceAccount bool
 	// Whether the principal is a super admin
 	IsSuperAdmin bool
+
+	// The group IDs that the requester is part of.
+	// These groups are provided as part of the JWT payload and
+	// can therefore be extracted.
+	groupIds []string
 }
 
 type ServerAuthorizer struct {
@@ -211,6 +217,9 @@ func (r *Authorizer) IsMember(ctx context.Context, member string) bool {
 	groupId := ""
 	if len(parts) > 1 {
 		groupId = parts[1]
+	}
+	if groupType == "group" {
+		return slices.Contains(r.Requester.groupIds, groupId)
 	}
 	if resolver, ok := r.authorizer.memberResolver[groupType]; ok {
 		if isMember, ok := r.memberCache.Load(member); ok {
