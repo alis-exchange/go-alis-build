@@ -50,6 +50,11 @@ type Requester struct {
 
 	// A cache to store the result of the member resolver function
 	memberCache *sync.Map
+
+	// The group IDs that the requester is part of.
+	// These groups are provided as part of the JWT payload and
+	// can therefore be extracted.
+	groupIds []string
 }
 
 // Returns the requester making the request or for whom the request is being forwarded by a super admin.
@@ -82,6 +87,7 @@ func newRequesterFromCtx(ctx context.Context, deploymentServiceAccountEmail stri
 			requester.jwt = token
 			requester.id = payload.Subject
 			requester.email = payload.Email
+			requester.groupIds = payload.Groups
 
 			if !requester.IsServiceAccount() {
 				// policy is base64 encoded version of the bytes of the policy
@@ -251,6 +257,10 @@ func (r *Requester) IsMember(policyMember string) bool {
 		// builtin domain groups
 		if groupType == "domain" {
 			if strings.HasSuffix(r.email, "@"+parts[1]) {
+				return true
+			}
+		} else if groupType == "group" {
+			if slices.Contains(r.groupIds, groupId) {
 				return true
 			}
 		}
