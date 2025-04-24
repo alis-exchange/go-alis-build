@@ -1,6 +1,6 @@
 module go.alis.build/sproto
 
-go 1.24.1
+go 1.23.2
 
 require (
 	cloud.google.com/go/iam v1.5.2
