@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
-	"go.alis.build/iam/intenal/jwt"
+	"go.alis.build/iam/internal/jwt"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
@@ -38,6 +38,10 @@ type Identity struct {
 	// The Policy on the User resource of the requester.
 	// Not applicable for service accounts
 	policy *iampb.Policy
+	// The group IDs that the requester is part of.
+	// These groups are provided as part of the JWT payload and
+	// can therefore be extracted.
+	groupIds []string
 }
 
 func (r *Identity) Id() string {
@@ -87,6 +91,22 @@ func (r *Identity) UserName() string {
 	return "users/" + r.id
 }
 
+// Returns the groups that the caller is part of
+// Format: [groups/{groupId}, ...]
+func (r *Identity) GroupNames() []string {
+	names := make([]string, len(r.groupIds))
+	for i, groupId := range r.groupIds {
+		names[i] = "groups/" + groupId
+	}
+	return names
+}
+
+// Returns the group Ids that the caller is part of
+// Format: [{groupId}, ...]
+func (r *Identity) GroupIds() []string {
+	return r.groupIds
+}
+
 // ExtractIdentityFromCtx returns the Identity making the request or for whom the request is being forwarded by a super admin.
 func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail string) (*Identity, error) {
 	// Looks in the specified header for a JWT token and extracts the requester from it.
@@ -115,6 +135,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			identity.jwt = token
 			identity.id = payload.Subject
 			identity.email = payload.Email
+			identity.groupIds = payload.Groups
 
 			// If the Identity is not a service account, see if we could extract the iam Policy object.
 			if !identity.IsServiceAccount() {

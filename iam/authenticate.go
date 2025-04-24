@@ -65,64 +65,74 @@ func (h *Authenticator) HandleAuthRequest(resp http.ResponseWriter, req *http.Re
 // If above failed, it checks for a refresh_token cookie and tries to do a refresh on the fly by hitting /auth/refresh.
 // Lastly, it checks directly for a Authorization header.
 func (h *Authenticator) IsAuthenticated(resp http.ResponseWriter, req *http.Request) bool {
-	// ensure all requests not going to /auth have a valid access token
-	accessTokenCookie, err := req.Cookie("access_token")
-	if err != nil || accessTokenCookie.Value == "" {
-		return false
-	} else {
-		// validate access token
-		err = h.validateJwt(accessTokenCookie.Value)
-		if err == nil {
-			req.Header.Del(AuthHeader)
-			req.Header.Add(AuthHeader, "Bearer "+accessTokenCookie.Value)
-			return true
-		} else {
-			// try to refresh token by making get request to /auth/refresh
-			refreshTokenCookie, err := req.Cookie("refresh_token")
-			if err == nil && refreshTokenCookie.Value != "" {
-				refreshReq, err := http.NewRequest("GET", fmt.Sprintf("%s/auth/refresh", h.authHost), nil)
-				if err != nil {
-					http.Error(resp, err.Error(), http.StatusServiceUnavailable)
-					return true
-				}
-				refreshReq.Header.Add(ForwardedHostHeader, req.Host)
-				refreshReq.AddCookie(refreshTokenCookie)
-				client := &http.Client{}
-				refreshResp, err := client.Do(refreshReq)
-				if err != nil {
-					http.Error(resp, err.Error(), http.StatusServiceUnavailable)
-					return true
-				}
+	tryToRefresh := func() bool {
+		// try to refresh token by making get request to /auth/refresh
+		refreshTokenCookie, err := req.Cookie("refresh_token")
+		if err == nil && refreshTokenCookie.Value != "" {
+			refreshReq, err := http.NewRequest("GET", fmt.Sprintf("%s/auth/refresh", h.authHost), nil)
+			if err != nil {
+				http.Error(resp, err.Error(), http.StatusServiceUnavailable)
+				return true
+			}
+			refreshReq.Header.Add(ForwardedHostHeader, req.Host)
+			refreshReq.AddCookie(refreshTokenCookie)
+			client := &http.Client{}
+			refreshResp, err := client.Do(refreshReq)
+			if err != nil {
+				http.Error(resp, err.Error(), http.StatusServiceUnavailable)
+				return false
+			}
 
-				// copy cookies and check for access_token
-				hasNewValidAccessToken := false
-				for _, c := range refreshResp.Cookies() {
-					http.SetCookie(resp, c)
-					if c.Name == "access_token" {
-						if err := h.validateJwt(c.Value); err == nil {
-							hasNewValidAccessToken = true
-						}
+			// copy cookies and check for access_token
+			hasNewValidAccessToken := false
+			var accessT string
+
+			for _, c := range refreshResp.Request.Response.Cookies() {
+				http.SetCookie(resp, c)
+				if c.Name == "access_token" {
+					if err := h.validateJwt(c.Value); err == nil {
+						hasNewValidAccessToken = true
+						accessT = c.Value
 					}
 				}
-				if hasNewValidAccessToken {
-					req.Header.Del(AuthHeader)
-					req.Header.Add(AuthHeader, "Bearer "+accessTokenCookie.Value)
-					return true
-				}
+			}
+			if hasNewValidAccessToken {
+				req.Header.Del(AuthHeader)
+				req.Header.Add(AuthHeader, "Bearer "+accessT)
+				return true
 			}
 		}
+		return false
 	}
 
 	// directly check for Authorization header
-	accessToken := req.Header.Get(AuthHeader)
-	if accessToken != "" {
-		err = h.validateJwt(accessToken)
+	atFromAuthHeader := req.Header.Get(AuthHeader)
+	if atFromAuthHeader != "" {
+		err := h.validateJwt(atFromAuthHeader)
 		if err == nil {
+			req.Header.Del(AuthHeader)
+			req.Header.Add(AuthHeader, "Bearer "+atFromAuthHeader)
 			return true
+		} else {
+			return tryToRefresh()
+		}
+	} else {
+		// ensure all requests not going to /auth have a valid access token
+		accessTokenCookie, err := req.Cookie("access_token")
+		if err != nil || accessTokenCookie.Value == "" {
+			return tryToRefresh()
+		} else {
+			// validate access token
+			err = h.validateJwt(accessTokenCookie.Value)
+			if err == nil {
+				req.Header.Del(AuthHeader)
+				req.Header.Add(AuthHeader, "Bearer "+accessTokenCookie.Value)
+				return true
+			} else {
+				return tryToRefresh()
+			}
 		}
 	}
-
-	return false
 }
 
 // Redirects to /auth/signin and sets the post_auth_redirect_uri cookie to the current request URI so that the user can

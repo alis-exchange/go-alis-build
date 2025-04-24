@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -221,16 +222,24 @@ func (a *Authorizer) HasRole(policies []*iampb.Policy, role string) bool {
 func (a *Authorizer) IsGroupMember(group string) bool {
 	parts := strings.Split(group, ":")
 	groupType := parts[0]
-	if groupType == "user" || groupType == "serviceAccount" {
+	if groupType == groupTypeUser || groupType == groupTypeServiceAccount {
 		return false
 	}
 	groupId := ""
 	if len(parts) > 1 {
 		groupId = parts[1]
 
-		// builtin domain groups
-		if groupType == "domain" {
+		switch groupType {
+		case groupTypeDomain:
+			// In the case that the requester is within the domain, then
+			// the requester is considered a group member
 			if strings.HasSuffix(a.Identity.email, "@"+parts[1]) {
+				return true
+			}
+		case groupTypeGroup:
+			// Check whether the group is a group that the member
+			// is a part of
+			if slices.Contains(a.Identity.groupIds, groupId) {
 				return true
 			}
 		}

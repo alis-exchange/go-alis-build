@@ -224,6 +224,14 @@ func (s *IAM) RoleHasPermission(role string, permission string) bool {
 	return s.rolePermissionMap[role][permission]
 }
 
+// Constant values associated with policy member groupings
+const (
+	groupTypeUser           = "user"
+	groupTypeServiceAccount = "serviceAccount"
+	groupTypeDomain         = "domain"
+	groupTypeGroup          = "group"
+)
+
 // WithMemberResolver registers a function to resolve whether a requester is a member of a group.
 // There can be multiple different types of groups, e.g. "team:engineering" (groupType = "team",groupId="engineering")
 // A group always has a type, but does not always have an id, e.g. "team:engineering" (groupType = "team",groupId="engineering") vs "all" (groupType = "all",groupId="").
@@ -232,7 +240,7 @@ func (s *IAM) RoleHasPermission(role string, permission string) bool {
 // Results are cached per Authorizer.
 func (s *IAM) WithMemberResolver(groupTypes []string, resolver func(ctx context.Context, groupType string, groupId string, principal *Authorizer) bool) *IAM {
 	for _, groupType := range groupTypes {
-		if groupType == "user" || groupType == "serviceAccount" || groupType == "domain" {
+		if groupType == groupTypeUser || groupType == groupTypeServiceAccount || groupType == groupTypeDomain || groupType == groupTypeGroup {
 			alog.Fatalf(context.Background(), "cannot register builtin group type %s", groupType)
 		}
 		s.memberResolver[groupType] = resolver

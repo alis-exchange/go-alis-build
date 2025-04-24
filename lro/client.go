@@ -9,7 +9,6 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"cloud.google.com/go/spanner"
 	executions "cloud.google.com/go/workflows/executions/apiv1"
-	"go.alis.build/sproto"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -68,10 +67,9 @@ func WithLocation(location string) ClientOption {
 
 type Client struct {
 	// Google Cloud Spanner configurations.
-	spanner *sproto.Client
+	spanner *spanner.Client
 	// The table in Spanner which will store all Operations data.
 	spannerTable string
-
 	// Google Cloud Workflows executions client
 	workflows *executions.Client
 	// Name of the workflow for which an execution should be created.
@@ -138,6 +136,14 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 		opt(options)
 	}
 
+	// Ensure project and locations are set
+	if options.project == "" {
+		return nil, fmt.Errorf("unable to determine the 'project' for Google Cloud Workflows.  ensure ALIS_OS_PROJECT env is specified at runtime or set it using the lro.WithProject() client option")
+	}
+	if options.location == "" {
+		return nil, fmt.Errorf("unable to determine the 'location' for Google Cloud Workflows.  ensure ALIS_OS_REGION env is specified at runtime or set it using the lro.WithLocation() client option")
+	}
+
 	// Create a new Client object
 	client := &Client{
 		workflowName: fmt.Sprintf("projects/%s/locations/%s/workflows/alis-managed-operations", options.project, options.location),
@@ -146,7 +152,8 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 
 	// Instantiate a Spanner client and set the table.
 	role := strings.ReplaceAll(options.project, "-", "_") // As configured by the Alis Build Platform
-	if spanner, err := sproto.NewClient(ctx, spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database, role); err != nil {
+	database := fmt.Sprintf("projects/%s/instances/%s/databases/%s", spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database)
+	if spanner, err := spanner.NewClientWithConfig(ctx, database, spanner.ClientConfig{DatabaseRole: role}); err != nil {
 		return nil, err
 	} else {
 		client.spanner = spanner
@@ -179,18 +186,23 @@ func (c *Client) GetOperation(ctx context.Context, req *longrunningpb.GetOperati
 	}
 
 	// read operation resource from spanner
-	op := &longrunningpb.Operation{}
-	err = c.spanner.ReadProto(ctx, c.spannerTable, spanner.Key{req.GetName()}, OperationColumnName, op, nil)
+	row, err := c.spanner.Single().ReadRow(ctx, c.spannerTable, spanner.Key{req.GetName()}, []string{OperationColumnName})
 	if err != nil {
-		if _, ok := err.(sproto.ErrNotFound); ok {
-			// Handle the ErrNotFound case.
-			return nil, ErrNotFound{
-				Operation: req.GetName(),
-			}
-		} else {
-			// Handle other error types.
-			return nil, fmt.Errorf("read operation from database: %w", err)
-		}
+		return nil, fmt.Errorf("read operation: %w", err)
+	}
+
+	// Get the column value as bytes
+	var dataBytes []byte
+	err = row.Columns(&dataBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read operation data: %w", err)
+	}
+
+	// Unmarshal the bytes into the provided proto message
+	op := &longrunningpb.Operation{}
+	err = proto.Unmarshal(dataBytes, op)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal operation data: %w", err)
 	}
 
 	return op, nil
