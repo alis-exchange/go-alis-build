@@ -254,7 +254,7 @@ func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string
 			if err != nil {
 				return "", nil, false, err
 			}
-			return fmt.Sprintf("%s IN (%s)", leftSQL, rightSQL), params, false, nil
+			return fmt.Sprintf("%s IN UNNEST(%s)", leftSQL, rightSQL), params, false, nil
 
 		default:
 			return "", nil, false, fmt.Errorf("unsupported function: %s", call.Function)
@@ -305,7 +305,7 @@ func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string
 			sqlList = append(sqlList, elemSQL)
 		}
 		paramName := fmt.Sprintf("p%d", len(params))
-		params[paramName] = strings.Join(sqlList, ", ")
+		params[paramName] = sqlList
 
 		return fmt.Sprintf("@%s", paramName), params, false, nil
 	case *expr.Expr_StructExpr:
