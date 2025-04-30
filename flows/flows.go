@@ -12,139 +12,31 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	flows "open.alis.services/protobuf/alis/open/flows/v1"
+	pbFlows "open.alis.services/protobuf/alis/open/flows/v1"
 )
 
-const (
-	DefaultTopic        = "flows"
-	FlowParentHeaderKey = "x-alis-flow-parent"
-	FlowHeaderKey       = "x-alis-flow-id"
-)
-
-// Client object to manage Publishing to a Pub/Sub topic.
-type Client struct {
-	pubsub       *pubsub.Client
-	topic        string
-	awaitPublish bool
+type FlowOptions struct {
+	existingFlow *pbFlows.Flow
 }
 
-// Options for the NewClient method.
-type Options struct {
-	// The Pub/Sub Topic
-	// For example: 'flows'
-	//
-	// Defaults to 'flows' if not specified.
-	Topic string
-	// Indicates whether the pubsub client should block until the message is published.
-	// If set to true, the client will block until the message is published or the context is done.
-	// If set to false, the client will return immediately after the message is published.
-	AwaitPublish bool
-}
+// FlowOption is a functional option for the NewFlow method.
+type FlowOption func(*FlowOptions)
 
-// Option is a functional option for the NewClient method.
-type Option func(*Options)
-
-// WithTopic sets the topic for the client.
-//
-// If provided multiple times, the last value will take precedence.
-func WithTopic(topic string) Option {
-	return func(opts *Options) {
-		opts.Topic = topic
+// WithExistingFlow is used when one would like to create a new
+// Flow object from an existing Flow data object.  This would
+// typically be used with resumable Long-running Operations where the
+// Flow data object is stored withing the state of the particular LRO
+func WithExistingFlow(existingFlow *pbFlows.Flow) FlowOption {
+	return func(opts *FlowOptions) {
+		opts.existingFlow = existingFlow
 	}
-}
-
-// WithAwaitPublish instructs the client to block until the flow is finished publishing.
-// This causes the client to block until the Publish call completes or the context is done.
-func WithAwaitPublish() Option {
-	return func(opts *Options) {
-		opts.AwaitPublish = true
-	}
-}
-
-// StepOptions for the NewStep method.
-type StepOptions struct {
-	existingId  bool
-	title       string
-	description string
-	state       flows.Flow_Step_State
-}
-
-// StepOption is a functional option for the NewStep method.
-type StepOption func(*StepOptions)
-
-// WithTitle sets the title of the step.
-func WithTitle(title string) StepOption {
-	return func(opts *StepOptions) {
-		opts.title = title
-	}
-}
-
-// WithDescription sets the description of the step.
-func WithDescription(description string) StepOption {
-	return func(opts *StepOptions) {
-		opts.description = description
-	}
-}
-
-// WithExistingId gets the step with the specified id.
-// If the step does not exist, it assumes normal behaviour and creates a new step with the specified id.
-func WithExistingId() StepOption {
-	return func(opts *StepOptions) {
-		opts.existingId = true
-	}
-}
-
-// WithState sets the initial state of the step.
-func WithState(state flows.Flow_Step_State) StepOption {
-	return func(opts *StepOptions) {
-		opts.state = state
-	}
-}
-
-// NewClient creates a new instance of the Client object.
-// A valid Google Cloud project id is required.
-//
-// Multiple Option functions can be provided to customize the client.
-// For example: WithTopic("flows"), WithAwaitPublish()
-func NewClient(project string, opts ...Option) (*Client, error) {
-	// Validate arguments
-	if project == "" {
-		return nil, fmt.Errorf("project is required but not provided")
-	}
-
-	options := &Options{}
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	// Default topic is 'flows'
-	topic := DefaultTopic
-	if options.Topic != "" {
-		topic = options.Topic
-	}
-
-	pubsubClient, err := pubsub.NewClient(context.Background(), project)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{
-		pubsub:       pubsubClient,
-		topic:        topic,
-		awaitPublish: options.AwaitPublish,
-	}, nil
 }
 
 type Flow struct {
 	ctx    context.Context
 	client *Client
-	data   *flows.Flow
+	data   *pbFlows.Flow
 	steps  *maps.OrderedMap[string, *Step]
-}
-
-// Step represents a single step within the Flow object.
-type Step struct {
-	f    *Flow
-	data *flows.Flow_Step
 }
 
 // NewFlow creates a new Flow object
@@ -154,53 +46,88 @@ type Step struct {
 //
 // The parent id is inferred from the x-alis-flow-parent header.
 // This can be overridden by calling WithParentId.
-func (c *Client) NewFlow(ctx context.Context) (*Flow, error) {
+func (c *Client) NewFlow(ctx context.Context, opts ...FlowOption) (*Flow, error) {
+	// We'll create a new flowId
 	uid, err := uuid.NewRandom()
 	if err != nil {
 		return nil, err
 	}
-	// Remove hyphens from the UUID
-	id := strings.ReplaceAll(uid.String(), "-", "")
+	id := strings.ReplaceAll(uid.String(), "-", "") // Remove hyphens from the UUID
 
-	// Potentially use interceptors to pass method and parent id
-	source := "" // retrieve from grpc.Method
-	// Retrieve the fully qualified method name
-	if invokingMethod, ok := grpc.Method(ctx); ok {
-		source = invokingMethod
-	}
-	var parentId string // retrieve from x-alis-flow-parent
-	// We check if the context has a special header x-alis-flow-parent
-	// and if it does then we use that as the parent id
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok && len(md.Get(FlowParentHeaderKey)) > 0 {
-		parentIds := md.Get(FlowParentHeaderKey)
-		// We found a special header x-alis-flow-parent, it suggests that the flow has a parent
-		parentId = parentIds[len(parentIds)-1]
+	options := &FlowOptions{}
+	for _, opt := range opts {
+		opt(options)
 	}
 
-	// Add the parent id to the context
-	if err := grpc.SetHeader(ctx, metadata.Pairs(FlowHeaderKey, id)); err != nil {
-		return nil, fmt.Errorf("failed to set flow id (%s) in context: %w", parentId, err)
-	}
+	// This is a new flow
+	if options.existingFlow == nil {
+		// Potentially use interceptors to pass method and parent id
+		source := "" // retrieve from grpc.Method
+		// Retrieve the fully qualified method name
+		if invokingMethod, ok := grpc.Method(ctx); ok {
+			source = invokingMethod
+		}
+		var parentId string // retrieve from x-alis-flow-parent
+		// We check if the context has a special header x-alis-flow-parent
+		// and if it does then we use that as the parent id
+		md, ok := metadata.FromIncomingContext(ctx)
+		if ok && len(md.Get(FlowParentHeaderKey)) > 0 {
+			parentIds := md.Get(FlowParentHeaderKey)
+			// We found a special header x-alis-flow-parent, it suggests that the flow has a parent
+			parentId = parentIds[len(parentIds)-1]
+		}
+		if ok && len(md.Get(FlowHeaderKey)) > 0 {
+			flowIds := md.Get(FlowHeaderKey)
+			// Hmmm... why did we find a x-alis-flow-id value in the header, are we not
+			// supposed to create a new Flow?
+			return nil, fmt.Errorf("an exising flow was already found in the current context (x-alis-flow-id:%s)", flowIds[len(flowIds)-1])
+		}
 
-	return &Flow{
-		ctx: ctx,
-		data: &flows.Flow{
-			Name:       "flows/" + id,
-			Source:     source,
-			ParentId:   parentId,
-			Steps:      []*flows.Flow_Step{},
-			CreateTime: timestamppb.Now(),
-		},
-		client: c,
-		steps:  maps.NewOrderedMap[string, *Step](),
-	}, nil
+		// Add the parent id to the context
+		if err := grpc.SetHeader(ctx, metadata.Pairs(FlowHeaderKey, id)); err != nil {
+			return nil, fmt.Errorf("failed to set flow id (%s) in context: %w", parentId, err)
+		}
+
+		return &Flow{
+			ctx: ctx,
+			data: &pbFlows.Flow{
+				Name:       "flows/" + id,
+				Source:     source,
+				ParentId:   parentId,
+				Steps:      []*pbFlows.Flow_Step{},
+				CreateTime: timestamppb.Now(),
+			},
+			client: c,
+			steps:  maps.NewOrderedMap[string, *Step](),
+		}, nil
+	} else {
+		// Instantiate a new Flow object from the Flow proto data.
+		flow := &Flow{
+			ctx:    ctx,
+			data:   options.existingFlow,
+			client: c,
+		}
+
+		// Iterate through the steps and prepare the steps attribute
+		var steps *maps.OrderedMap[string, *Step]
+		for _, s := range options.existingFlow.GetSteps() {
+			// TODO: how to
+			step, _, err := flow.NewStep(s.GetId(), WithDescription(s.GetDescription()), WithTitle(s.GetTitle()))
+			if err != nil {
+				return nil, err
+			}
+			steps.Set(s.GetId(), step)
+		}
+
+		// Use the provided Flow data object to instantiate a new Flow object
+		return flow, nil
+	}
 }
 
 // Publish the Flow as an event.
 func (f *Flow) Publish() error {
 	// Using the data object add all the steps
-	steps := make([]*flows.Flow_Step, f.steps.Len())
+	steps := make([]*pbFlows.Flow_Step, f.steps.Len())
 	f.steps.Range(func(idx int, key string, value *Step) bool {
 		steps[idx] = value.data
 		return true
@@ -216,7 +143,7 @@ func (f *Flow) Publish() error {
 
 	// Set the Type of event
 	attributes := map[string]string{
-		"type":   string((&flows.Flow{}).ProtoReflect().Descriptor().FullName()),
+		"type":   string((&pbFlows.Flow{}).ProtoReflect().Descriptor().FullName()),
 		"source": f.data.Source,
 		"parent": f.data.ParentId,
 	}
@@ -296,14 +223,14 @@ func (f *Flow) NewStep(id string, opts ...StepOption) (*Step, context.Context, e
 	// Create a new step if it does not exist
 	if step == nil {
 		// Get initial state
-		state := flows.Flow_Step_QUEUED
-		if options.state != flows.Flow_Step_STATE_UNSPECIFIED {
+		state := pbFlows.Flow_Step_QUEUED
+		if options.state != pbFlows.Flow_Step_STATE_UNSPECIFIED {
 			state = options.state
 		}
 
 		step = &Step{
 			f: f,
-			data: &flows.Flow_Step{
+			data: &pbFlows.Flow_Step{
 				Id:          id,
 				Title:       options.title,
 				Description: options.description,
@@ -347,73 +274,4 @@ Example Usage:
 */
 func (f *Flow) Steps() *maps.OrderedMap[string, *Step] {
 	return f.steps
-}
-
-// WithTitle sets the title of the step.
-func (s *Step) WithTitle(title string) *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.Title = title
-	return s
-}
-
-// WithDescription sets the description of the step.
-func (s *Step) WithDescription(description string) *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.Description = description
-	return s
-}
-
-// Queued marks the state of the step as Queued.
-func (s *Step) Queued() *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_QUEUED
-	return s
-}
-
-// InProgress marks the state of the step as In Progress.
-func (s *Step) InProgress() *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_IN_PROGRESS
-	return s
-}
-
-// Cancelled marks the state of the step as Queued.
-func (s *Step) Cancelled() *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_CANCELLED
-	return s
-}
-
-// Done marks the state of the step as done.
-func (s *Step) Done() *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_COMPLETED
-	return s
-}
-
-// Failed marks the lasted step as Failed with the specified error.
-func (s *Step) Failed(err error) *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_FAILED
-	return s
-}
-
-// AwaitingInput marks the state of the step as Awaiting Input.
-func (s *Step) AwaitingInput() *Step {
-	s.data.UpdateTime = timestamppb.Now()
-	s.f.data.UpdateTime = timestamppb.Now()
-	s.data.State = flows.Flow_Step_AWAITING_INPUT
-	return s
-}
-
-// Publish allows one to publish a particular step.
-func (s *Step) Publish() error {
-	return s.f.Publish()
 }
