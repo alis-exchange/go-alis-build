@@ -108,7 +108,7 @@ func (r *Identity) GroupIds() []string {
 }
 
 // ExtractIdentityFromCtx returns the Identity making the request or for whom the request is being forwarded by a super admin.
-func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail string) (*Identity, error) {
+func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail string, superAdmins map[string]bool) (*Identity, error) {
 	// Looks in the specified header for a JWT token and extracts the requester from it.
 	// Returns nil if no JWT token was found in the header.
 	// Returns an error if the JWT token is invalid.
@@ -189,7 +189,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 	}
 
 	// if principal is the Deployment Service Account, check for forwarded principal
-	if identity.IsDeploymentServiceAccount() {
+	if _, ok := superAdmins[identity.PolicyMember()]; ok {
 		for _, header := range []string{AlisForwardingHeader, ProxyForwardingHeader} {
 			forwaredIdentity, err := getIdentityFromJwtHeader(ctx, header, deploymentServiceAccountEmail)
 			if err != nil {

@@ -93,7 +93,7 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	}
 
 	// Get identity from context
-	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail)
+	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail, i.superAdmins)
 	if err != nil {
 		return nil, ctx, err
 	}
