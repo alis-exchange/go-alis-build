@@ -4,7 +4,6 @@ go 1.22
 
 require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
-	go.alis.build/alog v0.0.19
 	google.golang.org/api v0.199.0
 	google.golang.org/grpc v1.67.0
 	google.golang.org/protobuf v1.34.2
