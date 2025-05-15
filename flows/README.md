@@ -63,3 +63,5 @@ Publish the flow
 ```go
 err := flow.Publish()
 ```
+go run github.com/GoogleCloudPlatform/artifact-registry-go-tools/cmd/auth@v0.1.0 refresh && export GOPROXY=https://europe-west1-
+go.pkg.dev/alis-org-777777/openprotos-go,https://proxy.golang.org,direct && export GONOSUMDB=$(go env GONOSUMDB),open.alis.services/protobuf && go mod tidy
