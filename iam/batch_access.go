@@ -60,7 +60,7 @@ func (i *IAM) NewBatchAuthorizer(ctx context.Context) (*BatchAuthorizer, context
 	}
 
 	// First, we'll extract the Identity from the context
-	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail)
+	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail, i.superAdmins)
 	if err != nil {
 		return nil, ctx, err
 	}

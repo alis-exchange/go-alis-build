@@ -122,11 +122,7 @@ func (f *ServiceProxy) IsAllowedMethod(fullMethod string) bool {
 	}
 
 	pkgAllowed := f.allowedMethods[servicePackage+".*"]
-	if pkgAllowed {
-		return true
-	}
-
-	return false
+	return pkgAllowed
 }
 
 // ForwardUnaryRequest forwards a unary request to the appropriate service.
@@ -176,20 +172,33 @@ func (f *ServiceProxy) ForwardServerStreamRequest(ctx context.Context, stream gr
 		return err
 	}
 
-	reqMsg, ok := f.requestMessages[info.FullMethod]
-	if !ok {
-		return status.Errorf(codes.Internal, "request message not found for method %s", info.FullMethod)
-	}
-	req := proto.Clone(reqMsg.(proto.Message))
-
 	respMsg, ok := f.responseMessages[info.FullMethod]
 	if !ok {
 		return status.Errorf(codes.Internal, "response message not found for method %s", info.FullMethod)
 	}
 
-	// Send the request to the external service
+	// Get the request message type
+	reqTemplate, ok := f.requestMessages[info.FullMethod]
+	if !ok {
+		return status.Errorf(codes.Internal, "request message type not found for method %s", info.FullMethod)
+	}
+
+	// Create an instance of the request message
+	// This will be populated by the client's actual request
+	req := proto.Clone(reqTemplate.(proto.Message))
+
+	// Receive the actual request message from the incoming client stream
+	if err := stream.RecvMsg(req); err != nil {
+		// If client closes stream before sending any message or an error occurs
+		if err == io.EOF {
+			return status.Errorf(codes.InvalidArgument, "client closed stream before sending request for %s", info.FullMethod)
+		}
+		return status.Errorf(codes.Internal, "failed to receive request from client for %s: %v", info.FullMethod, err)
+	}
+
+	// Send the received client request to the external service
 	if err := outboundStream.SendMsg(req); err != nil {
-		return err
+		return status.Errorf(codes.Internal, "failed to send request to backend for %s: %v", info.FullMethod, err)
 	}
 
 	// Relay responses from the external service to the client

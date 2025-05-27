@@ -77,7 +77,8 @@ type Client struct {
 	// Example: projects/myabc-123/locations/europe-west1/workflows/operations
 	workflowName string
 	// Set a default host for resumable operations, which can be overwritten via options on NewOperation.
-	// Example: "https://internal-gateway-....run.app"
+	// Example:
+	//   "https://internal-gateway-....run.app"
 	resumeHost string
 }
 
@@ -92,12 +93,11 @@ type SpannerConfig struct {
 	// Spanner Database
 	// The database name, for example 'myorganisation-myproduct'
 	Database string
-	// The name of the Spanner table used to keep track of LROs
-	// This is managed by the Alis Build Platform, for example + "...._AlisManagedOperations",
-	table string
-	// Database role
-	// This is managed by the Alis Build Platform
-	role string
+	// DatabaseRole specifies the role to be assumed for all operations on the database by this client.
+	// Only required if the relevant table has Roles defined
+	// For example:
+	//   databaseRole := strings.ReplaceAll(Project, "-", "_") // If configured by the Alis Build Platform
+	DatabaseRole string
 }
 
 /*
@@ -141,7 +141,7 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 		return nil, fmt.Errorf("unable to determine the 'project' for Google Cloud Workflows.  ensure ALIS_OS_PROJECT env is specified at runtime or set it using the lro.WithProject() client option")
 	}
 	if options.location == "" {
-		return nil, fmt.Errorf("unable to determine the 'location' for Google Cloud Workflows.  ensure ALIS_OS_REGION env is specified at runtime or set it using the lro.WithLocation() client option")
+		return nil, fmt.Errorf("unable to determine the 'location' for Google Cloud Workflows.  ensure ALIS_REGION env is specified at runtime or set it using the lro.WithLocation() client option")
 	}
 
 	// Create a new Client object
@@ -151,9 +151,8 @@ func NewClient(ctx context.Context, spannerConfig *SpannerConfig, opts ...Client
 	}
 
 	// Instantiate a Spanner client and set the table.
-	role := strings.ReplaceAll(options.project, "-", "_") // As configured by the Alis Build Platform
 	database := fmt.Sprintf("projects/%s/instances/%s/databases/%s", spannerConfig.Project, spannerConfig.Instance, spannerConfig.Database)
-	if spanner, err := spanner.NewClientWithConfig(ctx, database, spanner.ClientConfig{DatabaseRole: role}); err != nil {
+	if spanner, err := spanner.NewClientWithConfig(ctx, database, spanner.ClientConfig{DatabaseRole: spannerConfig.DatabaseRole}); err != nil {
 		return nil, err
 	} else {
 		client.spanner = spanner

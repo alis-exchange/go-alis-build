@@ -9,7 +9,6 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"github.com/google/uuid"
-	"go.alis.build/alog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -93,7 +92,7 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	}
 
 	// Get identity from context
-	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail)
+	identity, err := ExtractIdentityFromCtx(ctx, i.deploymentServiceAccountEmail, i.superAdmins)
 	if err != nil {
 		return nil, ctx, err
 	}
@@ -297,7 +296,6 @@ func (a *Authorizer) AddIdentityPolicy() {
 				}
 				policy, err := a.iam.UsersServer.GetIamPolicy(a.ctx, req)
 				if err != nil {
-					alog.Alertf(a.ctx, "error fetching policy for user %s: %v", a.Identity.UserName(), err)
 					return nil
 				}
 				return policy
@@ -311,7 +309,6 @@ func (a *Authorizer) AddIdentityPolicy() {
 				}
 				policy, err := a.iam.UsersClient.GetIamPolicy(a.ctx, req)
 				if err != nil {
-					alog.Alertf(a.ctx, "error fetching policy for user %s: %v", a.Identity.UserName(), err)
 					return nil
 				}
 				return policy
@@ -338,7 +335,6 @@ func (a *Authorizer) AddPolicyFromClientRpc(resource string, clientGetIamPolicyM
 		}
 		policy, err := clientGetIamPolicyMethod(a.ctx, req)
 		if err != nil {
-			alog.Alertf(a.ctx, "error fetching policy from client for %s: %v", resource, err)
 			return nil
 		}
 		return policy
@@ -363,7 +359,6 @@ func (a *Authorizer) AddPolicyFromServerRpc(resource string, serverGetIamPolicyM
 		}
 		policy, err := serverGetIamPolicyMethod(a.ctx, req)
 		if err != nil {
-			alog.Alertf(a.ctx, "error fetching policy from server for %s: %v", resource, err)
 			return nil
 		}
 		return policy
