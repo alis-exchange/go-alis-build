@@ -13,7 +13,7 @@ This package provides a reverse proxy and JWT validation middleware for Go appli
 ### Installation
 
 ```bash
-go get go.alis.build/iam/authproxy 
+go get go.alis.build/iam/v2/authproxy 
 ```
 
 ### Usage

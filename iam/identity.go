@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
-	"go.alis.build/iam/internal/jwt"
+	"go.alis.build/iam/v2/internal/jwt"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )

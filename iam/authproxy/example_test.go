@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"go.alis.build/iam/authproxy"
+	"go.alis.build/iam/v2/authproxy"
 )
 
 func ExampleHandleAuth() {
