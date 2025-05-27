@@ -2,24 +2,34 @@ package iam
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
-	parametermanager "cloud.google.com/go/parametermanager/apiv1"
-	"cloud.google.com/go/parametermanager/apiv1/parametermanagerpb"
 	"go.alis.build/alog"
 	"go.alis.build/client"
-	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
-	openConfig "open.alis.services/protobuf/alis/open/config/v1"
 	openIam "open.alis.services/protobuf/alis/open/iam/v1"
 )
 
-// A server authorizer is setup once per grpc server and contains static information about the roles, permissions
+// Role represents a role in the IAM system.
+type Role struct {
+	// The name of the role
+	// Format: roles/([a-z][a-zA-Z0-9.]{3,50})
+	Name string
+	// The permissions that this role grants
+	// Almost always use the format of the grpc method name
+	// E.g. /alis.open.iam.v1.RolesService/ListRoles and/or /someorg.ab.library.v1.BookService/GetBook
+	Permissions []string
+	// Whether the role is given to all users by default.
+	// This is used to group RPCs that are available to any user that has access to the deployment.
+	// If this is true, resource_types must be empty.
+	// The alternative would be to create a role that gets assigned to any new users.
+	AllUsers bool
+}
+
+// IAM is the main IAM object that contains all the roles and permissions.
+// A server authoriser is set up once per grpc server and contains static information about the roles, permissions
 // and functions to resolve group memberships.
 type IAM struct {
 	// the email of the deployment service account
@@ -28,9 +38,9 @@ type IAM struct {
 	// by default, only the deployment service account is a super admin
 	superAdmins map[string]bool
 	// the roles
-	roles []*openIam.Role
+	roles []*Role
 	// the function per group type that resolves whether a requester is a member of a group
-	memberResolver map[string](func(ctx context.Context, groupType string, groupId string, az *Authorizer) bool)
+	memberResolver map[string]func(ctx context.Context, groupType string, groupId string, az *Authorizer) bool
 	// Globally disable auth
 	disabled bool
 
@@ -57,9 +67,10 @@ type IamOptions struct {
 // IamOption is a functional option for the New method.
 type IamOption func(*IamOptions)
 
-// Should only be used by the alis managed users service.
 // WithUserServer sets the user server to use for fetching user policies in case they are not provided in the JWT token.
 // If set, the default users client is not used.
+//
+// Should only be used by the alis managed users service.
 func WithUserServer(userServer openIam.UsersServiceServer) IamOption {
 	return func(opts *IamOptions) {
 		opts.UserServer = userServer
@@ -75,7 +86,7 @@ func WithoutDefaultUsersClient() IamOption {
 	}
 }
 
-// Sets the additional super admins. By default, only the deployment service account is a super admin.
+// WithAdditionalSuperAdmins sets the additional super admins. By default, only the deployment service account is a super admin.
 // Arguments:
 //   - superAdmins: the additional super admins e.g. 'user:<userId>', 'serviceAccount:<email>'
 func WithAdditionalSuperAdmins(superAdmins ...string) IamOption {
@@ -86,8 +97,7 @@ func WithAdditionalSuperAdmins(superAdmins ...string) IamOption {
 
 // New creates a new IAM object.
 // ALIS_OS_PROJECT environment variable must be set.
-// ALIS_PRODUCT_CONFIG environment variable must be set if the product_config parameter is not set in Parameter Manager(https://console.cloud.google.com/security/parametermanager/locations/global/parameters/product_config).
-func New(opts ...IamOption) (*IAM, error) {
+func New(roles []*Role, opts ...IamOption) (*IAM, error) {
 	ctx := context.Background()
 	// determine deployment service account email based on project id
 	projectId := os.Getenv("ALIS_OS_PROJECT")
@@ -104,71 +114,13 @@ func New(opts ...IamOption) (*IAM, error) {
 		opt(options)
 	}
 
-	// extract roles from product config
-	var productConfigStr string
-	if os.Getenv("ALIS_PRODUCT_CONFIG") != "" {
-		productConfigStr = os.Getenv("ALIS_PRODUCT_CONFIG")
-	} else {
-		// Initiate parameter manager client
-		parameterManagerClient, err := parametermanager.NewClient(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("error creating parameter manager client: %v", err)
-		}
-		defer parameterManagerClient.Close()
-
-		// List available versions
-		// Only get the latest version
-		versionsIt := parameterManagerClient.ListParameterVersions(ctx, &parametermanagerpb.ListParameterVersionsRequest{
-			Parent:  fmt.Sprintf("projects/%s/locations/global/parameters/product_config", projectId),
-			OrderBy: "name desc",
-		})
-		for {
-			parameterVersion, err := versionsIt.Next()
-			if errors.Is(err, iterator.Done) {
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("error getting parameter version: %v", err)
-			}
-
-			// Get the latest version
-			// We have to explicitly get the version because the payload is not returned by ListParameterVersions
-			// TODO: Change after this is fixed
-			version, err := parameterManagerClient.GetParameterVersion(ctx, &parametermanagerpb.GetParameterVersionRequest{
-				Name: parameterVersion.GetName(),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("error getting parameter version: %v", err)
-			}
-
-			productConfigBytes := version.GetPayload().GetData()
-			if len(productConfigBytes) > 0 {
-				productConfigStr = string(productConfigBytes)
-				break
-			}
-		}
-	}
-
-	// If product config is still empty, return error
-	if productConfigStr == "" {
-		alog.Fatal(ctx, "ALIS_PRODUCT_CONFIG environment variable or product_config parameter is required")
-	}
-	productConfigBytes, err := base64.StdEncoding.DecodeString(productConfigStr)
-	if err != nil {
-		alog.Fatalf(ctx, "error base64 decoding product config: %v", err)
-	}
-	productConfig := &openConfig.ProductConfig{}
-	err = proto.Unmarshal(productConfigBytes, productConfig)
-	if err != nil {
-		alog.Fatalf(ctx, "error proto unmarshalling product config: %v", err)
-	}
-	roles := productConfig.Roles
+	// Validate roles
 
 	// create IAM object
 	i := &IAM{
 		deploymentServiceAccountEmail: deploymentServiceAccount,
 		roles:                         roles,
-		memberResolver:                make(map[string](func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool)),
+		memberResolver:                make(map[string]func(ctx context.Context, groupType string, groupId string, rpcAuthz *Authorizer) bool),
 		openPermissions:               make(map[string]bool),
 		superAdmins:                   make(map[string]bool),
 	}
