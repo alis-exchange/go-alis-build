@@ -40,4 +40,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250414145226-207652e42e2e // indirect
 )
 
+
 // export GOPROXY=https://europe-west1-go.pkg.dev/alis-org-777777/openprotos-go,https://proxy.golang.org,direct && export GONOSUMDB=open.alis.services && go mod tidy
