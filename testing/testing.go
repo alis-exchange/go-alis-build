@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v4"
 	"go.alis.build/alog"
 	"go.alis.build/authz"
 	"go.alis.build/client"
@@ -70,7 +70,10 @@ func (t *GrpcServiceTester) AddTestUserToCtx(ctx context.Context, outgoing bool)
 		if outgoing {
 			ctx = metadata.AppendToOutgoingContext(ctx, authz.AuthzForwardingHeader, "Bearer "+t.testUserJwt)
 		} else {
-			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+t.testUserJwt))
+			md, _ := metadata.FromIncomingContext(ctx)
+			newMD := metadata.Pairs("authorization", "Bearer "+t.testUserJwt)
+
+			ctx = metadata.NewIncomingContext(ctx, metadata.Join(md, newMD))
 		}
 	}
 	return ctx
