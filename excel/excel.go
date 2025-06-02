@@ -250,7 +250,7 @@ func FormattedNumberValue(x *wrapperspb.DoubleValue, format string) formattedNum
 		}
 	} else {
 		return formattedNumber{
-			Type: "NotAvailable",
+			Type: "Empty",
 		}
 	}
 }
@@ -438,7 +438,7 @@ func DoubleValue(x *wrapperspb.DoubleValue) doubleCellValue {
 		}
 	} else {
 		return doubleCellValue{
-			Type: "NotAvailable",
+			Type: "Empty",
 		}
 	}
 }
@@ -476,7 +476,7 @@ func Int32Value(x *wrapperspb.Int32Value) doubleCellValue {
 		}
 	} else {
 		return doubleCellValue{
-			Type: "NotAvailable",
+			Type: "Empty",
 		}
 	}
 }
@@ -523,7 +523,7 @@ func ArrayValue(elements [][]CellValue) arrayCellValue {
 		}
 	} else {
 		return arrayCellValue{
-			Type: "NotAvailable",
+			Type: "Empty",
 		}
 	}
 }
@@ -562,7 +562,7 @@ type emptyCellValue struct {
 // EmptyValue is a helper function to generate a EmptyCellValue object
 func EmptyValue() emptyCellValue {
 	return emptyCellValue{
-		Type: "NotAvailable",
+		Type: "Empty",
 	}
 }
 
