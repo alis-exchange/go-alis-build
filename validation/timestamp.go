@@ -6,6 +6,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// DefaultTimeFormat is the default format used for timestamps when no specific format is provided.
 var DefaultTimeFormat = "2006-01-02 15:04:05 MST"
 
 // Provides rules applicable to timestamp values.
