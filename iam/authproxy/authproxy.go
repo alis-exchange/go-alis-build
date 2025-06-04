@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alis-exchange/iam"
+	"github.com/alis-exchange/go-alis-build/iam"
 	"github.com/golang-jwt/jwt/v4"
 	"google.golang.org/grpc/metadata"
 )
