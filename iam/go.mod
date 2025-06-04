@@ -1,4 +1,4 @@
-module go.alis.build/iam
+module github.com/alis-exchange/iam
 
 go 1.24.2
 

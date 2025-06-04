@@ -3,7 +3,7 @@ package jwt_test
 import (
 	"testing"
 
-	"go.alis.build/iam/internal/jwt"
+	"github.com/alis-exchange/iam/internal/jwt"
 )
 
 func TestParsePayload(t *testing.T) {
