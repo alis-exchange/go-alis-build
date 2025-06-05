@@ -9,6 +9,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"github.com/google/uuid"
+	"go.alis.build/alog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -314,6 +315,8 @@ func (a *Authorizer) AddIdentityPolicy() {
 				return policy
 			}
 			a.AsyncAddPolicy(a.Identity.UserName(), fetchFunc)
+		} else {
+			alog.Warnf(a.ctx, "No users client or server available to fetch identity policy for %s", a.Identity.UserName())
 		}
 	}
 }

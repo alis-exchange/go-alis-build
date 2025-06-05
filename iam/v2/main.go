@@ -6,10 +6,9 @@ import (
 	"os"
 	"strings"
 
+	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/alog"
-	"go.alis.build/client"
 	"google.golang.org/grpc"
-	openIam "open.alis.services/protobuf/alis/open/iam/v1"
 )
 
 // Role represents a role in the IAM system.
@@ -26,6 +25,13 @@ type Role struct {
 	// If this is true, resource_types must be empty.
 	// The alternative would be to create a role that gets assigned to any new users.
 	AllUsers bool
+}
+
+type UsersClient interface {
+	GetIamPolicy(ctx context.Context, req *iampb.GetIamPolicyRequest, opts ...grpc.CallOption) (*iampb.Policy, error)
+}
+type UsersServer interface {
+	GetIamPolicy(ctx context.Context, req *iampb.GetIamPolicyRequest) (*iampb.Policy, error)
 }
 
 // IAM is the main IAM object that contains all the roles and permissions.
@@ -48,10 +54,9 @@ type IAM struct {
 	rolePermissionMap map[string]map[string]bool
 
 	// the users client to use for fetching user policies in case they are not provided in the JWT token
-	UsersClient openIam.UsersServiceClient
-
+	UsersClient UsersClient
 	// the users server to use for fetching user policies in case they are not provided in the JWT token
-	UsersServer openIam.UsersServiceServer
+	UsersServer UsersServer
 
 	// open permissions are always allowed
 	openPermissions map[string]bool
@@ -60,7 +65,8 @@ type IAM struct {
 // IamOptions are the options for creating a new IAM object.
 type IamOptions struct {
 	WithoutDefaultUsersClient bool
-	UserServer                openIam.UsersServiceServer
+	UserServer                UsersServer
+	UserClient                UsersClient
 	SuperAdmins               []string
 }
 
@@ -71,7 +77,7 @@ type IamOption func(*IamOptions)
 // If set, the default users client is not used.
 //
 // Should only be used by the alis managed users service.
-func WithUserServer(userServer openIam.UsersServiceServer) IamOption {
+func WithUserServer(userServer UsersServer) IamOption {
 	return func(opts *IamOptions) {
 		opts.UserServer = userServer
 		opts.WithoutDefaultUsersClient = true
@@ -82,6 +88,13 @@ func WithUserServer(userServer openIam.UsersServiceServer) IamOption {
 // to fetch user policies in case they are not provided in the JWT token.
 func WithoutDefaultUsersClient() IamOption {
 	return func(opts *IamOptions) {
+		opts.WithoutDefaultUsersClient = true
+	}
+}
+
+func WithUsersClient(usersClient UsersClient) IamOption {
+	return func(opts *IamOptions) {
+		opts.UserClient = usersClient
 		opts.WithoutDefaultUsersClient = true
 	}
 }
@@ -147,16 +160,6 @@ func New(roles []*Role, opts ...IamOption) (*IAM, error) {
 	// initialise users server if specified
 	if options.UserServer != nil {
 		i.UsersServer = options.UserServer
-	}
-
-	// create users client if not disabled
-	if !options.WithoutDefaultUsersClient {
-		maxSizeOptions := grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(2000000000), grpc.MaxCallRecvMsgSize(2000000000))
-		conn, err := client.NewConnWithRetry(ctx, "iam-users-"+os.Getenv("ALIS_RUN_HASH")+".run.app:443", false, maxSizeOptions)
-		if err != nil {
-			return nil, fmt.Errorf("error creating users client: %v", err)
-		}
-		i.UsersClient = openIam.NewUsersServiceClient(conn)
 	}
 
 	return i, nil
