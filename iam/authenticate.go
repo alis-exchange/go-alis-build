@@ -15,6 +15,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 	"go.alis.build/alog"
+	"google.golang.org/api/idtoken"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -164,8 +166,22 @@ func (h *Authenticator) reverseProxyToEndpoint(resp http.ResponseWriter, req *ht
 		return
 	}
 
-	// add header
+	// add headers
 	authReq.Header.Add(ForwardedHostHeader, req.Host)
+	endpointHost := strings.TrimPrefix(endpoint, "https://")
+	endpointHost = strings.TrimPrefix(endpointHost, "http://")
+	audience := "https://" + strings.Split(endpointHost, ":")[0]
+	tokenSource, err := idtoken.NewTokenSource(req.Context(), audience, option.WithAudiences(audience))
+	if err != nil {
+		http.Error(resp, "creating token source", http.StatusInternalServerError)
+		return
+	}
+	token, err := tokenSource.Token()
+	if err != nil {
+		http.Error(resp, "getting token", http.StatusInternalServerError)
+		return
+	}
+	token.SetAuthHeader(authReq)
 
 	// set cookies
 	for _, c := range req.Cookies() {
