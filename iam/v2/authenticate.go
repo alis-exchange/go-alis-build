@@ -27,13 +27,17 @@ type Authenticator struct {
 
 const ForwardedHostHeader = "x-forwarded-host"
 
-// Creates a new Authenticator instance that can be used to authenticate users via the alis-build managed iam service.
-func NewAuthenticator() *Authenticator {
-	runHash := os.Getenv("ALIS_RUN_HASH")
-	if runHash == "" {
-		alog.Fatalf(context.Background(), "ALIS_RUN_HASH not set")
+// Creates a new Authenticator instance that can be used to authenticate users
+// via the alis-build managed iam service. If authHost is empty,authHost =
+// "https://iam-v1-{runHash}.run.app:443".
+func NewAuthenticator(authHost string) *Authenticator {
+	if authHost == "" {
+		runHash := os.Getenv("ALIS_RUN_HASH")
+		if runHash == "" {
+			alog.Fatalf(context.Background(), "ALIS_RUN_HASH not set")
+		}
+		authHost = fmt.Sprintf("https://iam-v1-%s.run.app:443", runHash)
 	}
-	authHost := fmt.Sprintf("https://iam-auth-%s.run.app:443", runHash)
 	an := &Authenticator{
 		authHost:   authHost,
 		publicKeys: &sync.Map{},
