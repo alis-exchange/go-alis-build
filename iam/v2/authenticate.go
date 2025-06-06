@@ -93,14 +93,18 @@ func (h *Authenticator) IsAuthenticated(resp http.ResponseWriter, req *http.Requ
 			hasNewValidAccessToken := false
 			var accessT string
 
-			for _, c := range refreshResp.Request.Response.Cookies() {
-				http.SetCookie(resp, c)
-				if c.Name == "access_token" {
-					if err := h.validateJwt(c.Value); err == nil {
-						hasNewValidAccessToken = true
-						accessT = c.Value
+			if refreshResp != nil && refreshResp.Request != nil && refreshResp.Request.Response != nil {
+				for _, c := range refreshResp.Request.Response.Cookies() {
+					http.SetCookie(resp, c)
+					if c.Name == "access_token" {
+						if err := h.validateJwt(c.Value); err == nil {
+							hasNewValidAccessToken = true
+							accessT = c.Value
+						}
 					}
 				}
+			} else {
+				alog.Warnf(req.Context(), "empty refresh resp")
 			}
 			if hasNewValidAccessToken {
 				req.Header.Del(AuthHeader)
