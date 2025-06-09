@@ -2,7 +2,6 @@ package iam
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -118,13 +117,8 @@ func (i *IAM) NewAuthorizer(ctx context.Context) (*Authorizer, context.Context, 
 	}
 	authorizer.ctx = ctx
 
-	// extract method from context
-	method, ok := grpc.Method(ctx)
-	if !ok {
-		if !authorizer.skipAuth {
-			return nil, ctx, fmt.Errorf("rpc method not found in context")
-		}
-	}
+	// extract method from context, if any
+	method, _ := grpc.Method(ctx)
 	authorizer.Method = method
 
 	return authorizer, ctx, nil
@@ -147,6 +141,9 @@ func (a *Authorizer) Policies() []*iampb.Policy {
 // This method returns an gRPC compliant error message and should be handled accordingly and is intented to be used by
 // rpc methods.
 func (a *Authorizer) AuthorizeRpc() error {
+	if a.Method == "" {
+		return status.Errorf(codes.InvalidArgument, "not a grpc method. Use HasAccess for non grpc methods.")
+	}
 	if !a.HasAccess(a.Method) {
 		return status.Errorf(codes.PermissionDenied, "permission denied: %s", a.Method)
 	}
