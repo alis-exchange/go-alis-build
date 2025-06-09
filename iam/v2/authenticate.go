@@ -255,8 +255,25 @@ func (h *Authenticator) validateJwt(accessToken string) error {
 		if kid == todayKey || kid == yesterdayKey {
 			publicKey, ok := h.publicKeys.Load(kid)
 			if !ok {
+				endpointHost := strings.TrimPrefix(h.authHost, "https://")
+				endpointHost = strings.TrimPrefix(endpointHost, "http://")
+				audience := "https://" + strings.Split(endpointHost, ":")[0]
+				tokenSource, err := idtoken.NewTokenSource(context.Background(), audience, option.WithAudiences(audience))
+				if err != nil {
+					return nil, fmt.Errorf("creating token source: %w", err)
+				}
+				token, err := tokenSource.Token()
+				if err != nil {
+					return nil, fmt.Errorf("getting token: %w", err)
+				}
+				authReq, err := http.NewRequest("GET", h.authHost+"/auth/keys", nil)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create request: %w", err)
+				}
+				token.SetAuthHeader(authReq)
+
 				// get keys from /auth/keys
-				keysResp, err := http.Get(h.authHost + "/auth/keys")
+				keysResp, err := http.DefaultClient.Do(authReq)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get public keys: %w", err)
 				}
