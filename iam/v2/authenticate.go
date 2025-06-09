@@ -241,6 +241,8 @@ func (h *Authenticator) reverseProxyToEndpoint(resp http.ResponseWriter, req *ht
 
 // Returns an error if the token is invalid
 func (h *Authenticator) validateJwt(accessToken string) error {
+	accessToken = strings.TrimPrefix(accessToken, "bearer ")
+	accessToken = strings.TrimPrefix(accessToken, "Bearer ")
 	// validate token.Signature against publicKey
 	_, err := jwt.Parse(accessToken, func(token *jwt.Token) (interface{}, error) {
 		// get kid from headers
