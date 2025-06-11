@@ -8,12 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type sprotoError interface {
-	Error() string
-	Is(target error) bool
-	GRPCStatus() *status.Status
-}
-
+// ErrInvalidFilter is returned when an invalid filter is provided.
 type ErrInvalidFilter struct {
 	filter string
 	err    error
@@ -30,6 +25,7 @@ func (e ErrInvalidFilter) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// ErrInvalidIdentifier is returned when an invalid identifier is provided.
 type ErrInvalidIdentifier struct {
 	identifier string
 	err        error

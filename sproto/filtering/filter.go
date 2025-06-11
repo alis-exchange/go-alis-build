@@ -258,24 +258,23 @@ type sanitizersRegex struct {
 }
 
 /*
-Filter is a CEL filter expression to Spanner query parser.
+Parser is a CEL filter expression to Spanner query parser.
 
 It is used to parse a CEL filter expression and convert it to a Spanner statement.
 */
-type Filter struct {
+type Parser struct {
 	identifiers     map[string]Identifier
 	env             *cel.Env
 	sanitizersRegex *sanitizersRegex
 }
 
 /*
-NewFilter creates a new Filter instance with the given identifiers.
+NewParser creates a new Filter parser instance with the given identifiers.
 
 Identifiers are used to declare common protocol buffer types for conversion.
 Common identifiers are Timestamp, Duration, Date etc.
 */
-func NewFilter(identifiers ...Identifier) (*Filter, error) {
-
+func NewParser(identifiers ...Identifier) (*Parser, error) {
 	// Create a CEL environment with the given identifiers.
 	identifiersMap := make(map[string]Identifier)
 	var opts []cel.EnvOption
@@ -315,7 +314,7 @@ func NewFilter(identifiers ...Identifier) (*Filter, error) {
 		return nil, err
 	}
 
-	return &Filter{
+	return &Parser{
 		env:         env,
 		identifiers: identifiersMap,
 		sanitizersRegex: &sanitizersRegex{
@@ -335,7 +334,7 @@ This is useful when you want to add a new identifier to the environment after cr
 
 May return an ErrInvalidIdentifier error if the identifier is invalid.
 */
-func (f *Filter) DeclareIdentifier(identifier Identifier) error {
+func (f *Parser) DeclareIdentifier(identifier Identifier) error {
 	env, err := f.env.Extend(cel.Variable(identifier.Path(), identifier.envType()))
 	if err != nil {
 		return ErrInvalidIdentifier{
@@ -349,7 +348,7 @@ func (f *Filter) DeclareIdentifier(identifier Identifier) error {
 	return nil
 }
 
-func (f *Filter) sanitize(filter string) string {
+func (f *Parser) sanitize(filter string) string {
 	filter = f.sanitizersRegex.logicalAndRegex.ReplaceAllString(filter, "&&")
 	filter = f.sanitizersRegex.logicalOrRegex.ReplaceAllString(filter, "||")
 	filter = f.sanitizersRegex.logicalEqRegex.ReplaceAllString(filter, " == ")
@@ -367,16 +366,16 @@ Parse parses a CEL filter expression and returns a Spanner statement.
 
 Examples:
 
-	filter.Parse("Proto.effective_date.year > 2021 AND create_time > timestamp('2021-01-01T00:00:00Z') OR expire_after > duration('1h')")
-	filter.Parse("key = 'resources/1' OR Proto.effective_date = date('2021-01-01')")
-	filter.Parse("Proto.state = 'ACTIVE'"
-	filter.Parse("key IN ['resources/1', 'resources/2']")
-	filter.Parse("effective_date != null)
-	filter.Parse("count >= 10)
+	parser.Parse("Proto.effective_date.year > 2021 AND create_time > timestamp('2021-01-01T00:00:00Z') OR expire_after > duration('1h')")
+	parser.Parse("key = 'resources/1' OR Proto.effective_date = date('2021-01-01')")
+	parser.Parse("Proto.state = 'ACTIVE'"
+	parser.Parse("key IN ['resources/1', 'resources/2']")
+	parser.Parse("effective_date != null)
+	parser.Parse("count >= 10)
 
 May return an ErrInvalidFilter error if the filter is invalid.
 */
-func (f *Filter) Parse(filter string) (*spanner.Statement, error) {
+func (f *Parser) Parse(filter string) (*spanner.Statement, error) {
 	filter = f.sanitize(filter)
 
 	ast, issues := f.env.Parse(filter)

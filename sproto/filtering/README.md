@@ -11,26 +11,26 @@ Unsupported functions/operators include:
 
 ## Usage
 
-Create a new Filter instance using `NewFilter`
+Create a new Parser instance using `NewParser`
 
 ```go
-    filter, err := filtering.NewFilter()
+    parser, err := filtering.NewParser()
 ```
 
 Use the `Parse` method to convert a CEL expression into a SQL WHERE clause
 
 ```go
-    stmt, err := filter.Parse("age > 18")
+    stmt, err := parser.Parse("age > 18")
 ```
 
 
-You can optionally pass in Identifiers to the `NewFilter` method.
+You can optionally pass in Identifiers to the `NewParser` method.
 Identifiers are used to declare common protocol buffer types for conversion.
 Common identifiers are for `google.protobuf.Timestamp`, `google.protobuf.Duration`, `google.type.Date` etc.
 They enable to parser to recognize protocol buffer types and convert them to SQL data types.
 
 ```go
-    filter, err := filtering.NewFilter(filtering.Timestamp("Proto.create_time"),filtering.Duration("Proto.duration"))
+    parser, err := filtering.NewParser(filtering.Timestamp("Proto.create_time"),filtering.Duration("Proto.duration"))
 ```
 
 ### Reserved keywords
@@ -38,7 +38,7 @@ They enable to parser to recognize protocol buffer types and convert them to SQL
 One of your columns may have a reserved keyword as a name. For this you can register the column using the `filtering.Reserved()` identifier.
 
 ```go
-    filter, err := filtering.NewFilter(filtering.Reserved("Group"), filtering.Reserved("Lookup"))
+    parser, err := filtering.NewParser(filtering.Reserved("Group"), filtering.Reserved("Lookup"))
 ```
 
 ## Supported protobuf functions
@@ -50,13 +50,13 @@ Please note that the package only supports the following protobuf functions at t
 The `timestamp` function converts a string into a timestamp. Should be an RFC 3339(YYYY-MM-DDTHH:MM:SS[.ssssss][±HH:MM | Z]) timestamp string. e.g. 2006-01-02T15:04:05Z07:00
 
 ```go
-    stmt, err := filter.Parse("Proto.create_time > timestamp('2021-01-01T00:00:00Z')")
+    stmt, err := parser.Parse("Proto.create_time > timestamp('2021-01-01T00:00:00Z')")
 ```
 
 Native spanner TIMESTAMP data type columns should not use this function. Instead just a RFC 3339 timestamp string should be used.
 
 ```go
-    stmt, err := filter.Parse("create_time > '2021-01-01T00:00:00Z'")
+    stmt, err := parser.Parse("create_time > '2021-01-01T00:00:00Z'")
 ```
 
 ### Duration
@@ -64,7 +64,7 @@ Native spanner TIMESTAMP data type columns should not use this function. Instead
 The `duration` function converts a string into a duration. Should be a valid duration string. e.g. 1h, 1m, 1s
 
 ```go
-    stmt, err := filter.Parse("Proto.duration > duration('1h')")
+    stmt, err := parser.Parse("Proto.duration > duration('1h')")
 ```
 
 ### Date
@@ -72,13 +72,13 @@ The `duration` function converts a string into a duration. Should be a valid dur
 The `date` function converts a string into a date. Should be an ISO 8601(YYYY-MM-DD) date string.
 
 ```go
-    stmt, err := filter.Parse("Proto.date > date('2021-01-01')")
+    stmt, err := parser.Parse("Proto.date > date('2021-01-01')")
 ```
 
 Native spanner DATE data type columns should not use this function. Instead just a ISO 8601 date string should be used.
 
 ```go
-    stmt, err := filter.Parse("effective_date > '2021-01-01'")
+    stmt, err := parser.Parse("effective_date > '2021-01-01'")
 ```
 
 ## Other Supported functions
@@ -90,7 +90,7 @@ The package also supports the following scalar column/field functions:
 The `prefix` function checks if a string column starts with a given prefix.
 
 ```go
-    stmt, err := filter.Parse("prefix(key, 'resources/ABC')")
+    stmt, err := parser.Parse("prefix(key, 'resources/ABC')")
 ```
 
 ### Suffix
@@ -98,7 +98,7 @@ The `prefix` function checks if a string column starts with a given prefix.
 The `suffix` function checks if a string column ends with a given suffix.
 
 ```go
-    stmt, err := filter.Parse("suffix(key, 'ABC')")
+    stmt, err := parser.Parse("suffix(key, 'ABC')")
 ```
 
 ### IN
@@ -106,5 +106,5 @@ The `suffix` function checks if a string column ends with a given suffix.
 The `IN` function checks if a column value is in a list of values.
 
 ```go
-    stmt, err := filter.Parse("key IN ['value1', 'value2']")
+    stmt, err := parser.Parse("key IN ['value1', 'value2']")
 ```

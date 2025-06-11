@@ -10,7 +10,7 @@ import (
 )
 
 // parseExpr converts a CEL expression into SQL string and parameters
-func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string, map[string]any, bool, error) {
+func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string, map[string]any, bool, error) {
 	if params == nil {
 		params = make(map[string]any)
 	}
@@ -333,8 +333,8 @@ func (f *Filter) parseExpr(expression *expr.Expr, params map[string]any) (string
 	return "", params, false, nil
 }
 
-// parseSelectExpr handles field selection (e.g., `message.field`) in CEL expressions
-func (f *Filter) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string]interface{}) (string, error) {
+// parseSelectExpr handles field selection (e.g. `message.field`) in CEL expressions
+func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string]interface{}) (string, error) {
 	// Recursively resolve the operand (which could itself be a SelectExpr or IdentExpr)
 	operandSQL, _, _, err := f.parseExpr(selectExpr.Operand, params)
 	if err != nil {
@@ -345,7 +345,7 @@ func (f *Filter) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string
 	return fmt.Sprintf("%s.%s", operandSQL, selectExpr.Field), nil
 }
 
-func (f *Filter) parseIdentifier(sql string) string {
+func (f *Parser) parseIdentifier(sql string) string {
 	if ident, ok := f.identifiers[sql]; ok {
 		switch ident.(type) {
 		case reservedIdentifier:
