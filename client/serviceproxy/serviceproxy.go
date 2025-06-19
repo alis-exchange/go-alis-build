@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -225,4 +228,84 @@ func (f *ServiceProxy) ForwardServerStreamRequest(ctx context.Context, stream gr
 	}
 
 	return nil
+}
+
+// ForwardRestRequest forwards a REST request to the appropriate service.
+func (f *ServiceProxy) ForwardRestRequest(response http.ResponseWriter, request *http.Request) {
+	// Get the service name from the full method
+	fullMethodParts := strings.Split(request.RequestURI, "/")
+	serviceName := fullMethodParts[1]
+
+	// Ensure the service is registered in the service proxy
+	if _, ok := f.conns[serviceName]; !ok {
+		http.Error(response, "service not found in service proxy", http.StatusInternalServerError)
+		return
+	}
+
+	// Get the request message
+	reqMsg, ok := f.requestMessages[request.RequestURI]
+	if !ok {
+		http.Error(response, fmt.Sprintf("request message not found for method %s", request.RequestURI), http.StatusInternalServerError)
+		return
+	}
+	req := proto.Clone(reqMsg.(proto.Message))
+
+	// Read the request body if it exists
+	var body []byte
+	if request.Body != nil {
+		// Read the request body into a byte slice
+		var err error
+		body, err = io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(response, fmt.Sprintf("read request body for %s: %v", request.RequestURI, err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Marshal the request body into the request message
+	if len(body) > 0 {
+		if err := protojson.Unmarshal(body, req); err != nil {
+			http.Error(response, fmt.Sprintf("unmarshal request body for %s: %v", request.RequestURI, err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Get the response message
+	respMsg, ok := f.responseMessages[request.RequestURI]
+	if !ok {
+		http.Error(response, fmt.Sprintf("response message not found for method %s", request.RequestURI), http.StatusInternalServerError)
+		return
+	}
+	resp := proto.Clone(respMsg.(proto.Message))
+
+	// Invoke the gRPC method using the connection for the service
+	if err := f.conns[serviceName].Invoke(request.Context(), request.RequestURI, req, resp); err != nil {
+		code := grpcToHTTPStatus(status.Code(err))
+		http.Error(response, err.Error(), code)
+		return
+	}
+
+	// Marshal the response message to JSON
+	respJsonBytes, err := protojson.Marshal(resp)
+	if err != nil {
+		http.Error(response, fmt.Sprintf("marshal response for %s: %v", request.RequestURI, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Set the response header and status code
+	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Content-Length", strconv.Itoa(len(respJsonBytes)))
+	// If the request has a specific Accept header, set it in the response
+	if accept := request.Header.Get("Accept"); accept != "" {
+		response.Header().Set("Accept", accept)
+	}
+
+	// Write the JSON response to the HTTP response writer
+	response.WriteHeader(http.StatusOK)
+	if _, err := response.Write(respJsonBytes); err != nil {
+		http.Error(response, fmt.Sprintf("write response for %s: %v", request.RequestURI, err), http.StatusInternalServerError)
+		return
+	}
+
+	return
 }

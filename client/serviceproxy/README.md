@@ -35,12 +35,39 @@ You can optionally specify which methods to allow.
 ServiceProxy.AddConn(pb.Service_ServiceDesc.ServiceName, conn, "org.product.v1.Service/*", "org.product.v1.OtherService/ExampleMethod")
 ```
 
-2. Use the `IsAllowedMethod` and `ForwardUnaryRequest` or `ForwardServerStreamRequest` in your own custom interceptors
+2. Use the `IsAllowedMethod` and `ForwardUnaryRequest`, `ForwardServerStreamRequest`, or `ForwardRestRequest` in your own custom interceptors
 
 ```go
 
 func main() {
     grpcServer := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptor), grpc.StreamInterceptor(streamInterceptor))
+	
+	wrappedGrpc := grpcweb.WrapServer(grpcServer)
+	h := http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		// ...
+
+		// Handle REST requests
+		// If the method is allowed, forward the request to the appropriate service
+		if clients.ServiceProxy.IsAllowedMethod(req.RequestURI) {
+			clients.ServiceProxy.ForwardRestRequest(resp, req)
+			return
+		}
+	})
+
+	// required for h2c server on google cloudrun
+	ctx := context.Background()
+	_, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Start the server
+	port := "8080"
+	h2s := &http2.Server{}
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: h2c.NewHandler(h, h2s),
+	}
+	if err := server.ListenAndServe(); err != nil {
+	}
 }
 
 func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
