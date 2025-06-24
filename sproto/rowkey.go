@@ -63,8 +63,10 @@ func abbreviateCollectionIdentifiers(resource string) string {
 	parts := strings.Split(resource, "/")
 	for i := 0; i < len(parts); i++ {
 		if i%2 == 0 {
-			// use first letter of each collection identifier
-			parts[i] = string(parts[i][0])
+			if len(parts[i]) > 0 {
+				// use first letter of each collection identifier
+				parts[i] = string(parts[i][0])
+			}
 		}
 	}
 	return strings.Join(parts, "/")
