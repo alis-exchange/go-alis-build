@@ -436,6 +436,9 @@ func (rt *ResourceClient) List(ctx context.Context, parent string, filter *spann
 	var err error
 	var spannerStatement spanner.Statement
 	if parent != "" {
+		if !strings.HasSuffix(parent, "/") {
+			parent = parent + "/"
+		}
 		spannerStatement = spanner.NewStatement(fmt.Sprintf("STARTS_WITH(%s,@prefix)", rt.keyColumnName))
 		spannerStatement.Params["prefix"], err = rt.RowKeyConv.GetRowKeyPrefix(parent)
 		if err != nil {
