@@ -275,6 +275,10 @@ func (o *Operation[T]) GetOperation() (*longrunningpb.Operation, error) {
 	return o.client.GetOperation(o.ctx, &longrunningpb.GetOperationRequest{Name: o.name})
 }
 
+func (o *Operation[T]) SetResumePoint(resumePoint string) {
+	o.resumePoint = resumePoint
+}
+
 // ReturnRPC returns the underlying longrunningpb.Operation for further processing or sending to other APIs.
 func (o *Operation[T]) ReturnRPC() (*longrunningpb.Operation, error) {
 	op, err := o.client.GetOperation(o.ctx, &longrunningpb.GetOperationRequest{Name: o.name})
