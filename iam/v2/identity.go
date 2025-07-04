@@ -42,6 +42,8 @@ type Identity struct {
 	// These groups are provided as part of the JWT payload and
 	// can therefore be extracted.
 	groupIds []string
+	// The accounts that the requester is part of
+	accounts map[string]*jwt.Account
 }
 
 func (r *Identity) Id() string {
@@ -107,6 +109,14 @@ func (r *Identity) GroupIds() []string {
 	return r.groupIds
 }
 
+// Returns the accounts that the caller is part of
+func (r *Identity) Accounts() map[string]*jwt.Account {
+	if r.accounts == nil {
+		r.accounts = make(map[string]*jwt.Account)
+	}
+	return r.accounts
+}
+
 // ExtractIdentityFromCtx returns the Identity making the request or for whom the request is being forwarded by a super admin.
 func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail string, superAdmins map[string]bool) (*Identity, error) {
 	// Looks in the specified header for a JWT token and extracts the requester from it.
@@ -136,6 +146,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			identity.id = payload.Subject
 			identity.email = payload.Email
 			identity.groupIds = payload.Groups
+			identity.accounts = payload.Accounts
 
 			// If the Identity is not a service account, see if we could extract the iam Policy object.
 			if !identity.IsServiceAccount() {

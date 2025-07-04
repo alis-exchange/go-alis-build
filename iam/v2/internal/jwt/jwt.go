@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+type Seat struct {
+	Plan int32 `json:"plan"`
+	Seat int32 `json:"seat"`
+}
+type Account struct {
+	Seats map[int32]*Seat `json:"seats"`
+}
+
 // Payload represents a decoded payload of an ID Token.
 type Payload struct {
 	Issuer   string                 `json:"iss"`
@@ -19,6 +27,7 @@ type Payload struct {
 	Email    string                 `json:"email"`
 	Groups   []string               `json:"groups"`
 	Claims   map[string]interface{} `json:"-"`
+	Accounts map[string]*Account    `json:"accounts"`
 }
 
 // jwt represents the segments of a jwt and exposes convenience methods for
