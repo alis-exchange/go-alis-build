@@ -141,7 +141,7 @@ func (a *Authorizer) Policies() []*iampb.Policy {
 // This method returns an gRPC compliant error message and should be handled accordingly and is intented to be used by
 // rpc methods.
 func (a *Authorizer) AuthorizeRpc() error {
-	if a.Method == "" {
+	if a.Method == "" && !a.skipAuth {
 		return status.Errorf(codes.InvalidArgument, "not a grpc method. Use HasAccess for non grpc methods.")
 	}
 	if !a.HasAccess(a.Method) {
