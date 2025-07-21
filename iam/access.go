@@ -148,7 +148,7 @@ func (a *Authorizer) Policies() []*iampb.Policy {
 // rpc methods.
 func (a *Authorizer) AuthorizeRpc() error {
 	if !a.HasAccess(a.Method) {
-		return status.Errorf(codes.PermissionDenied, "permission denied: %s", a.Method)
+		return status.Errorf(codes.PermissionDenied, "%s", a.Method)
 	}
 	return nil
 }

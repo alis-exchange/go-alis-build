@@ -145,7 +145,7 @@ func (a *Authorizer) AuthorizeRpc() error {
 		return status.Errorf(codes.InvalidArgument, "not a grpc method. Use HasAccess for non grpc methods.")
 	}
 	if !a.HasAccess(a.Method) {
-		return status.Errorf(codes.PermissionDenied, "permission denied: %s", a.Method)
+		return status.Errorf(codes.PermissionDenied, "%s", a.Method)
 	}
 	return nil
 }
