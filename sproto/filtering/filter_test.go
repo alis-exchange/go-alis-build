@@ -1,6 +1,7 @@
 package filtering
 
 import (
+	"fmt"
 	"testing"
 
 	"cloud.google.com/go/spanner"
@@ -63,7 +64,9 @@ func TestNewParser(t *testing.T) {
 			}
 
 			t.Logf("got SQL: %s", got.SQL)
+			fmt.Printf("got SQL: %s\n", got.SQL)
 			t.Logf("got Params: %+v", got.Params)
+			fmt.Printf("got Params: %+v\n", got.Params)
 		})
 	}
 }
