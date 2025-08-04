@@ -38,6 +38,5 @@ func (t *Template[T]) SendMail(fromEmail string, data T, toEmail string, extraTo
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
