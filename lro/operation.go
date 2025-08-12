@@ -431,6 +431,7 @@ type WaitConfig struct {
 	asyncEnabled                   bool
 	resumePoint                    string // Once the wait is complete, resume at this point.
 	asyncChildGetOperationEndpoint string // The API endpoint which exposes a GetOperation method
+	resumeEndpointAudience         string //
 }
 
 // WaitOption is a functional option for WaitConfig.
@@ -494,6 +495,14 @@ func WithAsync(resumePoint string) WaitOption {
 	return func(w *WaitConfig) error {
 		w.asyncEnabled = true // explicitly communicate that the wait should run in async mode.
 		w.resumePoint = resumePoint
+		return nil
+	}
+}
+
+// WithResumeEndpointAudience sets the resume endpoint audience
+func WithResumeEndpointAudience(resumeEndpoint string) WaitOption {
+	return func(w *WaitConfig) error {
+		w.resumeEndpointAudience = resumeEndpoint
 		return nil
 	}
 }
@@ -705,16 +714,19 @@ func (o *Operation[T]) waitWithGoogleWorkflows(cfg *WaitConfig) error {
 		PollEndpoint:           cfg.asyncChildGetOperationEndpoint,
 		PollEndpointAudience:   "",
 		ResumeEndpoint:         resumeEndpoint,
-		ResumeEndpointAudience: "",
+		ResumeEndpointAudience: cfg.resumeEndpointAudience,
 		Timeout:                int64(cfg.timeout.Seconds()),
 	}
 
-	// From the Resume Endpoint, get the Audience
-	resumeUrl, err := url.Parse(resumeEndpoint)
-	if err != nil {
-		return fmt.Errorf("could not resolve resume url, invalid resume endpoint (%s): %w", resumeEndpoint, err)
+	// If Resume Endpoint Audience was not provided in config, infer from resume endpoint
+	if args.ResumeEndpointAudience == "" {
+		// From the Resume Endpoint, get the Audience
+		resumeUrl, err := url.Parse(resumeEndpoint)
+		if err != nil {
+			return fmt.Errorf("could not resolve resume url, invalid resume endpoint (%s): %w", resumeEndpoint, err)
+		}
+		args.ResumeEndpointAudience = "https://" + resumeUrl.Host
 	}
-	args.ResumeEndpointAudience = "https://" + resumeUrl.Host
 
 	// If there are any Child operations, configure the relevant arguments required by the polling mechanism used by Google Cloud Workflows.
 	if len(cfg.childOperations) > 0 {
