@@ -225,15 +225,23 @@ func (l *StringList) EachMatchesOneof(patterns ...string) *StringList {
 
 // Adds a rule to the parent validator asserting that each string starts with the given prefix.
 // If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
-func (l *StringList) EachStartsWith(prefix string) *StringList {
-	satisfied := true
+func (l *StringList) EachStartsWith(prefix string, additionalPrefixes ...string) *StringList {
+	prefixes := append(additionalPrefixes, prefix)
+	allSatisfied := true
 	for _, v := range l.value {
-		if !strings.HasPrefix(v, prefix) {
-			satisfied = false
+		satisfied := false
+		for _, pref := range prefixes {
+			if strings.HasPrefix(v, pref) {
+				satisfied = true
+				break
+			}
+		}
+		if !satisfied {
+			allSatisfied = false
 			break
 		}
 	}
-	l.add("have all values start with %v", "all values start with %v", satisfied, prefix)
+	l.add("have all values start with %v", "all values start with %v", allSatisfied, prefix)
 	return l
 }
 

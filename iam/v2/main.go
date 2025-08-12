@@ -161,6 +161,9 @@ func New(roles []*Role, opts ...IamOption) (*IAM, error) {
 	if options.UserServer != nil {
 		i.UsersServer = options.UserServer
 	}
+	if options.UserClient != nil {
+		i.UsersClient = options.UserClient
+	}
 
 	return i, nil
 }

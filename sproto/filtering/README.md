@@ -26,7 +26,7 @@ Use the `Parse` method to convert a CEL expression into a SQL WHERE clause
 
 You can optionally pass in Identifiers to the `NewParser` method.
 Identifiers are used to declare common protocol buffer types for conversion.
-Common identifiers are for `google.protobuf.Timestamp`, `google.protobuf.Duration`, `google.type.Date` etc.
+Common identifiers are for `google.protobuf.Timestamp`, `google.protobuf.Duration`, `google.type.Date`, `EnumString`, `EnumInteger` etc.
 They enable to parser to recognize protocol buffer types and convert them to SQL data types.
 
 ```go
@@ -40,6 +40,78 @@ One of your columns may have a reserved keyword as a name. For this you can regi
 ```go
     parser, err := filtering.NewParser(filtering.Reserved("Group"), filtering.Reserved("Lookup"))
 ```
+
+## Supported identifiers
+
+### Duration
+
+The `Duration` identifier is used to declare a protocol buffer duration type(google.protobuf.Duration). It enables the parser to recognize duration fields and convert them to SQL data types.
+
+```go
+    parser, err := filtering.NewParser(filtering.Duration("Proto.duration"))
+```
+
+You can then use the `duration` function to convert a string into a duration in SQL.
+
+```go
+    stmt, err := parser.Parse("Proto.duration > duration('1h')")
+```
+
+### Timestamp
+
+The `Timestamp` identifier is used to declare a protocol buffer timestamp type(google.protobuf.Timestamp). It enables the parser to recognize timestamp fields and convert them to SQL data types.
+
+```go
+    parser, err := filtering.NewParser(filtering.Timestamp("Proto.create_time"))
+```
+
+You can then use the `timestamp` function to convert a string into a timestamp in SQL.
+
+```go
+    stmt, err := parser.Parse("Proto.create_time > timestamp('2021-01-01T00:00:00Z')")
+```
+
+### Date
+
+The `Date` identifier is used to declare a protocol buffer date type(google.type.Date). It enables the parser to recognize date fields and convert them to SQL data types.
+
+```go
+    parser, err := filtering.NewParser(filtering.Date("Proto.effective_date"))
+```
+
+You can then use the `date` function to convert a string into a date in SQL.
+
+```go
+    stmt, err := parser.Parse("Proto.effective_date > date('2021-01-01')")
+```
+
+### Reserved
+
+The `Reserved` identifier is used to declare a reserved keyword as a column name. It enables the parser to recognize the column and wrap it in backticks to avoid SQL syntax errors.
+
+```go
+    parser, err := filtering.NewParser(filtering.Reserved("Group"), filtering.Reserved("Lookup"))
+```
+
+### EnumString
+
+The `EnumString` identifier is used to declare a protocol buffer enum type as a string. It enables the parser to recognize enum fields and convert them to their string representation in SQL.
+
+```go
+    parser, err := filtering.NewParser(filtering.EnumString("Proto.status", "alis.open.protos.v1.Proto.Status"))
+```
+
+> `EnumString` and `EnumInteger` should not be used together for the same enum type and column combination.
+
+### EnumInteger
+
+The `EnumInteger` identifier is used to declare a protocol buffer enum type as an integer. It enables the parser to recognize enum fields and convert them to their integer representation in SQL.
+
+```go
+    parser, err := filtering.NewParser(filtering.EnumInteger("Proto.status", "alis.open.protos.v1.Proto.Status"))
+```
+
+> `EnumInteger` and `EnumString` should not be used together for the same enum type and column combination.
 
 ## Supported protobuf functions
 

@@ -10,7 +10,7 @@ import (
 )
 
 // parseExpr converts a CEL expression into SQL string and parameters
-func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string, map[string]any, bool, error) {
+func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, map[string]any, bool, error) {
 	if params == nil {
 		params = make(map[string]any)
 	}
@@ -64,7 +64,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -87,7 +87,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -111,7 +111,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -134,7 +134,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -157,7 +157,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -180,7 +180,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 
 			// Check if the left side of the comparison is a registered identifier
 			// and apply the necessary transformation
-			leftSQL = f.parseIdentifier(leftSQL)
+			leftSQL = f.parseIdentifier(leftSQL.(string))
 
 			// Check if the right side of the comparison is a function.
 			// If it is, we don't need to add it as a parameter but instead as a literal value
@@ -250,12 +250,15 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 			if err != nil {
 				return "", nil, false, err
 			}
+
+			// Check if the left side of the IN operation is a registered identifier
+			leftSQL = f.parseIdentifier(leftSQL.(string))
+
 			rightSQL, _, _, err := f.parseExpr(call.Args[1], params)
 			if err != nil {
 				return "", nil, false, err
 			}
 			return fmt.Sprintf("%s IN UNNEST(%s)", leftSQL, rightSQL), params, false, nil
-
 		default:
 			return "", nil, false, fmt.Errorf("unsupported function: %s", call.Function)
 		}
@@ -263,28 +266,15 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 		return f.parseIdentifier(expression.GetIdentExpr().GetName()), params, false, nil
 	case *expr.Expr_ConstExpr:
 		constExpr := expression.GetConstExpr()
-		switch constExpr.ConstantKind.(type) {
-		case *expr.Constant_StringValue:
-			return fmt.Sprintf("%s", constExpr.GetStringValue()), params, false, nil
-		case *expr.Constant_BoolValue:
-			return fmt.Sprintf("%t", constExpr.GetBoolValue()), params, false, nil
-		case *expr.Constant_Int64Value:
-			return fmt.Sprintf("%d", constExpr.GetInt64Value()), params, false, nil
-		case *expr.Constant_BytesValue:
-			return base64.StdEncoding.EncodeToString(constExpr.GetBytesValue()), params, false, nil
-		case *expr.Constant_DoubleValue:
-			return fmt.Sprintf("%f", constExpr.GetDoubleValue()), params, false, nil
-		case *expr.Constant_DurationValue:
-			return "", params, false, fmt.Errorf("duration constants are not supported")
-		case *expr.Constant_NullValue:
-			return "NULL", params, false, nil
-		case *expr.Constant_TimestampValue:
-			return "", params, false, fmt.Errorf("timestamp constants are not supported")
-		case *expr.Constant_Uint64Value:
-			return "", params, false, fmt.Errorf("uint64 constants are not supported")
-		default:
-			return "", nil, false, fmt.Errorf("unsupported constant: %v", constExpr)
+		parsedConstant, err := f.parseConstant(constExpr)
+		if err != nil {
+			return "", nil, false, ErrInvalidFilter{
+				filter: constExpr.String(),
+				err:    err,
+			}
 		}
+
+		return parsedConstant, params, false, nil
 	case *expr.Expr_SelectExpr:
 		selectExpr := expression.GetSelectExpr()
 
@@ -296,7 +286,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 		return operandSQL, params, false, nil
 	case *expr.Expr_ListExpr:
 		listExpr := expression.GetListExpr()
-		var sqlList []string
+		var sqlList []any
 		for _, elem := range listExpr.Elements {
 			elemSQL, _, _, err := f.parseExpr(elem, params)
 			if err != nil {
@@ -333,6 +323,31 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (string
 	return "", params, false, nil
 }
 
+func (f *Parser) parseConstant(constExpr *expr.Constant) (any, error) {
+	switch constExpr.ConstantKind.(type) {
+	case *expr.Constant_StringValue:
+		return constExpr.GetStringValue(), nil
+	case *expr.Constant_BoolValue:
+		return constExpr.GetBoolValue(), nil
+	case *expr.Constant_Int64Value:
+		return constExpr.GetInt64Value(), nil
+	case *expr.Constant_BytesValue:
+		return base64.StdEncoding.EncodeToString(constExpr.GetBytesValue()), nil
+	case *expr.Constant_DoubleValue:
+		return constExpr.GetDoubleValue(), nil
+	case *expr.Constant_DurationValue:
+		return "", fmt.Errorf("duration constants are not supported")
+	case *expr.Constant_NullValue:
+		return "NULL", nil
+	case *expr.Constant_TimestampValue:
+		return "", fmt.Errorf("timestamp constants are not supported")
+	case *expr.Constant_Uint64Value:
+		return "", fmt.Errorf("uint64 constants are not supported")
+	default:
+		return "", fmt.Errorf("unsupported constant: %v", constExpr)
+	}
+}
+
 // parseSelectExpr handles field selection (e.g. `message.field`) in CEL expressions
 func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string]interface{}) (string, error) {
 	// Recursively resolve the operand (which could itself be a SelectExpr or IdentExpr)
@@ -356,6 +371,10 @@ func (f *Parser) parseIdentifier(sql string) string {
 			sql = fmt.Sprintf("(%s.seconds + IFNULL(%s.nanos,0) / 1e9)", sql, sql)
 		case dateIdentifier:
 			sql = fmt.Sprintf("DATE(%s.year, %s.month, %s.day)", sql, sql, sql)
+		case enumStringIdentifier:
+			sql = fmt.Sprintf("CAST(%s AS STRING)", sql)
+		case enumIntegerIdentifier:
+			sql = fmt.Sprintf("CAST(%s AS INT64)", sql)
 		}
 	}
 
