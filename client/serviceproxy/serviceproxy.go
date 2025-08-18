@@ -230,6 +230,76 @@ func (f *ServiceProxy) ForwardServerStreamRequest(ctx context.Context, stream gr
 	return nil
 }
 
+// ForwardClientStreamRequest forwards a client streaming request to the appropriate service.
+func (f *ServiceProxy) ForwardClientStreamRequest(ctx context.Context, stream grpc.ServerStream, info *grpc.StreamServerInfo) error {
+	// Get the service name from the full method
+	fullMethodParts := strings.Split(info.FullMethod, "/")
+	service := fullMethodParts[1]
+
+	// Ensure the service is registered in the service proxy
+	if _, ok := f.conns[service]; !ok {
+		return status.Errorf(codes.Internal, "service %s not found in service proxy", service)
+	}
+
+	// Create outbound stream to backend service
+	outboundStream, err := f.conns[service].NewStream(ctx, &grpc.StreamDesc{
+		ServerStreams: false,
+		ClientStreams: true,
+	}, info.FullMethod)
+	if err != nil {
+		return err
+	}
+
+	// Get the request and response message types
+	reqTemplate, ok := f.requestMessages[info.FullMethod]
+	if !ok {
+		return status.Errorf(codes.Internal, "request message type not found for method %s", info.FullMethod)
+	}
+
+	respMsg, ok := f.responseMessages[info.FullMethod]
+	if !ok {
+		return status.Errorf(codes.Internal, "response message not found for method %s", info.FullMethod)
+	}
+
+	// Relay all client requests to the backend service
+	for {
+		req := proto.Clone(reqTemplate.(proto.Message))
+
+		// Receive request from client
+		err := stream.RecvMsg(req)
+		if err == io.EOF {
+			// Client finished sending requests
+			break
+		}
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to receive request from client for %s: %v", info.FullMethod, err)
+		}
+
+		// Forward request to backend
+		if err := outboundStream.SendMsg(req); err != nil {
+			return status.Errorf(codes.Internal, "failed to send request to backend for %s: %v", info.FullMethod, err)
+		}
+	}
+
+	// Signal to backend that client is done sending
+	if err := outboundStream.CloseSend(); err != nil {
+		return err
+	}
+
+	// Receive the single response from backend
+	resp := proto.Clone(respMsg.(proto.Message))
+	if err := outboundStream.RecvMsg(resp); err != nil {
+		return status.Errorf(codes.Internal, "failed to receive response from backend for %s: %v", info.FullMethod, err)
+	}
+
+	// Send response back to client
+	if err := stream.SendMsg(resp); err != nil {
+		return status.Errorf(codes.Internal, "failed to send response to client for %s: %v", info.FullMethod, err)
+	}
+
+	return nil
+}
+
 // ForwardRestRequest forwards a REST request to the appropriate service.
 func (f *ServiceProxy) ForwardRestRequest(response http.ResponseWriter, request *http.Request) {
 	// Get the service name from the full method
