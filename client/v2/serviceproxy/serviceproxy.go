@@ -21,7 +21,13 @@ import (
 )
 
 const (
-	// AliasHeaderKey
+	// AliasHeaderKey is the header key used to pass the alias of the service.
+	// This header is used to identify the service in the service proxy.
+	//
+	// If the header is not set, the alias will be 'default'.
+	// The alias must match the regex: ^[a-zA-Z0-9.\-_\/]+$
+	//
+	// The alias is used to identify the service in the service proxy and can be used to route requests to the appropriate service.
 	AliasHeaderKey string = "X-Alis-Service-Alias"
 )
 
