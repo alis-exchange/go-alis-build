@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -83,8 +84,11 @@ func (f *ServiceProxy) AddConn(service string, clientConn *grpc.ClientConn, opts
 		return fmt.Errorf("alias '%s' is not valid, must match %s", options.alias, aliasRegex)
 	}
 
+	// Construct the service key using the alias and service name
+	serviceKey := fmt.Sprintf("%s:%s", options.alias, service)
+
 	// Add the connection to the service proxy
-	f.conns[fmt.Sprintf("%s:%s", options.alias, service)] = clientConn
+	f.conns[serviceKey] = clientConn
 
 	// Register allowed methods
 	// If no methods are provided, allow all methods in the service
@@ -191,9 +195,24 @@ func (f *ServiceProxy) ForwardUnaryRequest(ctx context.Context, req any, info *g
 	fullMethodParts := strings.Split(info.FullMethod, "/")
 	service := fullMethodParts[1]
 
+	// Check if the x-alis-service-alias header is set
+	alias := "default"
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		headerAlias := md.Get(AliasHeaderKey)
+		if len(headerAlias) > 0 {
+			if aliasRegExp.MatchString(headerAlias[0]) {
+				alias = headerAlias[0]
+			}
+		}
+	}
+
+	// Construct the service key using the alias and service name
+	serviceKey := fmt.Sprintf("%s:%s", alias, service)
+
 	// Ensure the service is registered in the service proxy
-	if _, ok := f.conns[service]; !ok {
-		return nil, status.Errorf(codes.Internal, "service %s not found in service proxy", service)
+	if _, ok := f.conns[serviceKey]; !ok {
+		return nil, status.Errorf(codes.NotFound, "service %s not found in service proxy", service)
 	}
 
 	// Get the response message
@@ -203,7 +222,7 @@ func (f *ServiceProxy) ForwardUnaryRequest(ctx context.Context, req any, info *g
 	}
 	resp := proto.Clone(respMsg.(proto.Message))
 
-	if err := f.conns[service].Invoke(ctx, info.FullMethod, req, resp); err != nil {
+	if err := f.conns[serviceKey].Invoke(ctx, info.FullMethod, req, resp); err != nil {
 		return nil, err
 	}
 
@@ -216,15 +235,30 @@ func (f *ServiceProxy) ForwardServerStreamRequest(ctx context.Context, stream gr
 	fullMethodParts := strings.Split(info.FullMethod, "/")
 	service := fullMethodParts[1]
 
+	// Check if the x-alis-service-alias header is set
+	alias := "default"
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		headerAlias := md.Get(AliasHeaderKey)
+		if len(headerAlias) > 0 {
+			if aliasRegExp.MatchString(headerAlias[0]) {
+				alias = headerAlias[0]
+			}
+		}
+	}
+
+	// Construct the service key using the alias and service name
+	serviceKey := fmt.Sprintf("%s:%s", alias, service)
+
 	// Ensure the service is registered in the service proxy
-	if _, ok := f.conns[service]; !ok {
-		return status.Errorf(codes.Internal, "service %s not found in service proxy", service)
+	if _, ok := f.conns[serviceKey]; !ok {
+		return status.Errorf(codes.NotFound, "service %s not found in service proxy", service)
 	}
 
 	// Check if the response message is already known
 	// If not, get the response message type from the client
 
-	outboundStream, err := f.conns[service].NewStream(ctx, &grpc.StreamDesc{
+	outboundStream, err := f.conns[serviceKey].NewStream(ctx, &grpc.StreamDesc{
 		ServerStreams: true,
 		ClientStreams: false,
 	}, info.FullMethod)
@@ -293,13 +327,28 @@ func (f *ServiceProxy) ForwardClientStreamRequest(ctx context.Context, stream gr
 	fullMethodParts := strings.Split(info.FullMethod, "/")
 	service := fullMethodParts[1]
 
+	// Check if the x-alis-service-alias header is set
+	alias := "default"
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		headerAlias := md.Get(AliasHeaderKey)
+		if len(headerAlias) > 0 {
+			if aliasRegExp.MatchString(headerAlias[0]) {
+				alias = headerAlias[0]
+			}
+		}
+	}
+
+	// Construct the service key using the alias and service name
+	serviceKey := fmt.Sprintf("%s:%s", alias, service)
+
 	// Ensure the service is registered in the service proxy
-	if _, ok := f.conns[service]; !ok {
-		return status.Errorf(codes.Internal, "service %s not found in service proxy", service)
+	if _, ok := f.conns[serviceKey]; !ok {
+		return status.Errorf(codes.NotFound, "service %s not found in service proxy", service)
 	}
 
 	// Create outbound stream to backend service
-	outboundStream, err := f.conns[service].NewStream(ctx, &grpc.StreamDesc{
+	outboundStream, err := f.conns[serviceKey].NewStream(ctx, &grpc.StreamDesc{
 		ServerStreams: false,
 		ClientStreams: true,
 	}, info.FullMethod)
@@ -361,11 +410,22 @@ func (f *ServiceProxy) ForwardClientStreamRequest(ctx context.Context, stream gr
 func (f *ServiceProxy) ForwardRestRequest(response http.ResponseWriter, request *http.Request) {
 	// Get the service name from the full method
 	fullMethodParts := strings.Split(request.RequestURI, "/")
-	serviceName := fullMethodParts[1]
+	service := fullMethodParts[1]
+
+	// Check if the x-alis-service-alias header is set
+	alias := "default"
+	if headerAlias := request.Header.Get(AliasHeaderKey); headerAlias != "" {
+		if aliasRegExp.MatchString(headerAlias) {
+			alias = headerAlias
+		}
+	}
+
+	// Construct the service key using the alias and service name
+	serviceKey := fmt.Sprintf("%s:%s", alias, service)
 
 	// Ensure the service is registered in the service proxy
-	if _, ok := f.conns[serviceName]; !ok {
-		http.Error(response, "service not found in service proxy", http.StatusInternalServerError)
+	if _, ok := f.conns[serviceKey]; !ok {
+		http.Error(response, "service not found in service proxy", http.StatusNotFound)
 		return
 	}
 
@@ -406,7 +466,7 @@ func (f *ServiceProxy) ForwardRestRequest(response http.ResponseWriter, request 
 	resp := proto.Clone(respMsg.(proto.Message))
 
 	// Invoke the gRPC method using the connection for the service
-	if err := f.conns[serviceName].Invoke(request.Context(), request.RequestURI, req, resp); err != nil {
+	if err := f.conns[serviceKey].Invoke(request.Context(), request.RequestURI, req, resp); err != nil {
 		code := grpcToHTTPStatus(status.Code(err))
 		http.Error(response, err.Error(), code)
 		return
