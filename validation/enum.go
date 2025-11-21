@@ -2,34 +2,30 @@ package validation
 
 import "google.golang.org/protobuf/reflect/protoreflect"
 
-// Provides rules applicable to enum values.
+// Enum provides validation rules for enum values.
 type Enum struct {
 	standard[protoreflect.Enum]
 }
 
-// Adds a rule to the parent validator asserting that the enum value is populated.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// Is adds a rule asserting that the enum value must be equal to the given value.
 func (e *Enum) Is(value protoreflect.Enum) *Enum {
 	e.add("be %v", "is %v", e.value == value, value)
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is specified.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsSpecified adds a rule asserting that the enum value must not be the zero value (unspecified).
 func (e *Enum) IsSpecified() *Enum {
 	e.add("be specified", "is specified", e.value.Number() != 0)
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is not specified.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsUnspecified adds a rule asserting that the enum value must be the zero value (unspecified).
 func (e *Enum) IsUnspecified() *Enum {
 	e.add("not be specified", "is not specified", e.value.Number() == 0)
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is one of the given values.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsOneof adds a rule asserting that the enum value must be one of the given values.
 func (e *Enum) IsOneof(values ...protoreflect.Enum) *Enum {
 	satisfied := false
 	for _, v := range values {
@@ -42,8 +38,7 @@ func (e *Enum) IsOneof(values ...protoreflect.Enum) *Enum {
 	return e
 }
 
-// Adds a rule to the parent validator asserting that the enum value is not one of the given values.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsNoneof adds a rule asserting that the enum value must not be any of the given values.
 func (e *Enum) IsNoneof(values ...protoreflect.Enum) *Enum {
 	satisfied := true
 	for _, v := range values {

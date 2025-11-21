@@ -13,40 +13,36 @@ const (
 	httpsUrlRgx   = `^https://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)`
 )
 
+// String provides validation rules for string values.
 type String struct {
 	standard[string]
 }
 
-// Adds a rule to the parent validator asserting that the string value is populated.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsPopulated adds a rule asserting that the string must not be empty.
 func (s *String) IsPopulated() *String {
 	s.add("be populated", "is populated", s.value != "")
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is empty.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsEmpty adds a rule asserting that the string must be empty.
 func (s *String) IsEmpty() *String {
 	s.add("be empty", "is empty", s.value == "")
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is equal to the given value.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// Eq adds a rule asserting that the string must be equal to the given value.
 func (s *String) Eq(eq string) *String {
 	s.add("be equal to %v", "is equal to %v", s.value == eq, eq)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is not equal to the given value.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// NotEq adds a rule asserting that the string must not be equal to the given value.
 func (s *String) NotEq(neq string) *String {
 	s.add("not be equal to %v", "is not equal to %v", s.value != neq, neq)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is one of the given values.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsOneof adds a rule asserting that the string must be one of the given values.
 func (s *String) IsOneof(values ...string) *String {
 	satisfied := false
 	for _, v := range values {
@@ -59,8 +55,7 @@ func (s *String) IsOneof(values ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is none of the given values.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsNoneof adds a rule asserting that the string must not be any of the given values.
 func (s *String) IsNoneof(values ...string) *String {
 	satisfied := true
 	for _, v := range values {
@@ -73,15 +68,13 @@ func (s *String) IsNoneof(values ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value starts with the given prefix.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// StartsWith adds a rule asserting that the string must start with the given prefix.
 func (s *String) StartsWith(prefix string) *String {
 	s.add("start with '%v'", "starts with '%v'", strings.HasPrefix(s.value, prefix), prefix)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value starts with one of the given prefixes.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// StartsWithOneof adds a rule asserting that the string must start with one of the given prefixes.
 func (s *String) StartsWithOneof(prefixes ...string) *String {
 	satisfied := false
 	for _, prefix := range prefixes {
@@ -94,8 +87,7 @@ func (s *String) StartsWithOneof(prefixes ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value starts with none of the given prefixes.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// HasNoneofPrefixes adds a rule asserting that the string must not start with any of the given prefixes.
 func (s *String) HasNoneofPrefixes(prefixes ...string) *String {
 	satisfied := true
 	for _, prefix := range prefixes {
@@ -108,64 +100,55 @@ func (s *String) HasNoneofPrefixes(prefixes ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value ends with the given suffix.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// EndsWith adds a rule asserting that the string must end with the given suffix.
 func (s *String) EndsWith(suffix string) *String {
 	s.add("end with %v", "ends with %v", strings.HasSuffix(s.value, suffix), suffix)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value contains the given substring.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// Contains adds a rule asserting that the string must contain the given substring.
 func (s *String) Contains(substr string) *String {
 	s.add("contain %v", "contains %v", strings.Contains(s.value, substr), substr)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value does not contain the given substring.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// NotContains adds a rule asserting that the string must not contain the given substring.
 func (s *String) NotContains(substr string) *String {
 	s.add("not contain %v", "does not contain %v", !strings.Contains(s.value, substr), substr)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value has a length equal to the given length.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// LenEq adds a rule asserting that the string's length must be equal to the given length.
 func (s *String) LenEq(length int) *String {
 	s.add("have length equal to %v", "has length equal to %v", len(s.value) == length, length)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value has a length greater than the given length.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// LenGt adds a rule asserting that the string's length must be strictly greater than the given length.
 func (s *String) LenGt(length int) *String {
 	s.add("have length greater than %v", "has length greater than %v", len(s.value) > length, length)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value has a length greater than or equal to the given length.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// LenGte adds a rule asserting that the string's length must be greater than or equal to the given length.
 func (s *String) LenGte(length int) *String {
 	s.add("have length greater than or equal to %v", "has length greater than or equal to %v", len(s.value) >= length, length)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value has a length less than the given length.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// LenLt adds a rule asserting that the string's length must be strictly less than the given length.
 func (s *String) LenLt(length int) *String {
 	s.add("have length less than %v", "has length less than %v", len(s.value) < length, length)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value has a length less than or equal to the given length.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// LenLte adds a rule asserting that the string's length must be less than or equal to the given length.
 func (s *String) LenLte(length int) *String {
 	s.add("have length less than or equal to %v", "has length less than or equal to %v", len(s.value) <= length, length)
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value matches the given pattern.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// Matches adds a rule asserting that the string must match the given regular expression pattern.
 func (s *String) Matches(pattern string) *String {
 	satisfied, err := regexp.MatchString(pattern, s.value)
 	if err != nil {
@@ -175,8 +158,7 @@ func (s *String) Matches(pattern string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value matches one of the given patterns.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// MatchesOneof adds a rule asserting that the string must match at least one of the given regular expression patterns.
 func (s *String) MatchesOneof(patterns ...string) *String {
 	satisfied := false
 	for _, pattern := range patterns {
@@ -189,8 +171,7 @@ func (s *String) MatchesOneof(patterns ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value matches none of the given patterns.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// MatchesNoneof adds a rule asserting that the string must not match any of the given regular expression patterns.
 func (s *String) MatchesNoneof(patterns ...string) *String {
 	satisfied := true
 	for _, pattern := range patterns {
@@ -203,8 +184,7 @@ func (s *String) MatchesNoneof(patterns ...string) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value does not match the given pattern.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// NotMatch adds a rule asserting that the string must not match the given regular expression pattern.
 func (s *String) NotMatch(pattern string) *String {
 	satisfied, err := regexp.MatchString(pattern, s.value)
 	if err != nil {
@@ -214,18 +194,22 @@ func (s *String) NotMatch(pattern string) *String {
 	return s
 }
 
+// StringValidationOptions holds configuration options for string validation.
 type StringValidationOptions struct {
 	allowEmpty bool
 }
+
+// StringValidationOption is a function type for modifying StringValidationOptions.
 type StringValidationOption func(*StringValidationOptions)
 
-// An option to add to some string validation rules to allow empty strings.
+// AllowEmptyString is an option that allows empty strings to pass validation even if they don't match the specific format (e.g. email).
 func AllowEmptyString() StringValidationOption {
 	return func(options *StringValidationOptions) {
 		options.allowEmpty = true
 	}
 }
 
+// mergeStringValidationOptions applies the given options to a default StringValidationOptions instance.
 func mergeStringValidationOptions(opts ...StringValidationOption) *StringValidationOptions {
 	options := &StringValidationOptions{}
 	for _, opt := range opts {
@@ -234,8 +218,8 @@ func mergeStringValidationOptions(opts ...StringValidationOption) *StringValidat
 	return options
 }
 
-// Adds a rule to the parent validator asserting that the string value is a valid email.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsEmail adds a rule asserting that the string must be a valid email address.
+// Use AllowEmptyString() option to consider empty strings as valid.
 func (s *String) IsEmail(opts ...StringValidationOption) *String {
 	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(emailRgx, s.value)
@@ -253,8 +237,8 @@ func (s *String) IsEmail(opts ...StringValidationOption) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is a valid domain.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsDomain adds a rule asserting that the string must be a valid domain name.
+// Use AllowEmptyString() option to consider empty strings as valid.
 func (s *String) IsDomain(opts ...StringValidationOption) *String {
 	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(domainRgx, s.value)
@@ -272,8 +256,8 @@ func (s *String) IsDomain(opts ...StringValidationOption) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is a valid root domain.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsRootDomain adds a rule asserting that the string must be a valid root domain (e.g., example.com, not sub.example.com).
+// Use AllowEmptyString() option to consider empty strings as valid.
 func (s *String) IsRootDomain(opts ...StringValidationOption) *String {
 	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(rootDomainRgx, s.value)
@@ -291,8 +275,8 @@ func (s *String) IsRootDomain(opts ...StringValidationOption) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is a valid sub domain.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsSubDomain adds a rule asserting that the string must be a valid subdomain (e.g., sub.example.com).
+// Use AllowEmptyString() option to consider empty strings as valid.
 func (s *String) IsSubDomain(opts ...StringValidationOption) *String {
 	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(subDomainRgx, s.value)
@@ -310,8 +294,8 @@ func (s *String) IsSubDomain(opts ...StringValidationOption) *String {
 	return s
 }
 
-// Adds a rule to the parent validator asserting that the string value is a valid https url.
-// If wrapped inside Or, If or Then, the rule itself is not added, but rather combined with the intent of the wrapper and the other rules inside it.
+// IsHttpsUrl adds a rule asserting that the string must be a valid HTTPS URL.
+// Use AllowEmptyString() option to consider empty strings as valid.
 func (s *String) IsHttpsUrl(opts ...StringValidationOption) *String {
 	options := mergeStringValidationOptions(opts...)
 	satisfied, err := regexp.MatchString(httpsUrlRgx, s.value)
