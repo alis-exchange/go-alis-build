@@ -14,6 +14,9 @@ var (
 
 	// ErrHookFailed is returned when a critical hook fails
 	ErrHookFailed = errors.New("critical hook failed")
+
+	// ErrInvalidSavepoint is returned when a savepoint is invalid or belongs to a different transaction
+	ErrInvalidSavepoint = errors.New("invalid savepoint")
 )
 
 // OperationError wraps an error that occurred during operation execution
@@ -48,6 +51,12 @@ func (e *RollbackError) Error() string {
 	return fmt.Sprintf("rollback completed with %d errors: %v", len(e.Errors), e.Errors)
 }
 
+// Unwrap returns the list of errors for Go 1.20+ multi-error support
+// This enables errors.Is() and errors.As() to work with all wrapped errors
+func (e *RollbackError) Unwrap() []error {
+	return e.Errors
+}
+
 // HookError wraps an error that occurred during hook execution
 type HookError struct {
 	HookType string
@@ -62,8 +71,18 @@ func (e *HookError) Error() string {
 	return fmt.Sprintf("hook '%s' failed: %v", e.HookType, e.Err)
 }
 
+// Unwrap returns the underlying error
 func (e *HookError) Unwrap() error {
 	return e.Err
+}
+
+// Is implements error matching for HookError
+// This allows errors.Is(err, ErrHookFailed) to work for critical hook errors
+func (e *HookError) Is(target error) bool {
+	if target == ErrHookFailed && e.Critical {
+		return true
+	}
+	return false
 }
 
 // PanicError wraps a recovered panic
