@@ -1,4 +1,4 @@
-# Sproto v2: Filter and Ordering Expression Utilities
+# Sproto: Filter and Ordering Expression Utilities
 
 [![Go Reference](https://pkg.go.dev/badge/go.alis.build/sproto/v2.svg)](https://pkg.go.dev/go.alis.build/sproto/v2)
 
