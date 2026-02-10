@@ -18,26 +18,62 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// NewConnOptions holds configuration for NewConn. It is configured via NewConnOption functions.
+type NewConnOptions struct {
+	retry       bool
+	withoutAuth bool
+	dialOpts    []grpc.DialOption
+}
+
+// NewConnOption configures optional behavior for NewConn.
+type NewConnOption func(*NewConnOptions)
+
+// WithRetry enables retries on temporary connection failures (e.g. TCP resets common with Cloud Run).
+// When enabled, unary calls are retried with exponential backoff for Unavailable errors, up to 5 times.
+func WithRetry() NewConnOption {
+	return func(opts *NewConnOptions) {
+		opts.retry = true
+	}
+}
+
+// WithoutAuth disables automatic injection of ID tokens for secure (TLS) connections when true.
+// By default, NewConn uses a TokenSource to add an Authorization header to each gRPC request (see NewConn).
+// Use WithoutAuth(true) when the target does not require Cloud Run / IAM authentication, or when you
+// supply your own per-RPC credentials via WithDialOptions.
+func WithoutAuth(withoutAuth bool) NewConnOption {
+	return func(opts *NewConnOptions) {
+		opts.withoutAuth = withoutAuth
+	}
+}
+
+// WithDialOptions appends gRPC dial options that are applied after NewConn's defaults.
+// Options passed here take precedence over defaults (e.g. authority, transport credentials, per-RPC credentials, interceptors).
+func WithDialOptions(opts ...grpc.DialOption) NewConnOption {
+	return func(o *NewConnOptions) {
+		o.dialOpts = append(o.dialOpts, opts...)
+	}
+}
+
+// grpcTokenSource adapts oauth.TokenSource for use as gRPC per-RPC credentials.
 type grpcTokenSource struct {
 	oauth.TokenSource
 }
 
-/*
-NewConn creates a new gRPC connection.
-  - host should be of the form domain:port, for example: `your-app-on-cloudrun-abcdef-ew.a.run.app:443`
-  - set insecure to `true` when testing your gRPC server locally.
-
-This approach was inspired by the example provided on the following URL:
-https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth.
-
-However, instead of manually adding the Authorization header to each gRPC request, this method implements a
-TokenSource pattern. By configuring the gRPC connection once, tokens are automatically injected with each subsequent
-gRPC request.
-
-Tokens generally have a one-hour expiration time, and the TokenSource logic caches and automatically
-refreshes the token upon expiration. This greatly simplifies token recycling within your service.
-*/
-func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+// NewConn creates a new gRPC client connection.
+//
+// Parameters:
+//   - host must be of the form "hostname:port", for example: your-app-on-cloudrun-abcdef-ew.a.run.app:443
+//   - insecure: set true when testing your gRPC server locally (no TLS, no auth)
+//
+// Options (e.g. WithRetry, WithoutAuth, WithDialOptions) configure behavior. Any dial options passed via
+// WithDialOptions are applied after NewConn's defaults, so they take precedence over default authority,
+// transport credentials, per-RPC credentials, and interceptors.
+//
+// For secure connections, NewConn configures the connection once and then injects an Authorization header
+// on each gRPC request via a TokenSource (audience derived from host). Tokens have a one-hour expiration;
+// the TokenSource caches and refreshes them automatically. This approach was inspired by:
+// https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth
+func NewConn(ctx context.Context, host string, insecure bool, opts ...NewConnOption) (*grpc.ClientConn, error) {
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
 	err := validateArgument("host", host, `^[a-zA-Z0-9.-]+:\d+$`)
@@ -45,54 +81,66 @@ func NewConn(ctx context.Context, host string, insecure bool, opts ...grpc.DialO
 		return nil, err
 	}
 
+	options := &NewConnOptions{
+		retry:       false,
+		withoutAuth: false,
+		dialOpts:    []grpc.DialOption{},
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Build default dial options first; user options (options.dialOpts) are appended last so they take precedence.
+	baseOpts := make([]grpc.DialOption, 0)
+
 	if host != "" {
-		opts = append(opts, grpc.WithAuthority(host))
+		baseOpts = append(baseOpts, grpc.WithAuthority(host))
 	}
 
 	if insecure {
-		// If the connection is insecure, add an insecure transport credentials option to the opts array.
-		opts = append(opts, grpc.WithTransportCredentials(insecureGrpc.NewCredentials()))
+		baseOpts = append(baseOpts, grpc.WithTransportCredentials(insecureGrpc.NewCredentials()))
 	} else {
-		// If the connection is secure, get the system root CAs and create a transport credentials option
-		// using TLS with the system root CAs.
 		systemRoots, err := x509.SystemCertPool()
 		if err != nil {
 			return nil, err
 		}
 		cred := credentials.NewTLS(&tls.Config{RootCAs: systemRoots})
-		opts = append(opts, grpc.WithTransportCredentials(cred))
+		baseOpts = append(baseOpts, grpc.WithTransportCredentials(cred))
 
-		// use a tokenSource to automatically inject tokens with each underlying client request
-		// With Cloud Run, the audience is the URL of the service you are invoking.
-		audience := "https://" + strings.Split(host, ":")[0]
-		tokenSource, err := idtoken.NewTokenSource(ctx, audience, option.WithAudiences(audience))
-		if err != nil {
-			return nil, status.Errorf(
-				codes.Unauthenticated,
-				"NewTokenSource: %s", err,
-			)
+		if !options.withoutAuth {
+			audience := "https://" + strings.Split(host, ":")[0]
+			tokenSource, err := idtoken.NewTokenSource(ctx, audience, option.WithAudiences(audience))
+			if err != nil {
+				return nil, status.Errorf(
+					codes.Unauthenticated,
+					"NewTokenSource: %s", err,
+				)
+			}
+			baseOpts = append(baseOpts, grpc.WithPerRPCCredentials(grpcTokenSource{
+				TokenSource: oauth.TokenSource{
+					TokenSource: tokenSource,
+				},
+			}))
 		}
-		// Add a per-RPC credentials option to the opts array using a grpcTokenSource instance created
-		// with an oauth.TokenSource instance created from the tokenSource.
-
-		opts = append(opts, grpc.WithPerRPCCredentials(grpcTokenSource{
-			TokenSource: oauth.TokenSource{
-				TokenSource: tokenSource,
-			},
-		}))
 	}
 
-	return grpc.Dial(host, opts...)
+	if options.retry {
+		retryOpts := []grpc_retry.CallOption{
+			grpc_retry.WithBackoff(grpc_retry.BackoffExponential(100 * time.Millisecond)),
+			grpc_retry.WithCodes(codes.Unavailable),
+			grpc_retry.WithMax(5),
+		}
+		baseOpts = append(baseOpts, grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...)))
+	}
+
+	// User options last so they override defaults (e.g. authority, credentials, interceptors).
+	allOpts := append(baseOpts, options.dialOpts...)
+	return grpc.NewClient(host, allOpts...)
 }
 
-// Does the same as NewConn, but retries on temporary TCP connection resets, which is common when connecting to Cloud Run services.
-func NewConnWithRetry(ctx context.Context, host string, insecure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	retryOpts := []grpc_retry.CallOption{
-		grpc_retry.WithBackoff(grpc_retry.BackoffExponential(100 * time.Millisecond)),
-		grpc_retry.WithCodes(codes.Unavailable),
-		grpc_retry.WithMax(5),
-	}
-	retryInterceptorForTcpConnectionResets := grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...))
-	opts = append(opts, retryInterceptorForTcpConnectionResets)
-	return NewConn(ctx, host, insecure, opts...)
+// NewConnWithRetry is the same as NewConn with retry enabled for temporary TCP connection resets (common with Cloud Run).
+//
+// Deprecated: Use NewConn with WithRetry() instead.
+func NewConnWithRetry(ctx context.Context, host string, insecure bool, opts ...NewConnOption) (*grpc.ClientConn, error) {
+	return NewConn(ctx, host, insecure, append(opts, WithRetry())...)
 }
