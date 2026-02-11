@@ -9,9 +9,12 @@ connections to services running on Google Cloud Run.
 # NewConn
 
 NewConn creates a gRPC client connection. For secure (TLS) connections it
-configures a TokenSource so that an Authorization header is injected on each
-gRPC request; tokens are cached and refreshed automatically. Set insecure to
-true when testing locally (no TLS, no auth).
+injects a Cloud Run ID token on each gRPC request via a TokenSource (default
+header: authorization). Use WithoutAuth() to send the token in
+x-serverless-authorization instead so the caller's Authorization header is
+preserved; the receiving side must accept the token from that header. Tokens
+are cached and refreshed automatically. Set insecure to true when testing
+locally (no TLS, no auth).
 
 	conn, err := client.NewConn(ctx, "your-service-abcdef.a.run.app:443", false)
 	if err != nil {
@@ -24,7 +27,7 @@ true when testing locally (no TLS, no auth).
 Behavior is configured via optional functional options:
 
   - WithRetry enables retries on temporary connection failures (e.g. TCP resets common with Cloud Run).
-  - WithoutAuth disables ID token injection for secure connections when the target does not require Cloud Run / IAM auth.
+  - WithoutAuth sends the ID token in x-serverless-authorization instead of authorization so the caller can set their own Authorization header.
   - WithDialOptions appends gRPC dial options; options passed here are applied after NewConn's defaults and take precedence.
 
 	conn, err := client.NewConn(ctx, host, false, client.WithRetry(), client.WithDialOptions(grpc.WithBlock()))

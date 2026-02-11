@@ -8,13 +8,13 @@ import (
 	"time"
 
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	insecureGrpc "google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/credentials/oauth"
 	"google.golang.org/grpc/status"
 )
 
@@ -36,13 +36,13 @@ func WithRetry() NewConnOption {
 	}
 }
 
-// WithoutAuth disables automatic injection of ID tokens for secure (TLS) connections when true.
-// By default, NewConn uses a TokenSource to add an Authorization header to each gRPC request (see NewConn).
-// Use WithoutAuth(true) when the target does not require Cloud Run / IAM authentication, or when you
-// supply your own per-RPC credentials via WithDialOptions.
-func WithoutAuth(withoutAuth bool) NewConnOption {
+// WithoutAuth configures the client to send the ID token in the 'x-serverless-authorization' header
+// instead of the default 'authorization' header. Use it when you want to supply your own Authorization
+// header (e.g. for application-level auth) without it being overwritten by the Cloud Run / IAM ID token.
+// The receiving side must accept the token from x-serverless-authorization (e.g. proxy or backend config).
+func WithoutAuth() NewConnOption {
 	return func(opts *NewConnOptions) {
-		opts.withoutAuth = withoutAuth
+		opts.withoutAuth = true
 	}
 }
 
@@ -54,9 +54,30 @@ func WithDialOptions(opts ...grpc.DialOption) NewConnOption {
 	}
 }
 
-// grpcTokenSource adapts oauth.TokenSource for use as gRPC per-RPC credentials.
-type grpcTokenSource struct {
-	oauth.TokenSource
+// customHeaderCredentials implements credentials.PerRPCCredentials.
+// It injects the token into a configurable header.
+type customHeaderCredentials struct {
+	tokenSource oauth2.TokenSource
+	header      string
+}
+
+func (c customHeaderCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	token, err := c.tokenSource.Token()
+	if err != nil {
+		return nil, err
+	}
+	// token.Type() usually returns "Bearer", but we ensure it's handled.
+	tokenType := token.Type()
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
+	return map[string]string{
+		c.header: tokenType + " " + token.AccessToken,
+	}, nil
+}
+
+func (c customHeaderCredentials) RequireTransportSecurity() bool {
+	return true
 }
 
 // NewConn creates a new gRPC client connection.
@@ -70,9 +91,8 @@ type grpcTokenSource struct {
 // transport credentials, per-RPC credentials, and interceptors.
 //
 // For secure connections, NewConn configures the connection once and then injects an Authorization header
-// on each gRPC request via a TokenSource (audience derived from host). Tokens have a one-hour expiration;
-// the TokenSource caches and refreshes them automatically. This approach was inspired by:
-// https://cloud.google.com/run/docs/samples/cloudrun-grpc-request-auth
+// (or X-Serverless-Authorization if WithoutAuth is set) on each gRPC request via a TokenSource.
+// Tokens have a one-hour expiration; the TokenSource caches and refreshes them automatically.
 func NewConn(ctx context.Context, host string, insecure bool, opts ...NewConnOption) (*grpc.ClientConn, error) {
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
@@ -107,21 +127,25 @@ func NewConn(ctx context.Context, host string, insecure bool, opts ...NewConnOpt
 		cred := credentials.NewTLS(&tls.Config{RootCAs: systemRoots})
 		baseOpts = append(baseOpts, grpc.WithTransportCredentials(cred))
 
-		if !options.withoutAuth {
-			audience := "https://" + strings.Split(host, ":")[0]
-			tokenSource, err := idtoken.NewTokenSource(ctx, audience, option.WithAudiences(audience))
-			if err != nil {
-				return nil, status.Errorf(
-					codes.Unauthenticated,
-					"NewTokenSource: %s", err,
-				)
-			}
-			baseOpts = append(baseOpts, grpc.WithPerRPCCredentials(grpcTokenSource{
-				TokenSource: oauth.TokenSource{
-					TokenSource: tokenSource,
-				},
-			}))
+		// Default: send token in "authorization". If WithoutAuth is set, use "x-serverless-authorization"
+		// so the caller can set their own Authorization header.
+		headerName := "authorization"
+		if options.withoutAuth {
+			headerName = "x-serverless-authorization"
 		}
+
+		audience := "https://" + strings.Split(host, ":")[0]
+		tokenSource, err := idtoken.NewTokenSource(ctx, audience, option.WithAudiences(audience))
+		if err != nil {
+			return nil, status.Errorf(
+				codes.Unauthenticated,
+				"NewTokenSource: %s", err,
+			)
+		}
+		baseOpts = append(baseOpts, grpc.WithPerRPCCredentials(customHeaderCredentials{
+			tokenSource: tokenSource,
+			header:      headerName,
+		}))
 	}
 
 	if options.retry {
