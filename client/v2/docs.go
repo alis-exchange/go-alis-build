@@ -27,10 +27,12 @@ locally (no TLS, no auth).
 Behavior is configured via optional functional options:
 
   - WithRetry enables retries on temporary connection failures (e.g. TCP resets common with Cloud Run).
+
   - WithoutAuth sends the ID token in x-serverless-authorization instead of authorization so the caller can set their own Authorization header.
+
   - WithDialOptions appends gRPC dial options; options passed here are applied after NewConn's defaults and take precedence.
 
-	conn, err := client.NewConn(ctx, host, false, client.WithRetry(), client.WithDialOptions(grpc.WithBlock()))
+    conn, err := client.NewConn(ctx, host, false, client.WithRetry(), client.WithDialOptions(grpc.WithBlock()))
 
 # Inspiration
 

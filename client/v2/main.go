@@ -83,7 +83,8 @@ func (c customHeaderCredentials) RequireTransportSecurity() bool {
 // NewConn creates a new gRPC client connection.
 //
 // Parameters:
-//   - host must be of the form "hostname:port", for example: your-app-on-cloudrun-abcdef-ew.a.run.app:443
+//   - host must be of the form "hostname:port" (e.g., your-app-on-cloudrun-abcdef-ew.a.run.app:443)
+//     or an https URL (e.g., https://your-app-on-cloudrun-abcdef-ew.a.run.app).
 //   - insecure: set true when testing your gRPC server locally (no TLS, no auth)
 //
 // Options (e.g. WithRetry, WithoutAuth, WithDialOptions) configure behavior. Any dial options passed via
@@ -94,6 +95,14 @@ func (c customHeaderCredentials) RequireTransportSecurity() bool {
 // (or X-Serverless-Authorization if WithoutAuth is set) on each gRPC request via a TokenSource.
 // Tokens have a one-hour expiration; the TokenSource caches and refreshes them automatically.
 func NewConn(ctx context.Context, host string, insecure bool, opts ...NewConnOption) (*grpc.ClientConn, error) {
+	// If the host is provided as an https URL, strip the scheme and append :443 if no port is present.
+	if after, ok :=strings.CutPrefix(host, "https://"); ok  {
+		host = after
+		if !strings.Contains(host, ":") {
+			host = host + ":443"
+		}
+	}
+
 	// Validate the host argument using a regular expression to ensure it matches the required format
 	// of "hostname:port".
 	err := validateArgument("host", host, `^[a-zA-Z0-9.-]+:\d+$`)
