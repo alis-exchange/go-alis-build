@@ -27,3 +27,15 @@ import "go.alis.build/utils/env"
 ```go
 	env.MustExist("ALIS_OS_PROJECT", "ALIS_PROJECT_NR", "ALIS_REGION")
 ```
+
+## Best Practices
+
+### Initialization
+
+These `Must` methods should typically be used within `func init()` blocks. This ensures that the application fails fast and panics before runtime if the required environment variables are not correctly configured.
+
+```go
+func init() {
+    env.MustExist("REQUIRED_VAR_1", "REQUIRED_VAR_2")
+}
+```
