@@ -15,6 +15,20 @@ func MustGet(name string) string {
 	return value
 }
 
+// Get returns the value of the required environment variable with the given name.
+// If the variable is not set it return an empty string
+func Get(name string) string {
+	return os.Getenv(name)
+}
+
+// LookupEnv retrieves the value of the environment variable named by the key.
+// If the variable is present in the environment the value (which may be empty)
+// is returned and the boolean is true. Otherwise the returned value will be empty
+// and the boolean will be false.
+func Lookup(name string) (string, bool) {
+	return os.LookupEnv(name)
+}
+
 // MustExist checks if all provided environment variables are set.
 // If any are missing, it panics with an error message detailing which ones.
 func MustExist(names ...string) {
