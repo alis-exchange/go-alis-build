@@ -16,7 +16,7 @@ type RowKey interface {
 	KeyColumns() []string
 	// KeyValues returns the ordered values of the primary key,
 	// matching the order of KeyColumns.
-	KeyValues() []interface{}
+	KeyValues() []any
 	// String returns a canonical string representation for logging and map keys.
 	String() string
 }
@@ -36,7 +36,17 @@ type RowKeyFactory interface {
 	// Implementations decide the strategy:
 	//   - Composite keys: exact match on the parent column (e.g. "ShelfName = @parent")
 	//   - Single keys:    prefix match (e.g. "STARTS_WITH(`key`, @parent)")
-	ParentFilter(parent string) (sql string, params map[string]interface{})
+	ParentFilter(parent string) (sql string, params map[string]any)
+}
+
+// TransactionRunner runs multi-operation transactions. Implementations (e.g.
+// spanneradapter.SpannerTransactionRunner) inject the transaction into the
+// context passed to fn; ResourceTable operations that receive that context
+// will use the transaction instead of standalone reads/writes.
+type TransactionRunner interface {
+	// RunTransaction executes fn with a transactional context. If fn returns
+	// nil, the transaction is committed; otherwise it is rolled back.
+	RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 // ResourceRow is an interface that represents a row in the database that contains a resource and its associated IAM policy.
@@ -69,6 +79,38 @@ type ResourceRow[R proto.Message] interface {
 // ResourceTable is an interface that a database storing resources must implement.
 // It provides methods to read, update, create, list, and batch operations on resources.
 // The type parameter R is a proto.Message that represents the resource type.
+//
+// ResourceTable implementations support both non-transactional and transactional usage.
+// When used outside a transaction, operations apply immediately. When used inside
+// TransactionRunner.RunTransaction, all operations share the same transaction and
+// commit or roll back atomically.
+//
+// Usage example (non-transactional):
+//
+//	row, err := table.Read(ctx, key)
+//	if err != nil {
+//		return err
+//	}
+//	_ = row.GetResource()
+//
+// Usage example (transactional — cross-table operations in a single transaction):
+//
+//	txRunner := &spanneradapter.SpannerTransactionRunner{Client: spannerClient}
+//	err := txRunner.RunTransaction(ctx, func(ctx context.Context) error {
+//		row, err := tableA.Read(ctx, key1)
+//		if err != nil {
+//			return err
+//		}
+//		_, err = tableB.Write(ctx, key2, resource, policy)
+//		if err != nil {
+//			return err
+//		}
+//		row.SetResource(updatedResource)
+//		if err := row.Update(ctx); err != nil {
+//			return err
+//		}
+//		return nil
+//	})
 type ResourceTable[R proto.Message] interface {
 	// WritePolicy writes the IAM policy for a resource.
 	WritePolicy(ctx context.Context, key RowKey, policy *iampb.Policy) error
@@ -99,19 +141,8 @@ type ResourceTable[R proto.Message] interface {
 	// List retrieves resources from the database, optionally filtered by a filter string.
 	// It returns a slice of ResourceRow and a nextPageToken for pagination.
 	List(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (rows []ResourceRow[R], nextPageToken string, err error)
-	// Stream streams resources from the database, optionally filtered by a filter string.
-	//
-	// Returns a StreamResponse; call Next() to retrieve each item until io.EOF.
-	// Example:
-	//
-	//	streamResponse, err := db.Stream(ctx, parent, 100, "", "status = 'ACTIVE'", "")
-	//	if err != nil { ... }
-	//	for {
-	//	  row, err := streamResponse.Next()
-	//	  if err == io.EOF { break }
-	//	  if err != nil { return err }
-	//	  _ = row.GetResource()
-	//	}
+	// Stream streams resources from the database, optionally filtered.
+	// Returns a StreamResponse; iterate with Next() until io.EOF or error.
 	Stream(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (responseIterator *StreamResponse[ResourceRow[R]], err error)
 	// Query retrieves resources from the database, optionally filtered by a filter string.
 	// It returns a slice of ResourceRow and a nextPageToken for pagination.

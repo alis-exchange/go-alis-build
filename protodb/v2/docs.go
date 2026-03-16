@@ -8,11 +8,16 @@ operations involving Protocol Buffer (proto.Message) resources and Google Cloud 
 
 Key types:
 
-  - ResourceTable[R]: Table interface for CRUD, batch operations, IAM policies, List, Query, and Stream
+  - TransactionRunner: Runs multi-operation transactions; implementations inject tx into context
+  - ResourceTable[R]: Table interface for CRUD, batch operations, IAM policies, List, Query, Stream; supports transactional usage
   - ResourceRow[R]: Row interface for a single resource, its RowKey, IAM policy, Merge, ApplyReadMask, Update, Delete
   - RowKey / RowKeyFactory: Database-agnostic primary key representation and metadata
   - StreamResponse[T]: Channel-backed streaming iterator returned by ResourceTable.Stream
   - SpannerErrorToStatus: Converts Spanner and Google API errors to gRPC status errors
+
+Spanner adapter (go.alis.build/protodb/v2/spanneradapter):
+
+  - SpannerRowKeyFactory, SpannerTransactionRunner, NewSpannerResourceRow, SpannerTxFromContext, ToKey, ToKeys
 
 See the package README for full documentation and usage examples.
 */
