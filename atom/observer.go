@@ -22,14 +22,6 @@ type Observer interface {
 	OnRollback(ctx context.Context, errors []error)
 }
 
-// SetObserver sets the observer for this transaction
-// Only one observer can be set at a time; setting a new observer replaces the previous one
-func (tx *Transaction) SetObserver(obs Observer) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	tx.observer = obs
-}
-
 // GetObserver returns the current observer, if any
 func (tx *Transaction) GetObserver() Observer {
 	tx.mu.RLock()

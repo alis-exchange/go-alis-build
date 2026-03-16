@@ -34,12 +34,11 @@ compensating function that undoes its effects.
 
 # Operations with Options
 
-Use DoWithOptions for advanced configuration including timeouts and retry:
+Use functional options for advanced configuration including timeouts and retry:
 
-	err := tx.DoWithOptions(ctx, "api-call", atom.OperationOptions{
-		Timeout: 5 * time.Second,
-		CompensationRetry: atom.DefaultRetryOptions(),
-	}, operationFunc, compensateFunc)
+	err := tx.Do(ctx, "api-call", operationFunc, compensateFunc,
+		atom.WithTimeout(5*time.Second),
+		atom.WithCompensationRetry(atom.DefaultRetryOptions()))
 
 # Savepoints
 
@@ -65,13 +64,13 @@ BeforeOperation, AfterOperation.
 
 Implement the Observer interface for metrics and tracing:
 
-	tx.SetObserver(&MyObserver{})
+	tx := atom.NewTransaction(atom.WithObserver(&MyObserver{}))
 
 # Logging
 
 Optionally configure a *slog.Logger for structured logging:
 
-	tx.SetLogger(slog.Default())
+	tx := atom.NewTransaction(atom.WithLogger(slog.Default()))
 
 By default, no logging is performed. When a logger is set, warnings and info
 messages are logged for rollback failures, hook failures, and retry attempts.

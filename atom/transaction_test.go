@@ -182,49 +182,43 @@ func (s *TransactionTestSuite) TestDo_RecordsError() {
 }
 
 // -----------------------------------------------------------------------------
-// DoWithOptions Tests
+// Do with Options Tests
 // -----------------------------------------------------------------------------
 
-func (s *TransactionTestSuite) TestDoWithOptions_WithTimeout_Success() {
+func (s *TransactionTestSuite) TestDo_WithTimeout_Success() {
 	tx := atom.NewTransaction()
 
-	err := tx.DoWithOptions(s.ctx, "fast-op", atom.OperationOptions{
-		Timeout: 1 * time.Second,
-	}, func(ctx context.Context) error {
+	err := tx.Do(s.ctx, "fast-op", func(ctx context.Context) error {
 		return nil
-	}, nil)
+	}, nil, atom.WithTimeout(1*time.Second))
 
 	s.NoError(err)
 }
 
-func (s *TransactionTestSuite) TestDoWithOptions_WithTimeout_Exceeded() {
+func (s *TransactionTestSuite) TestDo_WithTimeout_Exceeded() {
 	tx := atom.NewTransaction()
 
-	err := tx.DoWithOptions(s.ctx, "slow-op", atom.OperationOptions{
-		Timeout: 10 * time.Millisecond,
-	}, func(ctx context.Context) error {
+	err := tx.Do(s.ctx, "slow-op", func(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 			return nil
 		}
-	}, nil)
+	}, nil, atom.WithTimeout(10*time.Millisecond))
 
 	s.Error(err)
 	s.True(errors.Is(err, context.DeadlineExceeded))
 }
 
-func (s *TransactionTestSuite) TestDoWithOptions_WithRetryOptions() {
+func (s *TransactionTestSuite) TestDo_WithCompensationRetry() {
 	tx := atom.NewTransaction()
 
-	err := tx.DoWithOptions(s.ctx, "op", atom.OperationOptions{
-		CompensationRetry: atom.DefaultRetryOptions(),
-	}, func(ctx context.Context) error {
+	err := tx.Do(s.ctx, "op", func(ctx context.Context) error {
 		return nil
 	}, func(ctx context.Context) error {
 		return nil
-	})
+	}, atom.WithCompensationRetry(atom.DefaultRetryOptions()))
 
 	s.NoError(err)
 }
@@ -484,11 +478,9 @@ func (s *TransactionTestSuite) TestConcurrent_DoAndCommit() {
 // Logger Tests
 // -----------------------------------------------------------------------------
 
-func (s *TransactionTestSuite) TestSetLogger() {
-	tx := atom.NewTransaction()
+func (s *TransactionTestSuite) TestWithLogger() {
 	logger := slog.Default()
-
-	tx.SetLogger(logger)
+	tx := atom.NewTransaction(atom.WithLogger(logger))
 
 	s.Equal(logger, tx.GetLogger())
 }
@@ -968,9 +960,8 @@ func (m *mockObserver) OnRollback(ctx context.Context, errors []error) {
 }
 
 func (s *ObserverTestSuite) TestObserver_OnOperationStart() {
-	tx := atom.NewTransaction()
 	obs := &mockObserver{}
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Do(s.ctx, "op1", func(ctx context.Context) error { return nil }, nil)
 	_ = tx.Do(s.ctx, "op2", func(ctx context.Context) error { return nil }, nil)
@@ -979,9 +970,8 @@ func (s *ObserverTestSuite) TestObserver_OnOperationStart() {
 }
 
 func (s *ObserverTestSuite) TestObserver_OnOperationEnd() {
-	tx := atom.NewTransaction()
 	obs := &mockObserver{}
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Do(s.ctx, "op1", func(ctx context.Context) error { return nil }, nil)
 	_ = tx.Do(s.ctx, "op2", func(ctx context.Context) error { return nil }, nil)
@@ -990,9 +980,8 @@ func (s *ObserverTestSuite) TestObserver_OnOperationEnd() {
 }
 
 func (s *ObserverTestSuite) TestObserver_OnCommit() {
-	tx := atom.NewTransaction()
 	obs := &mockObserver{}
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Commit(s.ctx)
 
@@ -1000,9 +989,8 @@ func (s *ObserverTestSuite) TestObserver_OnCommit() {
 }
 
 func (s *ObserverTestSuite) TestObserver_OnRollback() {
-	tx := atom.NewTransaction()
 	obs := &mockObserver{}
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Rollback(s.ctx)
 
@@ -1010,9 +998,8 @@ func (s *ObserverTestSuite) TestObserver_OnRollback() {
 }
 
 func (s *ObserverTestSuite) TestObserver_OnRollback_WithErrors() {
-	tx := atom.NewTransaction()
 	obs := &mockObserver{}
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Do(s.ctx, "op", func(ctx context.Context) error { return nil }, func(ctx context.Context) error {
 		return errors.New("compensation error")
@@ -1025,9 +1012,8 @@ func (s *ObserverTestSuite) TestObserver_OnRollback_WithErrors() {
 }
 
 func (s *ObserverTestSuite) TestMetricsObserver() {
-	tx := atom.NewTransaction()
 	obs := atom.NewMetricsObserver()
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	_ = tx.Do(s.ctx, "op1", func(ctx context.Context) error { return nil }, nil)
 	_ = tx.Do(s.ctx, "op2", func(ctx context.Context) error { return errors.New("error") }, nil)
@@ -1069,13 +1055,7 @@ func (s *RetryTestSuite) TestRetry_SucceedsAfterFailures() {
 	tx := atom.NewTransaction()
 	attempts := 0
 
-	_ = tx.DoWithOptions(s.ctx, "op", atom.OperationOptions{
-		CompensationRetry: &atom.RetryOptions{
-			MaxRetries:        3,
-			InitialDelay:      1 * time.Millisecond,
-			BackoffMultiplier: 1.0,
-		},
-	}, func(ctx context.Context) error {
+	_ = tx.Do(s.ctx, "op", func(ctx context.Context) error {
 		return nil
 	}, func(ctx context.Context) error {
 		attempts++
@@ -1083,7 +1063,11 @@ func (s *RetryTestSuite) TestRetry_SucceedsAfterFailures() {
 			return errors.New("temporary error")
 		}
 		return nil
-	})
+	}, atom.WithCompensationRetry(&atom.RetryOptions{
+		MaxRetries:        3,
+		InitialDelay:      1 * time.Millisecond,
+		BackoffMultiplier: 1.0,
+	}))
 
 	err := tx.Rollback(s.ctx)
 
@@ -1095,18 +1079,16 @@ func (s *RetryTestSuite) TestRetry_FailsAfterMaxRetries() {
 	tx := atom.NewTransaction()
 	attempts := 0
 
-	_ = tx.DoWithOptions(s.ctx, "op", atom.OperationOptions{
-		CompensationRetry: &atom.RetryOptions{
-			MaxRetries:        2,
-			InitialDelay:      1 * time.Millisecond,
-			BackoffMultiplier: 1.0,
-		},
-	}, func(ctx context.Context) error {
+	_ = tx.Do(s.ctx, "op", func(ctx context.Context) error {
 		return nil
 	}, func(ctx context.Context) error {
 		attempts++
 		return errors.New("permanent error")
-	})
+	}, atom.WithCompensationRetry(&atom.RetryOptions{
+		MaxRetries:        2,
+		InitialDelay:      1 * time.Millisecond,
+		BackoffMultiplier: 1.0,
+	}))
 
 	err := tx.Rollback(s.ctx)
 
@@ -1119,13 +1101,7 @@ func (s *RetryTestSuite) TestRetry_RespectsContextCancellation() {
 	tx := atom.NewTransaction()
 	attempts := 0
 
-	_ = tx.DoWithOptions(ctx, "op", atom.OperationOptions{
-		CompensationRetry: &atom.RetryOptions{
-			MaxRetries:        10,
-			InitialDelay:      50 * time.Millisecond,
-			BackoffMultiplier: 1.0,
-		},
-	}, func(ctx context.Context) error {
+	_ = tx.Do(ctx, "op", func(ctx context.Context) error {
 		return nil
 	}, func(ctx context.Context) error {
 		attempts++
@@ -1133,7 +1109,11 @@ func (s *RetryTestSuite) TestRetry_RespectsContextCancellation() {
 			cancel()
 		}
 		return errors.New("error")
-	})
+	}, atom.WithCompensationRetry(&atom.RetryOptions{
+		MaxRetries:        10,
+		InitialDelay:      50 * time.Millisecond,
+		BackoffMultiplier: 1.0,
+	}))
 
 	err := tx.Rollback(ctx)
 
@@ -1307,9 +1287,8 @@ func TestIntegration_HooksWithValidation(t *testing.T) {
 
 func TestIntegration_ObserverMetrics(t *testing.T) {
 	ctx := context.Background()
-	tx := atom.NewTransaction()
 	obs := atom.NewMetricsObserver()
-	tx.SetObserver(obs)
+	tx := atom.NewTransaction(atom.WithObserver(obs))
 
 	// Perform some operations
 	_ = tx.Do(ctx, "op1", func(ctx context.Context) error { return nil }, nil)

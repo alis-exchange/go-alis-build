@@ -56,24 +56,23 @@ return tx.Commit(ctx)
 
 ## Operations with Options
 
-Use `DoWithOptions` for advanced operation configuration:
+Use functional options for advanced operation configuration:
 
 ```go
-err := tx.DoWithOptions(ctx, "api-call", atom.OperationOptions{
-    Timeout: 5 * time.Second,
-    CompensationRetry: &atom.RetryOptions{
-        MaxRetries:        3,
-        InitialDelay:      100 * time.Millisecond,
-        BackoffMultiplier: 2.0,
-        MaxDelay:          5 * time.Second,
-    },
-}, 
+err := tx.Do(ctx, "api-call",
     func(ctx context.Context) error {
         return callExternalAPI(ctx)
     },
     func(ctx context.Context) error {
         return rollbackAPICall(ctx)
     },
+    atom.WithTimeout(5*time.Second),
+    atom.WithCompensationRetry(&atom.RetryOptions{
+        MaxRetries:        3,
+        InitialDelay:      100 * time.Millisecond,
+        BackoffMultiplier: 2.0,
+        MaxDelay:          5 * time.Second,
+    }),
 )
 ```
 
@@ -181,8 +180,7 @@ func (o *MyObserver) OnRollback(ctx context.Context, errors []error) {
 }
 
 // Use the observer
-tx := atom.NewTransaction()
-tx.SetObserver(&MyObserver{})
+tx := atom.NewTransaction(atom.WithObserver(&MyObserver{}))
 ```
 
 Built-in observers:
@@ -196,16 +194,14 @@ By default, the transaction does not log anything. You can optionally provide a 
 ```go
 import "log/slog"
 
-tx := atom.NewTransaction()
-
 // Enable logging with the default slog logger
-tx.SetLogger(slog.Default())
+tx := atom.NewTransaction(atom.WithLogger(slog.Default()))
 
 // Or use a custom logger
 logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
     Level: slog.LevelDebug,
 }))
-tx.SetLogger(logger)
+tx := atom.NewTransaction(atom.WithLogger(logger))
 ```
 
 When a logger is configured, the transaction will log:

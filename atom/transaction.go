@@ -18,12 +18,26 @@ type CompensatingFunc func(context.Context) error
 // OperationFunc is the main operation to execute
 type OperationFunc func(context.Context) error
 
-// OperationOptions configures behavior for an operation
-type OperationOptions struct {
-	// Timeout for the operation (0 means no timeout)
-	Timeout time.Duration
-	// CompensationRetry configures retry behavior for the compensating function
-	CompensationRetry *RetryOptions
+// OperationOption is a functional option for the Do method.
+type OperationOption func(*operationOptions)
+
+type operationOptions struct {
+	timeout           time.Duration
+	compensationRetry *RetryOptions
+}
+
+// WithTimeout sets a timeout for the operation (0 means no timeout).
+func WithTimeout(d time.Duration) OperationOption {
+	return func(opts *operationOptions) {
+		opts.timeout = d
+	}
+}
+
+// WithCompensationRetry configures retry behavior for the compensating function.
+func WithCompensationRetry(r *RetryOptions) OperationOption {
+	return func(opts *operationOptions) {
+		opts.compensationRetry = r
+	}
 }
 
 // RetryOptions configures retry behavior for compensating functions
@@ -71,18 +85,62 @@ type operationRecord struct {
 	err        error
 }
 
-// NewTransaction creates a new transaction
-func NewTransaction() *Transaction {
-	return &Transaction{
-		operations: make([]operationRecord, 0),
-		hooks:      make(map[HookType][]Hook),
+// TransactionOption is a functional option for NewTransaction.
+type TransactionOption func(*transactionOptions)
+
+type transactionOptions struct {
+	logger   *slog.Logger
+	observer Observer
+}
+
+// WithLogger sets the logger for the transaction.
+// If set, the transaction will log warnings and info messages using this logger.
+func WithLogger(logger *slog.Logger) TransactionOption {
+	return func(opts *transactionOptions) {
+		opts.logger = logger
 	}
 }
 
-// Do executes an operation and registers its compensating function
-// If the operation fails, it automatically triggers a rollback
-// The name parameter is optional (can be empty string)
-func (tx *Transaction) Do(ctx context.Context, name string, operation OperationFunc, compensate CompensatingFunc) error {
+// WithObserver sets the observer for the transaction.
+// Only one observer can be set; setting a new one replaces the previous.
+func WithObserver(obs Observer) TransactionOption {
+	return func(opts *transactionOptions) {
+		opts.observer = obs
+	}
+}
+
+// NewTransaction creates a new transaction with the given options.
+func NewTransaction(opts ...TransactionOption) *Transaction {
+	options := &transactionOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+	tx := &Transaction{
+		operations: make([]operationRecord, 0),
+		hooks:      make(map[HookType][]Hook),
+		logger:     options.logger,
+		observer:   options.observer,
+	}
+	return tx
+}
+
+// Do executes an operation and registers its compensating function.
+// If the operation fails, it automatically triggers a rollback.
+// The name parameter is optional (can be empty string).
+// Options like timeout and compensation retry can be passed as functional options.
+func (tx *Transaction) Do(ctx context.Context, name string, operation OperationFunc, compensate CompensatingFunc, opts ...OperationOption) error {
+	options := &operationOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Apply timeout if specified
+	if options.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, options.timeout)
+		defer cancel()
+	}
+
 	// Check context cancellation before proceeding
 	if err := ctx.Err(); err != nil {
 		return &errors.OperationError{Operation: name, Err: err}
@@ -130,86 +188,7 @@ func (tx *Transaction) Do(ctx context.Context, name string, operation OperationF
 	record := operationRecord{
 		name:       name,
 		compensate: compensate,
-		executedAt: startTime,
-		duration:   duration,
-		err:        err,
-	}
-
-	tx.mu.Lock()
-	tx.operations = append(tx.operations, record)
-	tx.mu.Unlock()
-
-	// Execute AfterOperation hooks (non-critical, always runs)
-	_ = tx.executeOperationHooks(ctx, AfterOperation, name, opIndex)
-
-	// If operation failed, return error
-	if err != nil {
-		return &errors.OperationError{
-			Operation: name,
-			Err:       err,
-		}
-	}
-
-	return nil
-}
-
-// DoWithOptions executes an operation with additional options like timeout and retry configuration
-func (tx *Transaction) DoWithOptions(ctx context.Context, name string, opts OperationOptions, operation OperationFunc, compensate CompensatingFunc) error {
-	// Apply timeout if specified
-	if opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
-	}
-
-	// Check context cancellation before proceeding
-	if err := ctx.Err(); err != nil {
-		return &errors.OperationError{Operation: name, Err: err}
-	}
-
-	// Increment executing counter and check state atomically
-	tx.mu.Lock()
-	if tx.committed {
-		tx.mu.Unlock()
-		return errors.ErrAlreadyCommitted
-	}
-	if tx.rolledBack {
-		tx.mu.Unlock()
-		return errors.ErrAlreadyRolledBack
-	}
-	// Mark that we're executing an operation (prevents commit/rollback)
-	atomic.AddInt32(&tx.executing, 1)
-	opIndex := len(tx.operations)
-	tx.mu.Unlock()
-
-	// Ensure we decrement the counter when done
-	defer atomic.AddInt32(&tx.executing, -1)
-
-	// Execute BeforeOperation hooks
-	if err := tx.executeOperationHooks(ctx, BeforeOperation, name, opIndex); err != nil {
-		return err
-	}
-
-	// Notify observer
-	if tx.observer != nil {
-		tx.observer.OnOperationStart(ctx, name)
-	}
-
-	// Execute the operation with panic recovery
-	startTime := time.Now()
-	err := tx.executeOperationSafe(ctx, operation)
-	duration := time.Since(startTime)
-
-	// Notify observer
-	if tx.observer != nil {
-		tx.observer.OnOperationEnd(ctx, name, duration, err)
-	}
-
-	// Record the operation with retry options
-	record := operationRecord{
-		name:       name,
-		compensate: compensate,
-		retryOpts:  opts.CompensationRetry,
+		retryOpts:  options.compensationRetry,
 		executedAt: startTime,
 		duration:   duration,
 		err:        err,
@@ -611,15 +590,6 @@ func (tx *Transaction) RollbackToSavepoint(ctx context.Context, sp *Savepoint) e
 	}
 
 	return nil
-}
-
-// SetLogger sets the logger for this transaction
-// If set, the transaction will log warnings and info messages using this logger
-// If nil (default), no logging is performed
-func (tx *Transaction) SetLogger(logger *slog.Logger) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	tx.logger = logger
 }
 
 // GetLogger returns the current logger, if any

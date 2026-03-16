@@ -264,7 +264,7 @@ func (tx *Transaction) ClearAllHooks() {
 }
 
 // AddOperationHook adds a non-critical operation hook
-// Operation hooks are called before/after each Do() or DoWithOptions() call
+// Operation hooks are called before/after each Do() call
 func (tx *Transaction) AddOperationHook(hookType HookType, fn OperationHookFunc) {
 	if hookType != BeforeOperation && hookType != AfterOperation {
 		return // Only operation hook types are valid
