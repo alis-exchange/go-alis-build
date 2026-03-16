@@ -1232,3 +1232,49 @@ func BenchmarkAllFunctions(b *testing.B) {
 		}
 	})
 }
+
+func TestUniqueStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "preserves first occurrence order",
+			input:    []string{"b", "a", "b", "c", "a"},
+			expected: []string{"b", "a", "c"},
+		},
+		{
+			name:     "empty slice stays empty",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "nil slice stays nil",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name:     "all duplicates collapse to one element",
+			input:    []string{"x", "x", "x"},
+			expected: []string{"x"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := UniqueStrings(tt.input)
+			if (result == nil) != (tt.expected == nil) {
+				t.Fatalf("UniqueStrings(%v) nil = %v, want %v", tt.input, result == nil, tt.expected == nil)
+			}
+			if len(result) != len(tt.expected) {
+				t.Fatalf("UniqueStrings(%v) length = %d, want %d", tt.input, len(result), len(tt.expected))
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Fatalf("UniqueStrings(%v) = %v, want %v", tt.input, result, tt.expected)
+				}
+			}
+		})
+	}
+}

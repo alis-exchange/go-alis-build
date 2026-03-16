@@ -470,3 +470,30 @@ func ToTitleCase(s string) string {
 
 	return strings.TrimRight(result.String(), " ")
 }
+
+// UniqueStrings returns a new slice containing the unique strings from the input slice.
+// The order of the elements in the output slice is the order of their first
+// appearance in the input slice.
+func UniqueStrings(input []string) []string {
+	if input == nil {
+		return nil
+	}
+
+	// A map to store the strings we have already seen.
+	// The empty struct `struct{}` is used as the value because it consumes zero memory.
+	seen := make(map[string]struct{}, len(input))
+
+	// The slice to store the unique strings.
+	// Pre-allocating with a capacity of the input slice can be a small optimization.
+	result := make([]string, 0, len(input))
+
+	for _, s := range input {
+		// If the string is not in our 'seen' map, add it.
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}       // Mark as seen.
+			result = append(result, s) // Append to the result slice.
+		}
+	}
+
+	return result
+}

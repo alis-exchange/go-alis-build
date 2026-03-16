@@ -1,6 +1,6 @@
 # Strings
 
-The `strings` package provides utilities for converting strings between common naming conventions used in programming. It handles conversions between snake_case, camelCase, PascalCase, kebab-case, SCREAMING_SNAKE_CASE, and Title Case.
+The `strings` package provides utilities for converting strings between common naming conventions used in programming and for deduplicating string slices while preserving order. It handles conversions between snake_case, camelCase, PascalCase, kebab-case, SCREAMING_SNAKE_CASE, and Title Case.
 
 ## Installation
 
@@ -20,6 +20,7 @@ import "go.alis.build/utils/strings"
 
 This package provides functions to:
 - Convert between different naming conventions (snake_case, camelCase, PascalCase, etc.)
+- Remove duplicate strings while preserving first-seen order
 - Handle edge cases like consecutive uppercase letters (acronyms)
 - Process mixed-format inputs gracefully
 - Support Unicode characters
@@ -180,6 +181,28 @@ strings.ToTitleCase("HTTPServer")    // "Http Server"
 strings.ToTitleCase("Already Title") // "Already Title"
 ```
 
+### UniqueStrings
+
+Returns a new slice containing the unique strings from the input slice.
+
+**Signature:**
+```go
+func UniqueStrings(input []string) []string
+```
+
+**Behavior:**
+- Preserves the order of first appearance
+- Removes later duplicates
+- Returns `nil` when the input slice is `nil`
+- Returns an empty non-`nil` slice when the input is empty
+
+**Example:**
+```go
+strings.UniqueStrings([]string{"b", "a", "b", "c", "a"}) // []string{"b", "a", "c"}
+strings.UniqueStrings([]string{})                         // []string{}
+strings.UniqueStrings(nil)                                // nil
+```
+
 ## Common Use Cases
 
 ### API Field Name Conversion
@@ -230,6 +253,15 @@ Create human-readable labels from code identifiers:
 ```go
 fieldName := "user_email_address"
 label := strings.ToTitleCase(fieldName) // "User Email Address"
+```
+
+### Deduplicate Values
+
+Remove duplicate string values without changing the original encounter order:
+
+```go
+tags := []string{"api", "internal", "api", "beta", "internal"}
+uniqueTags := strings.UniqueStrings(tags) // []string{"api", "internal", "beta"}
 ```
 
 ### Round-Trip Conversions
