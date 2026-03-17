@@ -51,6 +51,10 @@ func (rr *SpannerResourceRow[R]) Merge(updatedMsg proto.Message, fieldMaskPaths 
 
 // Update updates the resource row in the Spanner database.
 func (rr *SpannerResourceRow[R]) Update(ctx context.Context) error {
+	if rr == nil {
+		return status.Error(codes.InvalidArgument, "Resource row is nil")
+	}
+
 	if rr.GetRowKey() == nil {
 		return status.Error(codes.InvalidArgument, "Row key is empty because row was retrieved via Query,List or Stream method. Use SetRowKey to set the row key")
 	}
@@ -64,6 +68,10 @@ func (rr *SpannerResourceRow[R]) Update(ctx context.Context) error {
 
 // Delete removes the resource row from the Spanner database.
 func (rr *SpannerResourceRow[R]) Delete(ctx context.Context) error {
+	if rr == nil {
+		return status.Error(codes.InvalidArgument, "Resource row is nil")
+	}
+
 	if rr.GetRowKey() == nil {
 		return status.Error(codes.InvalidArgument, "Row key is empty because row was retrieved via Query,List or Stream method. Use SetRowKey to set the row key")
 	}
@@ -73,37 +81,66 @@ func (rr *SpannerResourceRow[R]) Delete(ctx context.Context) error {
 
 // GetRowKey returns the row key of the resource row.
 func (rr *SpannerResourceRow[R]) GetRowKey() protodb.RowKey {
+	if rr == nil {
+		return nil
+	}
+
 	return rr.key
 }
 
 // SetRowKey sets the row key of the resource row.
 func (rr *SpannerResourceRow[R]) SetRowKey(key protodb.RowKey) {
+	if rr == nil {
+		return
+	}
+
 	rr.key = key
 }
 
 // GetResource returns the resource of the resource row.
 func (rr *SpannerResourceRow[R]) GetResource() R {
+	if rr == nil {
+		var zeroValue R
+		return zeroValue
+	}
+
 	return rr.resource
 }
 
 // SetResource sets the resource of the resource row.
 func (rr *SpannerResourceRow[R]) SetResource(resource R) {
+	if rr == nil {
+		return
+	}
+
 	rr.resource = resource
 }
 
 // GetPolicy returns the IAM policy associated with the resource row.
 func (rr *SpannerResourceRow[R]) GetPolicy() *iampb.Policy {
+	if rr == nil {
+		return nil
+	}
+
 	return rr.policy
 }
 
 // SetPolicy sets the IAM policy associated with the resource row.
 func (rr *SpannerResourceRow[R]) SetPolicy(policy *iampb.Policy) {
+	if rr == nil {
+		return
+	}
+
 	rr.policy = policy
 }
 
 // ApplyReadMask applies the provided read mask to the resource row's resource,
 // filtering out any fields not included in the read mask.
 func (rr *SpannerResourceRow[R]) ApplyReadMask(readMask *fieldmaskpb.FieldMask, ignoredPaths ...string) error {
+	if rr == nil {
+		return status.Error(codes.InvalidArgument, "Resource row is nil")
+	}
+
 	if readMask == nil {
 		return nil
 	}

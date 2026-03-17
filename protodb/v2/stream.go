@@ -3,6 +3,9 @@ package protodb
 import (
 	"io"
 	"sync"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // StreamResponse is a generic streaming response used by ResourceTable.Stream.
@@ -26,6 +29,10 @@ func NewStreamResponse[T interface{}]() *StreamResponse[T] {
 // AddItem sends an item to the stream. The producer must call wg.Add(1) before
 // sending; the consumer's Next() calls wg.Done() when it receives the item.
 func (r *StreamResponse[T]) AddItem(item T) {
+	if r == nil {
+		return
+	}
+
 	r.wg.Add(1)
 	r.ch <- item
 }
@@ -33,6 +40,10 @@ func (r *StreamResponse[T]) AddItem(item T) {
 // SetError records an error and closes the stream. Next() will return this error
 // after the channel is drained.
 func (r *StreamResponse[T]) SetError(err error) {
+	if r == nil {
+		return
+	}
+
 	r.err = err
 	r.Close()
 }
@@ -40,6 +51,10 @@ func (r *StreamResponse[T]) SetError(err error) {
 // Close closes the stream channel. The producer must call this after sending
 // all items (or after SetError); it should be preceded by Wait().
 func (r *StreamResponse[T]) Close() {
+	if r == nil {
+		return
+	}
+
 	close(r.ch)
 }
 
@@ -47,12 +62,21 @@ func (r *StreamResponse[T]) Close() {
 // The producer should call Wait() before Close() to avoid closing the channel
 // while items are still being sent.
 func (r *StreamResponse[T]) Wait() {
+	if r == nil {
+		return
+	}
+
 	r.wg.Wait()
 }
 
 // Next gets the next item from the stream.
 // It returns io.EOF when the stream is closed.
 func (r *StreamResponse[T]) Next() (T, error) {
+	if r == nil {
+		var zeroValue T
+		return zeroValue, status.Error(codes.InvalidArgument, "Stream response is nil")
+	}
+
 	// Get the next item from the channel
 	item, ok := <-r.ch
 	if !ok {

@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"cloud.google.com/go/spanner"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // spannerTxKey is the context key used to store a Spanner ReadWriteTransaction.
@@ -31,6 +33,14 @@ type SpannerTransactionRunner struct {
 // that context will automatically use the transaction (reads, writes, deletes).
 // If fn returns an error, the transaction is rolled back; otherwise it is committed.
 func (r *SpannerTransactionRunner) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	if r == nil {
+		return status.Error(codes.InvalidArgument, "Spanner transaction runner is nil")
+	}
+
+	if r.Client == nil {
+		return status.Error(codes.InvalidArgument, "Spanner client is nil")
+	}
+
 	_, err := r.Client.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		txCtx := context.WithValue(ctx, spannerTxKey{}, txn)
 		return fn(txCtx)
