@@ -49,10 +49,10 @@ type TransactionRunner interface {
 	RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
-// ResourceRow is an interface that represents a row in the database that contains a resource and its associated IAM policy.
-// It provides methods to get and set the row key, get the resource, get the policy,
-// merge an updated message into the resource, apply a read mask to the resource, and update the resource in the database.
-type ResourceRow[R proto.Message] interface {
+// BaseResourceRow is an interface that represents a row in the database that contains an arbitrary resource and its associated IAM policy.
+// It provides data access (key, resource, policy) and persistence (Update, Delete) without protobuf-specific operations.
+// ResourceRow embeds BaseResourceRow and adds Merge and ApplyReadMask for protobuf resources.
+type BaseResourceRow[R any] interface {
 	// GetRowKey returns the key of the row.
 	GetRowKey() RowKey
 	// SetRowKey sets the key of the row.
@@ -65,15 +65,22 @@ type ResourceRow[R proto.Message] interface {
 	GetPolicy() *iampb.Policy
 	// SetPolicy sets the IAM policy associated with the row.
 	SetPolicy(policy *iampb.Policy)
+	// Update updates the resource in the database.
+	Update(ctx context.Context) error
+	// Delete deletes the resource from the database.
+	Delete(ctx context.Context) error
+}
+
+// ResourceRow is an interface that represents a row in the database that contains a protobuf resource and its associated IAM policy.
+// It provides methods to get and set the row key, get the resource, get the policy,
+// merge an updated message into the resource, apply a read mask to the resource, and update the resource in the database.
+type ResourceRow[R proto.Message] interface {
+	BaseResourceRow[R]
 	// Merge merges the updatedMsg into the resource. The fieldMaskPaths are the paths of the fields to update.
 	Merge(updatedMsg proto.Message, paths ...string)
 	// ApplyReadMask applies a field mask to the resource, filtering out fields that are not in the mask.
 	// ignoredPaths are paths that should be ignored when applying the read mask. These paths will always be included in the resource.
 	ApplyReadMask(readMask *fieldmaskpb.FieldMask, ignoredPaths ...string) error
-	// Update updates the resource in the database.
-	Update(ctx context.Context) error
-	// Delete deletes the resource from the database.
-	Delete(ctx context.Context) error
 }
 
 // ResourceTable is an interface that a database storing resources must implement.

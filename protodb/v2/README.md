@@ -34,14 +34,23 @@ It includes methods for:
 - **Query & Pagination:** `List`, `Query` with `pageToken` and `filter` support.
 - **Streaming:** `Stream` to retrieve resources continuously via a channel-backed iterator.
 
+### `BaseResourceRow[R any]`
+
+The `BaseResourceRow` interface represents a row containing an arbitrary resource and its IAM policy. It provides data access and persistence without protobuf-specific operations:
+
+- **Data Access:** `GetRowKey`, `SetRowKey`, `GetResource`, `SetResource`, `GetPolicy`, `SetPolicy`
+- **`Update` / `Delete`**: Persists changes for the row in the database.
+
+Use `BaseResourceRow` when you need a generic row abstraction that does not depend on protobuf types.
+
 ### `ResourceRow[R proto.Message]`
 
-The `ResourceRow` interface represents a single row within a database. It binds a protobuf resource to its row key and IAM policy, and provides built-in methods for applying updates:
+The `ResourceRow` interface embeds `BaseResourceRow[R]` and adds protobuf-specific operations for partial updates and read masks:
 
-- **Data Access:** `GetRowKey`, `GetResource`, `GetPolicy`
 - **`Merge`**: Merges an updated message into the resource based on provided field mask paths.
 - **`ApplyReadMask`**: Applies a `fieldmaskpb.FieldMask` to the resource, filtering out unrequested fields.
-- **`Update` / `Delete`**: Directly executes modifications for the specific row in the database.
+
+`ResourceRow` is the standard interface for tables storing protobuf resources; `ResourceTable` returns `ResourceRow` from its CRUD operations.
 
 ### `StreamResponse[T]`
 
