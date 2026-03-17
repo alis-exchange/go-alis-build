@@ -1,7 +1,7 @@
 // Package spanneradapter provides Spanner-specific implementations of the
-// database package interfaces: SpannerRowKeyFactory for key decoding,
-// SpannerTransactionRunner for transactional execution, and NewSpannerResourceRow
-// for resource row construction.
+// protodb package interfaces: SpannerRowKeyFactory for key decoding,
+// SpannerTransactionRunner for transactional execution, NewSpannerBaseResourceRow
+// for BaseResourceRow construction, and NewSpannerResourceRow for ResourceRow construction.
 package spanneradapter
 
 import (

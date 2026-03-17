@@ -22,11 +22,15 @@ err := txRunner.RunTransaction(ctx, func(ctx context.Context) error {
 })
 ```
 
+### `BaseResourceTable[R any]`
+
+The `BaseResourceTable` interface defines the standard contract for a table storing arbitrary resources. It returns `BaseResourceRow[R]` from all operations and does not require the resource to be a `proto.Message`. Use it when you need a generic table abstraction or when protobuf-specific operations (Merge, ApplyReadMask) are not required. It supports both non-transactional and transactional usage.
+
 ### `ResourceTable[R proto.Message]`
 
-The `ResourceTable` interface defines the standard contract for a database table storing protobuf resources. It supports both non-transactional and transactional usage: outside a transaction, operations apply immediately; inside `TransactionRunner.RunTransaction`, all operations share the same transaction and commit or roll back atomically.
+The `ResourceTable` interface has the same operations as `BaseResourceTable` but constrains R to `proto.Message` and returns `ResourceRow[R]` (which adds Merge and ApplyReadMask). It supports both non-transactional and transactional usage.
 
-It includes methods for:
+Both table interfaces include methods for:
 
 - **Standard CRUD:** `Create`, `Read`, `Write`, `Delete`
 - **Batch Operations:** `BatchCreate`, `BatchRead`, `BatchWrite`, `BatchDelete`
@@ -85,8 +89,9 @@ for {
 The `spanneradapter` subpackage provides Spanner-specific implementations:
 
 - **`SpannerRowKeyFactory`**: Extends `RowKeyFactory` with `Decode(row *spanner.Row) (protodb.RowKey, error)` for extracting row keys from Spanner results.
-- **`SpannerTransactionRunner`**: Implements `TransactionRunner` for Spanner `ReadWriteTransaction`. Pass the shared `*spanner.Client` at init; any `ResourceTable` operations within `RunTransaction` use the same transaction.
-- **`NewSpannerResourceRow`**: Constructs a `SpannerResourceRow` that implements `ResourceRow` and participates in transactions when the context contains an active Spanner transaction.
+- **`SpannerTransactionRunner`**: Implements `TransactionRunner` for Spanner `ReadWriteTransaction`. Pass the shared `*spanner.Client` at init; any table operations within `RunTransaction` use the same transaction.
+- **`NewSpannerBaseResourceRow`**: Constructs a `SpannerBaseResourceRow` that implements `BaseResourceRow[R]` for use with `BaseResourceTable[R]`. Participates in transactions when the context contains an active Spanner transaction.
+- **`NewSpannerResourceRow`**: Constructs a `SpannerResourceRow` that implements `ResourceRow[R]` for use with `ResourceTable[R]`. Adds Merge and ApplyReadMask for protobuf resources. Participates in transactions when the context contains an active Spanner transaction.
 - **`SpannerTxFromContext`**: Returns the active `*spanner.ReadWriteTransaction` from the context, or `nil` if no transaction is active. Used by table implementations to participate in transactional operations.
 - **`ToKey` / `ToKeys`**: Convert `protodb.RowKey` to `spanner.Key` or `[]spanner.KeySet` for `ReadRow`, `Read`, and `Delete` operations.
 
