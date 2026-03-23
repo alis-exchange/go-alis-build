@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/alis-exchange/go-alis-build/iam/v2"
+	"go.alis.build/iam/v2"
 	"google.golang.org/grpc/metadata"
 )
 

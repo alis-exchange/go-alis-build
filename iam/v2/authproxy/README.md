@@ -4,16 +4,15 @@ This package provides a reverse proxy and JWT validation middleware for Go appli
 
 ### Features
 
-* **Reverse proxy for authentication endpoints:**  Forwards requests with the `/auth` prefix to a designated authentication host. This allows you to integrate your authentication flow seamlessly.
-* **JWT validation:**  Validates the `access_token` cookie for all other requests. If the token is invalid or missing, it redirects the user to the authentication service's refresh endpoint.
-* **Authorization header forwarding:**  Adds the validated access token as an `Authorization` header to the request, making it easy to use with downstream services.
-* **gRPC support:**  Includes a function to forward the `Authorization` header from incoming gRPC requests to outgoing ones.
-
+- **Reverse proxy for authentication endpoints:** Forwards requests with the `/auth` prefix to a designated authentication host. This allows you to integrate your authentication flow seamlessly.
+- **JWT validation:** Validates the `access_token` cookie for all other requests. If the token is invalid or missing, it redirects the user to the authentication service's refresh endpoint.
+- **Authorization header forwarding:** Adds the validated access token as an `Authorization` header to the request, making it easy to use with downstream services.
+- **gRPC support:** Includes a function to forward the `Authorization` header from incoming gRPC requests to outgoing ones.
 
 ### Installation
 
 ```bash
-go get github.com/alis-exchange/go-alis-build/iam/v2/authproxy 
+go get go.alis.build/iam/v2/authproxy
 ```
 
 ### Usage
@@ -53,15 +52,15 @@ func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServ
 
 ### How it Works
 
-* **Reverse Proxy:** When a request with the `/auth` prefix is received, the `HandleAuth` function forwards it to the configured `authHost`. It preserves cookies and headers to maintain the authentication flow.
-* **JWT Validation:** For all other requests, `HandleAuth` checks for an `access_token` cookie. If present, it validates the token against the public keys fetched from the authentication service.
-* **Public Key Caching:** Public keys are cached in a `sync.Map` to reduce latency and load on the authentication service. The cache is updated if the token's `kid` (key ID) is not found.
-* **Authorization Header:** After successful validation, the access token is added as an `Authorization` header to the request.
-* **gRPC Forwarding:** The `ForwardAuthorizationHeader` function extracts the `Authorization` header from incoming gRPC metadata and adds it to the outgoing metadata.
+- **Reverse Proxy:** When a request with the `/auth` prefix is received, the `HandleAuth` function forwards it to the configured `authHost`. It preserves cookies and headers to maintain the authentication flow.
+- **JWT Validation:** For all other requests, `HandleAuth` checks for an `access_token` cookie. If present, it validates the token against the public keys fetched from the authentication service.
+- **Public Key Caching:** Public keys are cached in a `sync.Map` to reduce latency and load on the authentication service. The cache is updated if the token's `kid` (key ID) is not found.
+- **Authorization Header:** After successful validation, the access token is added as an `Authorization` header to the request.
+- **gRPC Forwarding:** The `ForwardAuthorizationHeader` function extracts the `Authorization` header from incoming gRPC metadata and adds it to the outgoing metadata.
 
 ### Important Notes
 
-* **Authentication Service:** This package assumes you have a separate authentication service that handles user login, token generation, and key management.
-* **Security:** Ensure your authentication service is properly secured and uses HTTPS to protect sensitive information.
-* **Error Handling:**  Implement proper error handling in your application to handle cases where the authentication service is unavailable or returns errors.
-* **Customization:** You can customize the cookie name and other parameters as needed.
+- **Authentication Service:** This package assumes you have a separate authentication service that handles user login, token generation, and key management.
+- **Security:** Ensure your authentication service is properly secured and uses HTTPS to protect sensitive information.
+- **Error Handling:** Implement proper error handling in your application to handle cases where the authentication service is unavailable or returns errors.
+- **Customization:** You can customize the cookie name and other parameters as needed.

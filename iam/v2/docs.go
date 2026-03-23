@@ -17,4 +17,4 @@ of a Resource Driven development framework as defined at
 [RDD](https://google.com) inline with the
 [API Improvement Proposals](https://aip.dev)
 */
-package iam // import "github.com/alis-exchange/go-alis-build/iam/v2"
+package iam // import "go.alis.build/iam/v2"
