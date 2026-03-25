@@ -34,20 +34,26 @@ func Example_resumeViaTasks() {
 		return
 	}
 
-	op.SavePrivateState(&CreateAgentState{
+	if err := op.SavePrivateState(&CreateAgentState{
 		Owner:     "users/123",
 		PollCount: 0,
-	})
+	}); err != nil {
+		return
+	}
 
 	_ = op.ResumeViaTasks(func(op *lro.Operation) {
 		state := &CreateAgentState{}
-		op.DecodePrivateState(state)
+		if err := op.DecodePrivateState(state); err != nil {
+			return
+		}
 
 		meta := &structpb.Struct{}
 		_, _ = lro.UnmarshalMetadata(op, meta)
 
 		state.PollCount++
-		op.SavePrivateState(state)
-		op.Complete(&emptypb.Empty{})
+		if err := op.SavePrivateState(state); err != nil {
+			return
+		}
+		_ = op.Complete(&emptypb.Empty{})
 	}, 5*time.Second)
 }

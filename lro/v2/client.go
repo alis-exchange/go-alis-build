@@ -79,6 +79,9 @@ func New(neuron string, mux *http.ServeMux, opts ...Option) (*Client, error) {
 	}
 	taskQueue, err := newQueue(neuron)
 	if err != nil {
+		if db != nil && db.Client != nil {
+			db.Client.Close()
+		}
 		return nil, err
 	}
 
@@ -127,7 +130,9 @@ func (c *Client) NewOperation(ctx context.Context, operationName string, md prot
 		Ctx:    ctx,
 		client: c,
 	}
-	op.SetMetadata(md)
+	if err := op.SetMetadata(md); err != nil {
+		return nil, err
+	}
 
 	if err := c.db.Insert(ctx, opRow); err != nil {
 		return nil, fmt.Errorf("inserting operation row: %w", err)
@@ -164,7 +169,9 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 
 // ResumeViaTasks saves the operation and schedules the supplied handler to resume later via Cloud Tasks.
 func (o *Operation) ResumeViaTasks(handler func(op *Operation), waitDuration time.Duration) error {
-	o.Save()
+	if err := o.Save(); err != nil {
+		return err
+	}
 
 	muxPattern := "/operations/" + o.row.Method
 	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
@@ -191,7 +198,7 @@ func (o *Operation) ResumeViaTasks(handler func(op *Operation), waitDuration tim
 	}
 
 	if err := o.client.taskQueue.schedulePutRequest(o.Ctx, o.client.mux, url, time.Now().Add(waitDuration)); err != nil {
-		o.Fail("scheduling cloudtask: %v", err)
+		_ = o.Fail("scheduling cloudtask: %v", err)
 		return fmt.Errorf("scheduling cloudtask: %w", err)
 	}
 	return nil
@@ -214,43 +221,50 @@ func UnmarshalMetadata[MdT proto.Message](op *Operation, md MdT) (MdT, error) {
 }
 
 // SaveMetadata updates the operation metadata and persists the operation.
-func (o *Operation) SaveMetadata(md proto.Message) {
-	o.SetMetadata(md)
-	o.Save()
+func (o *Operation) SaveMetadata(md proto.Message) error {
+	if err := o.SetMetadata(md); err != nil {
+		return err
+	}
+	return o.Save()
 }
 
 // SetMetadata updates the operation metadata without persisting the operation.
-func (o *Operation) SetMetadata(md proto.Message) {
+func (o *Operation) SetMetadata(md proto.Message) error {
 	mdAny, err := anypb.New(md)
 	if err != nil {
-		alog.Fatalf(context.Background(), "marshalling metadata into any: %v", err)
+		return fmt.Errorf("marshal metadata into any: %w", err)
 	}
 	o.row.Operation.Metadata = mdAny
+	return nil
 }
 
 // DecodePrivateState decodes the operation's private state into state.
-func (o *Operation) DecodePrivateState(state any) {
+func (o *Operation) DecodePrivateState(state any) error {
 	r := bytes.NewReader(o.row.State)
 	dec := gob.NewDecoder(r)
 	if err := dec.Decode(state); err != nil {
-		alog.Fatalf(context.Background(), "gob decoding private state: %v", err)
+		return fmt.Errorf("decode private state: %w", err)
 	}
+	return nil
 }
 
 // SavePrivateState updates the private state and persists the operation.
-func (o *Operation) SavePrivateState(state any) {
-	o.SetPrivateState(state)
-	o.Save()
+func (o *Operation) SavePrivateState(state any) error {
+	if err := o.SetPrivateState(state); err != nil {
+		return err
+	}
+	return o.Save()
 }
 
 // SetPrivateState updates the private state without persisting the operation.
-func (o *Operation) SetPrivateState(state any) {
+func (o *Operation) SetPrivateState(state any) error {
 	w := bytes.NewBuffer(nil)
 	enc := gob.NewEncoder(w)
 	if err := enc.Encode(state); err != nil {
-		alog.Fatalf(context.Background(), "gob encoding state: %v", err)
+		return fmt.Errorf("encode private state: %w", err)
 	}
 	o.row.State = w.Bytes()
+	return nil
 }
 
 // ResumePoint returns the operation's current resume point.
@@ -259,9 +273,9 @@ func (o *Operation) ResumePoint() string {
 }
 
 // SaveResumePoint updates the resume point and persists the operation.
-func (o *Operation) SaveResumePoint(resumePoint string) {
+func (o *Operation) SaveResumePoint(resumePoint string) error {
 	o.SetResumePoint(resumePoint)
-	o.Save()
+	return o.Save()
 }
 
 // SetResumePoint updates the resume point without persisting the operation.
@@ -270,37 +284,36 @@ func (o *Operation) SetResumePoint(resumePoint string) {
 }
 
 // Save persists the current operation row.
-func (o *Operation) Save() {
+func (o *Operation) Save() error {
 	if err := o.client.db.Update(o.Ctx, o.row); err != nil {
-		alog.Fatalf(o.Ctx, "saving operation row: %v", err)
+		return fmt.Errorf("save operation row: %w", err)
 	}
+	return nil
 }
 
 // Complete marks the operation done with a successful response and persists it.
-func (o *Operation) Complete(resp proto.Message) {
+func (o *Operation) Complete(resp proto.Message) error {
 	if resp == nil {
-		alog.Alertf(o.Ctx, "completing operation with nil response: %s", o.row.Operation.GetName())
-		return
+		return fmt.Errorf("complete operation %s with nil response", o.row.Operation.GetName())
 	}
 
 	respAny, err := anypb.New(resp)
 	if err != nil {
-		alog.Alertf(o.Ctx, "marshalling response into any: %v", err)
-		return
+		return fmt.Errorf("marshal response into any: %w", err)
 	}
 
 	o.row.Operation.Done = true
 	o.row.Operation.Result = &longrunningpb.Operation_Response{Response: respAny}
-	o.Save()
+	return o.Save()
 }
 
 // Fail marks the operation done with an error message and persists it.
-func (o *Operation) Fail(reason string, args ...any) {
+func (o *Operation) Fail(reason string, args ...any) error {
 	o.row.Operation.Done = true
 	o.row.Operation.Result = &longrunningpb.Operation_Error{
 		Error: &rpcStatus.Status{
 			Message: fmt.Sprintf(reason, args...),
 		},
 	}
-	o.Save()
+	return o.Save()
 }

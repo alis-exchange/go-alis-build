@@ -57,11 +57,6 @@ var cloudTasksLocationFallbacks = map[string]string{
 
 // newQueue constructs the Cloud Tasks queue client used to resume operations.
 func newQueue(neuron string) (*queue, error) {
-	ctx := context.Background()
-	tasksClient, err := cloudtasks.NewClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("create cloud tasks client: %w", err)
-	}
 	project, err := requiredEnv("ALIS_OS_PROJECT")
 	if err != nil {
 		return nil, err
@@ -73,6 +68,11 @@ func newQueue(neuron string) (*queue, error) {
 	location, err = resolveCloudTasksLocation(location)
 	if err != nil {
 		return nil, err
+	}
+	ctx := context.Background()
+	tasksClient, err := cloudtasks.NewClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create cloud tasks client: %w", err)
 	}
 
 	return &queue{
