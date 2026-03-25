@@ -29,7 +29,8 @@ type Client struct {
 
 // Options configures a Client created with New.
 type Options struct {
-	host string
+	host         string
+	databaseRole *string
 }
 
 // Option configures a Client during New.
@@ -39,6 +40,14 @@ type Option func(*Options)
 func WithHost(host string) Option {
 	return func(opts *Options) {
 		opts.host = host
+	}
+}
+
+// WithDatabaseRole overrides the Spanner database role used by the client.
+// Pass an empty string to disable setting a database role explicitly.
+func WithDatabaseRole(databaseRole string) Option {
+	return func(opts *Options) {
+		opts.databaseRole = &databaseRole
 	}
 }
 
@@ -73,7 +82,7 @@ func New(neuron string, mux *http.ServeMux, opts ...Option) (*Client, error) {
 		}
 	}
 
-	db, err := newDB(neuron)
+	db, err := newDB(neuron, options.databaseRole)
 	if err != nil {
 		return nil, err
 	}

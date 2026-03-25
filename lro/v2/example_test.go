@@ -16,6 +16,10 @@ type CreateAgentState struct {
 }
 
 func Example_resumeViaTasks() {
+	// Provision the backing Spanner table before creating the client.
+	// For neuron "launchpad-v1" the table name is:
+	//   ${replace(ALIS_OS_PROJECT, "-", "_")}_launchpad_v1_Operations
+	// See the package docs for the Terraform snippet that provisions the required table and TTL policy.
 	mux := http.NewServeMux()
 	client, err := lro.New("launchpad-v1", mux, lro.WithHost("https://launchpad-backend.example.com"))
 	if err != nil {

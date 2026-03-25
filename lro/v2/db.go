@@ -22,14 +22,22 @@ type database struct {
 
 // OperationRow is the Spanner-backed representation of an operation.
 type OperationRow struct {
-	Operation   *longrunningpb.Operation
-	State       []byte
+	Operation *longrunningpb.Operation
+	// Internal state to track about the operation.
+	// Use the operation's metadata for information that should be visible to clients.
+	State []byte
+	// Checkpoint to resume from.
 	ResumePoint string
-	Method      string
-	UpdateTime  time.Time
+	// The logical RPC/workflow identifier for this operation.
+	// It is derived from the operation metadata type name with the "Metadata" suffix removed.
+	// In services designed inline with aip.dev, metadata types are expected to be unique per RPC,
+	// so this value is used both for resumption routing and for grouping operations by RPC.
+	Method string
+	// The last time this operation was updated. Automatically set when writing to Spanner.
+	UpdateTime time.Time
 }
 
-func newDB(neuron string) (*database, error) {
+func newDB(neuron string, databaseRole *string) (*database, error) {
 	co := &spapi.CallOptions{
 		ExecuteSql: []gax.CallOption{
 			gax.WithRetry(func() gax.Retryer {
@@ -63,11 +71,14 @@ func newDB(neuron string) (*database, error) {
 	}
 
 	dbName := fmt.Sprintf("projects/%s/instances/%s/databases/%s", spannerProject, spannerInstance, spannerDB)
-	client, err := spanner.NewClientWithConfig(ctx, dbName, spanner.ClientConfig{
-		DatabaseRole:         strings.ReplaceAll(project, "-", "_"),
+	clientConfig := spanner.ClientConfig{
 		CallOptions:          co,
 		DisableNativeMetrics: true,
-	})
+	}
+	if databaseRole != nil {
+		clientConfig.DatabaseRole = *databaseRole
+	}
+	client, err := spanner.NewClientWithConfig(ctx, dbName, clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create lro db client: %w", err)
 	}
