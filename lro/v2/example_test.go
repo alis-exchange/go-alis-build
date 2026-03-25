@@ -15,6 +15,22 @@ type CreateAgentState struct {
 	PollCount int
 }
 
+func createAgentHandler(op *lro.Operation) {
+	state := &CreateAgentState{}
+	if err := op.DecodePrivateState(state); err != nil {
+		return
+	}
+
+	meta := &structpb.Struct{}
+	_, _ = lro.UnmarshalMetadata(op, meta)
+
+	state.PollCount++
+	if err := op.SavePrivateState(state); err != nil {
+		return
+	}
+	_ = op.Complete(&emptypb.Empty{})
+}
+
 func Example_resumeViaTasks() {
 	// Provision the backing Spanner table before creating the client.
 	// For neuron "launchpad-v1" the table name is:
@@ -37,6 +53,9 @@ func Example_resumeViaTasks() {
 		return
 	}
 	defer client.Close()
+	if err := client.RegisterResumableHandler("Struct", createAgentHandler); err != nil {
+		return
+	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
 		return
 	}
@@ -59,19 +78,5 @@ func Example_resumeViaTasks() {
 		return
 	}
 
-	_ = op.ResumeViaTasks(func(op *lro.Operation) {
-		state := &CreateAgentState{}
-		if err := op.DecodePrivateState(state); err != nil {
-			return
-		}
-
-		meta := &structpb.Struct{}
-		_, _ = lro.UnmarshalMetadata(op, meta)
-
-		state.PollCount++
-		if err := op.SavePrivateState(state); err != nil {
-			return
-		}
-		_ = op.Complete(&emptypb.Empty{})
-	}, 5*time.Second)
+	_ = op.ResumeViaTasks(5 * time.Second)
 }

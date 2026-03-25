@@ -96,6 +96,9 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 	if err != nil {
 		return err
 	}
+	if err := client.RegisterResumableHandler("CreateAgent", createAgentHandler); err != nil {
+		return err
+	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
 		return err
 	}
@@ -106,6 +109,9 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 
 	client, err := lro.NewFromEnv(ctx, "launchpad-v1")
 	if err != nil {
+		return err
+	}
+	if err := client.RegisterResumableHandler("CreateAgent", createAgentHandler); err != nil {
 		return err
 	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
