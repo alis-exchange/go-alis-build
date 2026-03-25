@@ -6,7 +6,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,70 +22,61 @@ type Client struct {
 	host        string
 	db          *database
 	mux         *http.ServeMux
+	muxPrefix   string
 	taskQueue   *queue
 	muxPatterns *sync.Map
 }
 
-// Options configures a Client created with New.
-type Options struct {
-	host         string
-	databaseRole *string
+// Config configures a Client created with New.
+type Config struct {
+	Neuron string
+
+	// Project is the owning project used to derive the operations table name.
+	Project string
+
+	SpannerProject  string
+	SpannerInstance string
+	SpannerDatabase string
+	DatabaseRole    string
+
+	CloudTasksProject        string
+	CloudTasksLocation       string
+	CloudTasksQueue          string
+	CloudTasksServiceAccount string
+
+	Host string
 }
 
-// Option configures a Client during New.
-type Option func(*Options)
+type options struct {
+	host *string
+}
 
-// WithHost overrides the default Cloud Run host used for resumable operation callbacks.
+// Option configures env-derived client construction.
+type Option func(*options)
+
+// WithHost overrides the callback host used by NewFromEnv.
 func WithHost(host string) Option {
-	return func(opts *Options) {
-		opts.host = host
+	return func(opts *options) {
+		opts.host = &host
 	}
 }
 
-// WithDatabaseRole overrides the Spanner database role used by the client.
-// Pass an empty string to disable setting a database role explicitly.
-func WithDatabaseRole(databaseRole string) Option {
-	return func(opts *Options) {
-		opts.databaseRole = &databaseRole
+// New constructs a new LRO client from explicit configuration.
+func New(ctx context.Context, cfg Config) (*Client, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
-}
-
-func defaultHost(neuron string) (string, error) {
-	runHash := os.Getenv("ALIS_RUN_HASH")
-	if runHash == "" {
-		return "", fmt.Errorf("ALIS_RUN_HASH not set")
-	}
-	return fmt.Sprintf("https://%s-backend-%s.run.app", neuron, runHash), nil
-}
-
-// New constructs a new LRO client for the given neuron and HTTP mux.
-func New(neuron string, mux *http.ServeMux, opts ...Option) (*Client, error) {
-	if neuron == "" {
-		return nil, fmt.Errorf("neuron is required")
-	}
-	if mux == nil {
-		return nil, fmt.Errorf("mux is required")
-	}
-
-	options := &Options{}
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	host := options.host
-	if host == "" {
-		var err error
-		host, err = defaultHost(neuron)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	db, err := newDB(neuron, options.databaseRole)
+	location, err := resolveCloudTasksLocation(cfg.CloudTasksLocation)
 	if err != nil {
 		return nil, err
 	}
-	taskQueue, err := newQueue(neuron)
+	cfg.CloudTasksLocation = location
+
+	db, err := newDB(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	taskQueue, err := newQueue(ctx, cfg)
 	if err != nil {
 		if db != nil && db.Client != nil {
 			db.Client.Close()
@@ -95,12 +85,78 @@ func New(neuron string, mux *http.ServeMux, opts ...Option) (*Client, error) {
 	}
 
 	return &Client{
-		host:        host,
+		host:        cfg.Host,
 		db:          db,
-		mux:         mux,
 		taskQueue:   taskQueue,
 		muxPatterns: &sync.Map{},
 	}, nil
+}
+
+func validateConfig(cfg Config) error {
+	if cfg.Neuron == "" {
+		return fmt.Errorf("neuron is required")
+	}
+	if cfg.Project == "" {
+		return fmt.Errorf("project is required")
+	}
+	if cfg.SpannerProject == "" {
+		return fmt.Errorf("spanner project is required")
+	}
+	if cfg.SpannerInstance == "" {
+		return fmt.Errorf("spanner instance is required")
+	}
+	if cfg.SpannerDatabase == "" {
+		return fmt.Errorf("spanner database is required")
+	}
+	if cfg.CloudTasksProject == "" {
+		return fmt.Errorf("cloud tasks project is required")
+	}
+	if cfg.CloudTasksLocation == "" {
+		return fmt.Errorf("cloud tasks location is required")
+	}
+	if _, err := resolveCloudTasksLocation(cfg.CloudTasksLocation); err != nil {
+		return err
+	}
+	if cfg.CloudTasksQueue == "" {
+		return fmt.Errorf("cloud tasks queue is required")
+	}
+	if cfg.CloudTasksServiceAccount == "" {
+		return fmt.Errorf("cloud tasks service account is required")
+	}
+	if cfg.Host == "" {
+		return fmt.Errorf("host is required")
+	}
+	return nil
+}
+
+// RegisterHTTPHandlers registers the default operations callback route on mux.
+func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) error {
+	return c.RegisterHTTPHandlersAtPrefix(mux, "/operations/")
+}
+
+// RegisterHTTPHandlersAtPrefix registers resumable operation callbacks using the supplied path prefix.
+func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string) error {
+	if mux == nil {
+		return fmt.Errorf("mux is required")
+	}
+
+	prefix = normalizePrefix(prefix)
+	c.mux = mux
+	c.muxPrefix = prefix
+	return nil
+}
+
+func normalizePrefix(prefix string) string {
+	if prefix == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	return prefix
 }
 
 // Close closes the underlying Spanner and Cloud Tasks clients.
@@ -181,22 +237,30 @@ func (o *Operation) ResumeViaTasks(handler func(op *Operation), waitDuration tim
 	if err := o.Save(); err != nil {
 		return err
 	}
+	if o.client.mux == nil {
+		return fmt.Errorf("client HTTP handlers are not registered; call RegisterHTTPHandlers or RegisterHTTPHandlersAtPrefix first")
+	}
 
-	muxPattern := "/operations/" + o.row.Method
+	// For example, "/operations/" + "CreateAgentFromContent" becomes "/operations/CreateAgentFromContent".
+	muxPattern := o.client.muxPrefix + o.row.Method
 	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
+	// Register each resumable callback route once per client, even if many operations share the same method.
 	if _, loaded := o.client.muxPatterns.LoadOrStore(muxPattern, struct{}{}); !loaded {
 		o.client.mux.HandleFunc("PUT "+muxPattern, func(w http.ResponseWriter, r *http.Request) {
+			// Cloud Tasks identifies the specific operation to resume via the query string.
 			opName := r.URL.Query().Get("operation")
 			if opName == "" {
 				http.Error(w, "missing operation query param", http.StatusBadRequest)
 				return
 			}
 
+			// Reload the latest operation state from Spanner before invoking the resume handler.
 			opRow, err := o.client.db.Read(r.Context(), opName)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("reading operation row: %v", err), http.StatusInternalServerError)
 				return
 			}
+			// Wrap the persisted row in an Operation so the handler can continue the workflow normally.
 			handler(&Operation{
 				row:    opRow,
 				Ctx:    r.Context(),

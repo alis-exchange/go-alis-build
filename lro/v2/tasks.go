@@ -56,28 +56,15 @@ var cloudTasksLocationFallbacks = map[string]string{
 }
 
 // newQueue constructs the Cloud Tasks queue client used to resume operations.
-func newQueue(neuron string) (*queue, error) {
-	project, err := requiredEnv("ALIS_OS_PROJECT")
-	if err != nil {
-		return nil, err
-	}
-	location, err := requiredEnv("ALIS_REGION")
-	if err != nil {
-		return nil, err
-	}
-	location, err = resolveCloudTasksLocation(location)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
+func newQueue(ctx context.Context, cfg Config) (*queue, error) {
 	tasksClient, err := cloudtasks.NewClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create cloud tasks client: %w", err)
 	}
 
 	return &queue{
-		name:                fmt.Sprintf("projects/%s/locations/%s/queues/%s-operations", project, location, neuron),
-		serviceAccountEmail: fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", project),
+		name:                fmt.Sprintf("projects/%s/locations/%s/queues/%s", cfg.CloudTasksProject, cfg.CloudTasksLocation, cfg.CloudTasksQueue),
+		serviceAccountEmail: cfg.CloudTasksServiceAccount,
 		client:              tasksClient,
 		taskDeadline:        30 * time.Minute,
 	}, nil

@@ -3,7 +3,6 @@ package lro
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -37,7 +36,7 @@ type OperationRow struct {
 	UpdateTime time.Time
 }
 
-func newDB(neuron string, databaseRole *string) (*database, error) {
+func newDB(ctx context.Context, cfg Config) (*database, error) {
 	co := &spapi.CallOptions{
 		ExecuteSql: []gax.CallOption{
 			gax.WithRetry(func() gax.Retryer {
@@ -52,38 +51,20 @@ func newDB(neuron string, databaseRole *string) (*database, error) {
 		},
 	}
 
-	ctx := context.Background()
-	spannerProject, err := requiredEnv("ALIS_MANAGED_SPANNER_PROJECT")
-	if err != nil {
-		return nil, err
-	}
-	spannerInstance, err := requiredEnv("ALIS_MANAGED_SPANNER_INSTANCE")
-	if err != nil {
-		return nil, err
-	}
-	spannerDB, err := requiredEnv("ALIS_MANAGED_SPANNER_DB")
-	if err != nil {
-		return nil, err
-	}
-	project, err := requiredEnv("ALIS_OS_PROJECT")
-	if err != nil {
-		return nil, err
-	}
-
-	dbName := fmt.Sprintf("projects/%s/instances/%s/databases/%s", spannerProject, spannerInstance, spannerDB)
+	dbName := fmt.Sprintf("projects/%s/instances/%s/databases/%s", cfg.SpannerProject, cfg.SpannerInstance, cfg.SpannerDatabase)
 	clientConfig := spanner.ClientConfig{
 		CallOptions:          co,
 		DisableNativeMetrics: true,
 	}
-	if databaseRole != nil {
-		clientConfig.DatabaseRole = *databaseRole
+	if cfg.DatabaseRole != "" {
+		clientConfig.DatabaseRole = cfg.DatabaseRole
 	}
 	client, err := spanner.NewClientWithConfig(ctx, dbName, clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create lro db client: %w", err)
 	}
 
-	tableName := strings.ReplaceAll(project+"_"+neuron+"_Operations", "-", "_")
+	tableName := strings.ReplaceAll(cfg.Project+"_"+cfg.Neuron+"_Operations", "-", "_")
 	cols := []string{"Operation", "State", "ResumePoint", "Method", "UpdateTime"}
 	return &database{Client: client, table: tableName, cols: cols}, nil
 }
@@ -136,12 +117,4 @@ func (d *database) Update(ctx context.Context, operationRow *OperationRow) error
 	}
 	_, err := d.Client.Apply(ctx, mutations)
 	return err
-}
-
-func requiredEnv(key string) (string, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return "", fmt.Errorf("%s not set", key)
-	}
-	return value, nil
 }

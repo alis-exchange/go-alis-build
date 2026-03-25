@@ -5,7 +5,7 @@ and resumed via Cloud Tasks.
 Before using this package, provision the backing Spanner table for the target
 `neuron`. The client expects a table named:
 
-	${replace(ALIS_OS_PROJECT, "-", "_")}_${replace(neuron, "-", "_")}_Operations
+	${replace(project, "-", "_")}_${replace(neuron, "-", "_")}_Operations
 
 The required schema is:
 
@@ -79,19 +79,43 @@ Example Terraform:
 
 ```
 
-The v2 API replaces package-global initialization with an explicit client:
+The v2 API uses explicit client configuration and explicit HTTP binding:
 
-	client, err := lro.New("launchpad-v1", mux)
+	client, err := lro.New(ctx, lro.Config{
+		Neuron:                   "launchpad-v1",
+		Project:                  "my-project",
+		SpannerProject:           "my-spanner-project",
+		SpannerInstance:          "my-spanner-instance",
+		SpannerDatabase:          "my-spanner-db",
+		CloudTasksProject:        "my-project",
+		CloudTasksLocation:       "europe-west1",
+		CloudTasksQueue:          "launchpad-v1-operations",
+		CloudTasksServiceAccount: "alis-build@my-project.iam.gserviceaccount.com",
+		Host:                     "https://launchpad-backend.example.com",
+	})
 	if err != nil {
+		return err
+	}
+	if err := client.RegisterHTTPHandlers(mux); err != nil {
 		return err
 	}
 
 	op, err := client.NewOperation(ctx, "operations/123", metadata)
 
-Use [WithHost] to override the default Cloud Run host that is inferred from
-`ALIS_RUN_HASH`.
+Services that use ALIS-managed infrastructure can construct the client from env:
 
-Use [WithDatabaseRole] to set the Spanner database role when needed.
-If no database role option is provided, the client does not set one.
+	client, err := lro.NewFromEnv(ctx, "launchpad-v1")
+	if err != nil {
+		return err
+	}
+	if err := client.RegisterHTTPHandlers(mux); err != nil {
+		return err
+	}
+
+The host inferred from `ALIS_RUN_HASH` can be overridden when needed:
+
+	client, err := lro.NewFromEnv(ctx, "launchpad-v1", lro.WithHost("https://launchpad-backend.example.com"))
+
+Importing the package never validates env vars or panics.
 */
 package lro // import "go.alis.build/lro/v2"
