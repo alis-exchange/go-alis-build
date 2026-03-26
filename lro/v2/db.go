@@ -27,10 +27,7 @@ type OperationRow struct {
 	State []byte
 	// Checkpoint to resume from.
 	ResumePoint string
-	// The logical RPC/workflow identifier for this operation.
-	// It is derived from the operation metadata type name with the "Metadata" suffix removed.
-	// In services designed inline with aip.dev, metadata types are expected to be unique per RPC,
-	// so this value is used both for resumption routing and for grouping operations by RPC.
+	// The persisted handler ID used to route resumable callbacks for this operation.
 	Method string
 	// The last time this operation was updated. Automatically set when writing to Spanner.
 	UpdateTime time.Time

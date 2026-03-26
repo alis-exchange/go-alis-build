@@ -53,7 +53,7 @@ func Example_resumeViaTasks() {
 		return
 	}
 	defer client.Close()
-	if err := client.RegisterResumableHandler("Struct", createAgentHandler); err != nil {
+	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil {
 		return
 	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
@@ -78,5 +78,5 @@ func Example_resumeViaTasks() {
 		return
 	}
 
-	_ = op.ResumeViaTasks(5 * time.Second)
+	_ = op.ResumeViaTasks("create-agent", 5*time.Second)
 }

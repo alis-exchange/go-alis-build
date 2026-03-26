@@ -148,8 +148,8 @@ func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string)
 
 	var registerErr error
 	c.resumableHandlers.Range(func(key, _ any) bool {
-		method, _ := key.(string)
-		if err := c.registerHTTPHandlerForMethod(method); err != nil {
+		handlerID, _ := key.(string)
+		if err := c.registerHTTPHandlerForHandlerID(handlerID); err != nil {
 			registerErr = err
 			return false
 		}
@@ -164,42 +164,58 @@ func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string)
 // ResumeHandler resumes a previously scheduled long-running operation.
 type ResumeHandler func(*Operation)
 
-// RegisterResumableHandler associates a method name with the callback that resumes that operation.
-func (c *Client) RegisterResumableHandler(method string, handler ResumeHandler) error {
-	if method == "" {
-		return fmt.Errorf("method is required")
+// ResumableHandler associates a handler ID with the callback that resumes that operation.
+type ResumableHandler struct {
+	ID      string
+	Handler ResumeHandler
+}
+
+// AddResumableHandler associates a handler ID with the callback that resumes that operation.
+func (c *Client) AddResumableHandler(handlerID string, handler ResumeHandler) error {
+	if handlerID == "" {
+		return fmt.Errorf("handler ID is required")
 	}
 	if handler == nil {
 		return fmt.Errorf("handler is required")
 	}
-	if _, loaded := c.resumableHandlers.LoadOrStore(method, handler); loaded {
-		return fmt.Errorf("resumable handler already registered for method %q", method)
+	if _, loaded := c.resumableHandlers.LoadOrStore(handlerID, handler); loaded {
+		return fmt.Errorf("resumable handler already registered for handler ID %q", handlerID)
 	}
 	if c.mux != nil {
-		if err := c.registerHTTPHandlerForMethod(method); err != nil {
+		if err := c.registerHTTPHandlerForHandlerID(handlerID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Client) registerHTTPHandlerForMethod(method string) error {
+// AddResumableHandlers adds multiple resumable handlers to the client.
+func (c *Client) AddResumableHandlers(handlers ...ResumableHandler) error {
+	for _, resumableHandler := range handlers {
+		if err := c.AddResumableHandler(resumableHandler.ID, resumableHandler.Handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) registerHTTPHandlerForHandlerID(handlerID string) error {
 	if c.mux == nil {
 		return fmt.Errorf("mux is required")
 	}
-	if _, ok := c.resumableHandlers.Load(method); !ok {
-		return fmt.Errorf("no resumable handler registered for method %q", method)
+	if _, ok := c.resumableHandlers.Load(handlerID); !ok {
+		return fmt.Errorf("no resumable handler registered for handler ID %q", handlerID)
 	}
 
-	muxPattern := c.muxPrefix + method
+	muxPattern := c.muxPrefix + handlerID
 	if _, loaded := c.muxPatterns.LoadOrStore(muxPattern, struct{}{}); loaded {
 		return nil
 	}
 
 	c.mux.HandleFunc("PUT "+muxPattern, func(w http.ResponseWriter, r *http.Request) {
-		handlerValue, ok := c.resumableHandlers.Load(method)
+		handlerValue, ok := c.resumableHandlers.Load(handlerID)
 		if !ok {
-			http.Error(w, fmt.Sprintf("no resumable handler registered for method %q", method), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("no resumable handler registered for handler ID %q", handlerID), http.StatusInternalServerError)
 			return
 		}
 		handler, _ := handlerValue.(ResumeHandler)
@@ -258,16 +274,10 @@ type Operation struct {
 
 // NewOperation creates a new operation row and stores its initial metadata.
 func (c *Client) NewOperation(ctx context.Context, operationName string, md proto.Message) (*Operation, error) {
-	method := fmt.Sprintf("%T", md)
-	method = strings.TrimSuffix(method, "Metadata")
-	parts := strings.Split(method, ".")
-	method = parts[len(parts)-1]
-
 	opRow := &OperationRow{
 		Operation: &longrunningpb.Operation{
 			Name: operationName,
 		},
-		Method: method,
 	}
 	op := &Operation{
 		row:    opRow,
@@ -312,19 +322,23 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 }
 
 // ResumeViaTasks saves the operation and schedules the registered resume handler to run later via Cloud Tasks.
-func (o *Operation) ResumeViaTasks(waitDuration time.Duration) error {
+func (o *Operation) ResumeViaTasks(handlerID string, waitDuration time.Duration) error {
+	o.row.Method = handlerID
 	if err := o.Save(); err != nil {
 		return err
 	}
 	if o.client.mux == nil {
 		return fmt.Errorf("client HTTP handlers are not registered; call RegisterHTTPHandlers or RegisterHTTPHandlersAtPrefix first")
 	}
-	if _, ok := o.client.resumableHandlers.Load(o.row.Method); !ok {
-		return fmt.Errorf("no resumable handler registered for method %q", o.row.Method)
+	if handlerID == "" {
+		return fmt.Errorf("handler ID is required")
+	}
+	if _, ok := o.client.resumableHandlers.Load(handlerID); !ok {
+		return fmt.Errorf("no resumable handler registered for handler ID %q", handlerID)
 	}
 
 	// For example, "/operations/" + "CreateAgentFromContent" becomes "/operations/CreateAgentFromContent".
-	muxPattern := o.client.muxPrefix + o.row.Method
+	muxPattern := o.client.muxPrefix + handlerID
 	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
 
 	if err := o.client.taskQueue.schedulePutRequest(o.Ctx, o.client.mux, url, time.Now().Add(waitDuration)); err != nil {

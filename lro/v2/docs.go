@@ -96,7 +96,7 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 	if err != nil {
 		return err
 	}
-	if err := client.RegisterResumableHandler("CreateAgent", createAgentHandler); err != nil {
+	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil {
 		return err
 	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
@@ -104,6 +104,9 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 	}
 
 	op, err := client.NewOperation(ctx, "operations/123", metadata)
+	if err := op.ResumeViaTasks("create-agent", 0); err != nil {
+		return err
+	}
 
 Services that use ALIS-managed infrastructure can construct the client from env:
 
@@ -111,9 +114,7 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 	if err != nil {
 		return err
 	}
-	if err := client.RegisterResumableHandler("CreateAgent", createAgentHandler); err != nil {
-		return err
-	}
+	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil { return err }
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
 		return err
 	}
@@ -123,5 +124,21 @@ The host inferred from `ALIS_RUN_HASH` can be overridden when needed:
 	client, err := lro.NewFromEnv(ctx, "launchpad-v1", lro.WithHost("https://launchpad-backend.example.com"))
 
 Importing the package never validates env vars or panics.
+
+Mental model for building an RPC or method that returns an LRO:
+
+1. At service startup, add a resumable handler for that workflow and register the
+   HTTP handlers on your mux.
+2. In the RPC that creates the operation, create the LRO, persist any private
+   state needed to continue later, and call `ResumeViaTasks(handlerID, delay)`.
+3. In the resumable handler, reload state and metadata from the operation,
+   advance the workflow, and either:
+   - call `ResumeViaTasks(handlerID, nextDelay)` again to continue later, or
+   - call `Complete(...)` / `Fail(...)` to finish the operation.
+
+The important design rule is that the resumable handler must be registered at
+startup. Do not rely on scheduling time to create HTTP routes, because a future
+Cloud Tasks callback may land on a fresh instance that never executed the
+original scheduling request.
 */
 package lro // import "go.alis.build/lro/v2"
