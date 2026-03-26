@@ -265,6 +265,11 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// OperationsServer returns a google.longrunning.Operations server backed by the client.
+func (c *Client) OperationsServer(opts ...OperationsServerOption) *OperationsServer {
+	return NewOperationsServer(c, opts...)
+}
+
 // Operation is a long-running operation managed by a Client.
 type Operation struct {
 	row    *OperationRow
