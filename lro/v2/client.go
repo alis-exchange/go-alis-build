@@ -166,7 +166,11 @@ type ResumeHandler func(*Operation)
 
 // ResumableHandler associates a callback path with the handler that resumes that operation.
 type ResumableHandler struct {
-	Path    string
+	// Path is the callback path segment registered under the resumable HTTP prefix.
+	// For example, if Path is "create-agent" and the prefix is "/resume-operation/",
+	// the callback route becomes "/resume-operation/create-agent".
+	Path string
+	// Handler resumes the operation when the registered callback path is invoked.
 	Handler ResumeHandler
 }
 

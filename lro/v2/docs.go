@@ -55,11 +55,6 @@ Example Terraform:
 	        required = false
 	      },
 	      {
-	        name     = "Method"
-	        type     = "STRING"
-	        required = false
-	      },
-	      {
 	        name     = "UpdateTime"
 	        type     = "TIMESTAMP"
 	        required = true
