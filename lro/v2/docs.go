@@ -116,7 +116,17 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 	}
 	longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
 
-The host inferred from `ALIS_RUN_HASH` can be overridden when needed:
+`NewFromEnv` infers the callback host from the Cloud Run URL pattern and these
+env vars:
+
+  - `ALIS_PROJECT_NR`
+  - `ALIS_REGION`
+
+The inferred host has this form:
+
+	https://{service}-{project-number}.{region}.run.app
+
+That host can be overridden when needed:
 
 	client, err := lro.NewFromEnv(ctx, "launchpad-v1", lro.WithHost("https://launchpad-backend.example.com"))
 

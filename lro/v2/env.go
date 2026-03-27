@@ -7,6 +7,10 @@ import (
 )
 
 // NewFromEnv constructs a client using ALIS-managed environment variables.
+//
+// The default callback host is inferred from the Cloud Run URL pattern
+// `https://{service}-{project-number}.{region}.run.app` using `ALIS_PROJECT_NR`
+// and `ALIS_REGION`. Use WithHost to override that value when required.
 func NewFromEnv(ctx context.Context, neuron string, opts ...Option) (*Client, error) {
 	options := &options{}
 	for _, opt := range opts {
@@ -25,7 +29,7 @@ func NewFromEnv(ctx context.Context, neuron string, opts ...Option) (*Client, er
 	if err != nil {
 		return nil, err
 	}
-	runHash, err := requiredEnv("ALIS_RUN_HASH")
+	projectNumber, err := requiredEnv("ALIS_PROJECT_NR")
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +46,8 @@ func NewFromEnv(ctx context.Context, neuron string, opts ...Option) (*Client, er
 		return nil, err
 	}
 
-	host := fmt.Sprintf("https://%s-%s.run.app", neuron, runHash)
+	// The default cloud run host is https://{{service name}}-{{google product number}}.{{google cloud region}}.run.app
+	host := fmt.Sprintf("https://%s-%s.%s.run.app", neuron, projectNumber, region)
 	if options.host != nil {
 		host = *options.host
 	}
