@@ -13,7 +13,6 @@ The required schema is:
   - `Operation` `PROTO<google.longrunning.Operation>` required
   - `State` `BYTES` nullable
   - `ResumePoint` `STRING` nullable
-  - `Method` `STRING` nullable
   - `UpdateTime` `TIMESTAMP` required
 
 Example Terraform:

@@ -60,7 +60,7 @@ func newDB(ctx context.Context, cfg Config) (*database, error) {
 	}
 
 	tableName := strings.ReplaceAll(cfg.Project+"_"+cfg.Neuron+"_Operations", "-", "_")
-	cols := []string{"Operation", "State", "ResumePoint", "Method", "UpdateTime"}
+	cols := []string{"Operation", "State", "ResumePoint", "UpdateTime"}
 	return &database{Client: client, table: tableName, cols: cols}, nil
 }
 
