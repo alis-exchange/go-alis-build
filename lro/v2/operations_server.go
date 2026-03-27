@@ -2,7 +2,6 @@ package lro
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
@@ -121,14 +120,4 @@ func (s *OperationsServer) WaitOperation(ctx context.Context, req *longrunningpb
 	}
 
 	return operation, nil
-}
-
-func validateOperationName(name string) error {
-	if name == "" {
-		return status.Error(codes.InvalidArgument, "name is required")
-	}
-	if !strings.HasPrefix(name, "operations/") || len(name) <= len("operations/") {
-		return status.Errorf(codes.InvalidArgument, "invalid operation name %q", name)
-	}
-	return nil
 }

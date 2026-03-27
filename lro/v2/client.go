@@ -131,9 +131,9 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
-// RegisterHTTPHandlers registers the default operations callback route on mux.
+// RegisterHTTPHandlers registers the default resumable callback routes on mux.
 func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) error {
-	return c.RegisterHTTPHandlersAtPrefix(mux, "/operations/")
+	return c.RegisterHTTPHandlersAtPrefix(mux, "/resume-operation/")
 }
 
 // RegisterHTTPHandlersAtPrefix registers resumable operation callbacks using the supplied path prefix.
@@ -279,6 +279,9 @@ type Operation struct {
 
 // NewOperation creates a new operation row and stores its initial metadata.
 func (c *Client) NewOperation(ctx context.Context, operationName string, md proto.Message) (*Operation, error) {
+	if err := validateOperationName(operationName); err != nil {
+		return nil, err
+	}
 	opRow := &OperationRow{
 		Operation: &longrunningpb.Operation{
 			Name: operationName,
@@ -301,6 +304,9 @@ func (c *Client) NewOperation(ctx context.Context, operationName string, md prot
 
 // GetOperationPb retrieves the underlying protobuf operation by name.
 func (c *Client) GetOperationPb(ctx context.Context, name string) (*longrunningpb.Operation, error) {
+	if err := validateOperationName(name); err != nil {
+		return nil, err
+	}
 	opRow, err := c.db.Read(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("getting operation row: %w", err)
@@ -310,6 +316,9 @@ func (c *Client) GetOperationPb(ctx context.Context, name string) (*longrunningp
 
 // GetOperation retrieves an operation wrapper by operation name.
 func (c *Client) GetOperation(ctx context.Context, operationName string) (*Operation, error) {
+	if err := validateOperationName(operationName); err != nil {
+		return nil, err
+	}
 	opRow, err := c.db.Read(ctx, operationName)
 	if err != nil {
 		return nil, err
@@ -338,7 +347,7 @@ func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) erro
 		return fmt.Errorf("no resumable handler registered for path %q", path)
 	}
 
-	// For example, "/operations/" + "create-agent" becomes "/operations/create-agent".
+	// For example, "/resume-operation/" + "create-agent" becomes "/resume-operation/create-agent".
 	muxPattern := o.client.muxPrefix + path
 	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
 
