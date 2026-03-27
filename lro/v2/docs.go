@@ -132,10 +132,10 @@ Mental model for building an RPC or method that returns an LRO:
  1. At service startup, add a resumable handler for that workflow and register the
     HTTP handlers on your mux.
  2. In the RPC that creates the operation, create the LRO, persist any private
-    state needed to continue later, and call `ResumeViaTasks(handlerID, delay)`.
+    state needed to continue later, and call `ResumeViaTasks(path, delay)`.
  3. In the resumable handler, reload state and metadata from the operation,
     advance the workflow, and either:
-    - call `ResumeViaTasks(handlerID, nextDelay)` again to continue later, or
+    - call `ResumeViaTasks(path, nextDelay)` again to continue later, or
     - call `Complete(...)` / `Fail(...)` to finish the operation.
 
 The important design rule is that the resumable handler must be registered at

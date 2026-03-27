@@ -27,8 +27,6 @@ type OperationRow struct {
 	State []byte
 	// Checkpoint to resume from.
 	ResumePoint string
-	// The persisted handler ID used to route resumable callbacks for this operation.
-	Method string
 	// The last time this operation was updated. Automatically set when writing to Spanner.
 	UpdateTime time.Time
 }
@@ -71,7 +69,6 @@ func (d *database) writeValues(operationRow *OperationRow) []any {
 		operationRow.Operation,
 		operationRow.State,
 		&operationRow.ResumePoint,
-		&operationRow.Method,
 		operationRow.UpdateTime,
 	}
 }
@@ -81,7 +78,6 @@ func (d *database) readValues(operationRow *OperationRow) []any {
 		&operationRow.Operation,
 		&operationRow.State,
 		&operationRow.ResumePoint,
-		&operationRow.Method,
 		&operationRow.UpdateTime,
 	}
 }
