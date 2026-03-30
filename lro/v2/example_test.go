@@ -6,6 +6,7 @@ import (
 	"time"
 
 	lro "go.alis.build/lro/v2"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -36,6 +37,10 @@ func Example_resumeViaTasks() {
 	// For neuron "launchpad-v1" the table name is:
 	//   ${replace(project, "-", "_")}_launchpad_v1_Operations
 	// See the package docs for the Terraform snippet that provisions the required table and TTL policy.
+	//
+	// Launchpad creates the client once, registers resumable handlers at startup,
+	// registers the HTTP callback routes on the mux, and then creates/schedules
+	// operations from RPC methods.
 	mux := http.NewServeMux()
 	client, err := lro.New(context.Background(), lro.Config{
 		Neuron:                   "launchpad-v1",
@@ -53,7 +58,9 @@ func Example_resumeViaTasks() {
 		return
 	}
 	defer client.Close()
-	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil {
+	if err := client.AddResumableHandlers(
+		lro.ResumableHandler{Path: "create-agent", Handler: createAgentHandler},
+	); err != nil {
 		return
 	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
@@ -61,7 +68,7 @@ func Example_resumeViaTasks() {
 	}
 
 	ctx := context.Background()
-	op, err := client.NewOperation(ctx, "operations/example-123", &structpb.Struct{
+	op, err := client.NewOperation(ctx, "operations/"+uuid.NewString(), &structpb.Struct{
 		Fields: map[string]*structpb.Value{
 			"target":         structpb.NewStringValue("streams/abc"),
 			"status_message": structpb.NewStringValue("Processing content..."),

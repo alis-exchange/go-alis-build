@@ -131,6 +131,104 @@ That host can be overridden when needed:
 
 Importing the package never validates env vars or panics.
 
+Here is a typical implementation flow:
+
+ 1. Create a shared client once during process startup:
+
+    client, err := lro.NewFromEnv(ctx, "launchpad-v1")
+    if err != nil {
+    return err
+    }
+
+ 2. Register resumable handlers during startup, not when the RPC is called.
+    Use single or batch flows depending on the service setup:
+
+    Register a single handler, like the `PublishAgent` flow:
+
+    if err := client.AddResumableHandler("publish-agent", publishAgentHandler); err != nil {
+    return err
+    }
+
+    Register multiple handlers in one place:
+
+    if err := client.AddResumableHandlers(
+    lro.ResumableHandler{Path: "publish-agent", Handler: publishAgentHandler},
+    lro.ResumableHandler{Path: "submit-agent-feedback", Handler: submitAgentFeedbackHandler},
+    lro.ResumableHandler{Path: "create-agent-from-content", Handler: createAgentFromContentHandler},
+    ); err != nil {
+    return err
+    }
+
+ 3. Expose both the Operations API and the resumable HTTP callback routes:
+
+    Typically, in the server.go add the following:
+
+    longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
+    if err := client.RegisterHTTPHandlers(mux); err != nil {
+    return err
+    }
+
+ 4. In the RPC method, create the operation, attach metadata for clients, save
+    private state for the resumable workflow, and schedule the first callback:
+
+    op, err := client.NewOperation(ctx, "operations/"+uuid.NewString(), metadata)
+    if err != nil {
+    return nil, err
+    }
+    if err := op.SavePrivateState(&MyState{
+    UserID: userID,
+    Stream: streamName,
+    }); err != nil {
+    return nil, err
+    }
+    if err := op.ResumeViaTasks("create-agent-from-content", 0); err != nil {
+    return nil, err
+    }
+    return op.OperationPb(), nil
+
+ 5. In the resumable handler, restore private state, optionally unmarshal and
+    update metadata, then either requeue or finish the operation:
+
+    func createAgentFromContentHandler(op *lro.Operation) {
+    state := &MyState{}
+    if err := op.DecodePrivateState(state); err != nil {
+    op.Fail("decode private state: %v", err)
+    return
+    }
+
+    meta := &pb.CreateAgentFromContentMetadata{}
+    if _, err := lro.UnmarshalMetadata(op, meta); err != nil {
+    op.Fail("unmarshal metadata: %v", err)
+    return
+    }
+
+    meta.StatusMessage = "Waiting for content processing..."
+    if err := op.SaveMetadata(meta); err != nil {
+    op.Fail("save metadata: %v", err)
+    return
+    }
+
+    if stillWaiting {
+    if err := op.ResumeViaTasks("create-agent-from-content", 2*time.Second); err != nil {
+    op.Fail("reschedule task: %v", err)
+    }
+    return
+    }
+
+    _ = op.Complete(response)
+    }
+
+This split is intentional:
+
+  - operation metadata is the client-visible status surface
+  - private state is for workflow-only data such as user ids, upstream resource
+    names, poll counts, or serialized requests
+
+For Cloud Tasks driven handlers that call other services, Launchpad also uses
+`context.WithoutCancel(ctx)` before creating outbound RPC metadata. That avoids
+propagating the Cloud Tasks dispatch deadline to downstream services that may
+schedule their own async work.
+
 Mental model for building an RPC or method that returns an LRO:
 
  1. At service startup, add a resumable handler for that workflow and register the
