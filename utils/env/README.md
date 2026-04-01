@@ -12,6 +12,14 @@ import "go.alis.build/utils/env"
 
 ## Features
 
+### GetOrDefault
+
+`GetOrDefault` returns the value of the environment variable with the given name. If it is not set, it returns the provided default value.
+
+```go
+	value := env.GetOrDefault("MY_ENV_VAR", "default-value")
+```
+
 ### MustGet
 
 `MustGet` returns the value of the required environment variable with the given name. If the variable is not set, it panics with an error message.

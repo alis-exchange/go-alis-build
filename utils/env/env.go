@@ -21,6 +21,16 @@ func Get(name string) string {
 	return os.Getenv(name)
 }
 
+// GetOrDefault returns the value of the environment variable with the given name.
+// If the variable is not set, it returns defaultValue instead.
+func GetOrDefault(name string, defaultValue string) string {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		return defaultValue
+	}
+	return value
+}
+
 // LookupEnv retrieves the value of the environment variable named by the key.
 // If the variable is present in the environment the value (which may be empty)
 // is returned and the boolean is true. Otherwise the returned value will be empty

@@ -28,6 +28,27 @@ func TestMustGet_NotSet(t *testing.T) {
 	MustGet("TEST_ENV_VAR_MISSING")
 }
 
+func TestGetOrDefault_Set(t *testing.T) {
+	expected := "test_value"
+	os.Setenv("TEST_ENV_VAR_DEFAULT", expected)
+	defer os.Unsetenv("TEST_ENV_VAR_DEFAULT")
+
+	actual := GetOrDefault("TEST_ENV_VAR_DEFAULT", "fallback")
+	if actual != expected {
+		t.Errorf("Expected %s, got %s", expected, actual)
+	}
+}
+
+func TestGetOrDefault_NotSet(t *testing.T) {
+	expected := "fallback"
+	os.Unsetenv("TEST_ENV_VAR_DEFAULT_MISSING")
+
+	actual := GetOrDefault("TEST_ENV_VAR_DEFAULT_MISSING", expected)
+	if actual != expected {
+		t.Errorf("Expected %s, got %s", expected, actual)
+	}
+}
+
 func TestMustExist_AllSet(t *testing.T) {
 	os.Setenv("TEST_EXIST_1", "1")
 	os.Setenv("TEST_EXIST_2", "2")
