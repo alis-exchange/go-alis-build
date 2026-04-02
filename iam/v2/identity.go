@@ -17,6 +17,10 @@ const (
 	AuthHeader = "authorization"
 	// One of the headers that cloudrun uses to send the JWT token of the authorized requester
 	ServerlessAuthHeader = "x-serverless-authorization"
+	// The header that this Alis Build package uses to forward the requester email
+	AlisUserEmailHeader = "x-alis-user-email"
+	// The header that this Alis Build package uses to forward the requester id
+	AlisUserIDHeader = "x-alis-user-id"
 	// The header that this Alis Build package uses to forward the JWT token of the authorized requester
 	AlisForwardingHeader = "x-alis-forwarded-authorization"
 	// The header that Google Cloud ESPv2 proxy uses to forward the JWT token of the authorized requester
