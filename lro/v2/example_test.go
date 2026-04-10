@@ -63,9 +63,7 @@ func Example_resumeViaTasks() {
 	); err != nil {
 		return
 	}
-	if err := client.RegisterHTTPHandlers(mux); err != nil {
-		return
-	}
+	client.RegisterHTTPHandlers(mux)
 
 	ctx := context.Background()
 	op, err := client.NewOperation(ctx, "operations/"+uuid.NewString(), &structpb.Struct{

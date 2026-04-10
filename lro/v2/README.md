@@ -52,9 +52,7 @@ if err := client.AddResumableHandlers(
 ); err != nil {
 	return err
 }
-if err := client.RegisterHTTPHandlers(mux); err != nil {
-	return err
-}
+client.RegisterHTTPHandlers(mux)
 
 longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
 ```

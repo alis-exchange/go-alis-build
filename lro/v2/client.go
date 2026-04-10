@@ -132,33 +132,25 @@ func validateConfig(cfg Config) error {
 }
 
 // RegisterHTTPHandlers registers the default resumable callback routes on mux.
-func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) error {
-	return c.RegisterHTTPHandlersAtPrefix(mux, "/resume-operation/")
+func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) {
+	c.RegisterHTTPHandlersAtPrefix(mux, "/resume-operation/")
 }
 
 // RegisterHTTPHandlersAtPrefix registers resumable operation callbacks using the supplied path prefix.
-func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string) error {
+func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string) {
 	if mux == nil {
-		return fmt.Errorf("mux is required")
+		return
 	}
 
 	prefix = normalizePrefix(prefix)
 	c.mux = mux
 	c.muxPrefix = prefix
 
-	var registerErr error
 	c.resumableHandlers.Range(func(key, _ any) bool {
 		handlerPath, _ := key.(string)
-		if err := c.registerHTTPHandlerForPath(handlerPath); err != nil {
-			registerErr = err
-			return false
-		}
+		_ = c.registerHTTPHandlerForPath(handlerPath)
 		return true
 	})
-	if registerErr != nil {
-		return registerErr
-	}
-	return nil
 }
 
 // ResumeHandler resumes a previously scheduled long-running operation.

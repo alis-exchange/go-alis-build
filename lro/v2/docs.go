@@ -144,9 +144,7 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 	); err != nil {
 		return err
 	}
-	if err := client.RegisterHTTPHandlers(mux); err != nil {
-		return err
-	}
+	client.RegisterHTTPHandlers(mux)
 	longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
 
 	op, err := client.NewOperation(ctx, "operations/123", metadata)
@@ -163,9 +161,7 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 	if err := client.AddResumableHandlers(
 		lro.ResumableHandler{Path: "create-agent", Handler: createAgentHandler},
 	); err != nil { return err }
-	if err := client.RegisterHTTPHandlers(mux); err != nil {
-		return err
-	}
+	client.RegisterHTTPHandlers(mux)
 	longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
 
 `NewFromEnv` infers the callback host from the Cloud Run URL pattern and these
@@ -211,9 +207,7 @@ Here is a typical implementation flow:
     Typically, in the server.go add the following:
 
     longrunningpb.RegisterOperationsServer(grpcServer, client.OperationsServer())
-    if err := client.RegisterHTTPHandlers(mux); err != nil {
-    return err
-    }
+    client.RegisterHTTPHandlers(mux)
 
  4. In the RPC method, create the operation, attach metadata for clients, save
     private state for the resumable workflow, and schedule the first callback:
