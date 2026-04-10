@@ -131,13 +131,13 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
-// RegisterHTTPHandlers registers the default resumable callback routes on mux.
-func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) {
-	c.RegisterHTTPHandlersAtPrefix(mux, "/resume-operation/")
+// RegisterHTTP registers the default resumable callback routes on mux.
+func (c *Client) RegisterHTTP(mux *http.ServeMux) {
+	c.RegisterHTTPAtPrefix(mux, "/resume-operation/")
 }
 
-// RegisterHTTPHandlersAtPrefix registers resumable operation callbacks using the supplied path prefix.
-func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string) {
+// RegisterHTTPAtPrefix registers resumable operation callbacks using the supplied path prefix.
+func (c *Client) RegisterHTTPAtPrefix(mux *http.ServeMux, prefix string) {
 	if mux == nil {
 		return
 	}
@@ -151,6 +151,20 @@ func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string)
 		_ = c.registerHTTPHandlerForPath(handlerPath)
 		return true
 	})
+}
+
+// RegisterHTTPHandlers registers the default resumable callback routes on mux.
+//
+// Deprecated: use [Client.RegisterHTTP].
+func (c *Client) RegisterHTTPHandlers(mux *http.ServeMux) {
+	c.RegisterHTTP(mux)
+}
+
+// RegisterHTTPHandlersAtPrefix registers resumable operation callbacks using the supplied path prefix.
+//
+// Deprecated: use [Client.RegisterHTTPAtPrefix].
+func (c *Client) RegisterHTTPHandlersAtPrefix(mux *http.ServeMux, prefix string) {
+	c.RegisterHTTPAtPrefix(mux, prefix)
 }
 
 // ResumeHandler resumes a previously scheduled long-running operation.
@@ -334,7 +348,7 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 // ResumeViaTasks saves the operation and schedules the registered resume path to run later via Cloud Tasks.
 func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) error {
 	if o.client.mux == nil {
-		return fmt.Errorf("client HTTP handlers are not registered; call RegisterHTTPHandlers or RegisterHTTPHandlersAtPrefix first")
+		return fmt.Errorf("client HTTP handlers are not registered; call RegisterHTTP or RegisterHTTPAtPrefix first")
 	}
 	if path == "" {
 		return fmt.Errorf("handler path is required")
