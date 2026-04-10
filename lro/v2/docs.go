@@ -15,16 +15,54 @@ The required schema is:
   - `ResumePoint` `STRING` nullable
   - `UpdateTime` `TIMESTAMP` required
 
-Example Terraform:
+For ALIS-managed services, wire this the same way as the other infra modules:
+
+```hcl
+infra/
+
+	main.tf
+	apis.tf
+	cloudrun.tf
+	spanner.tf
+	variables.tf
+	modules/
+	  alis.lro.v2/
+	    main.tf
+
+```
+
+`infra/main.tf` should wire the module like this:
+
+```hcl
+
+	module "alis_lro_v2" {
+	  source = "./modules/alis.lro.v2"
+
+	  alis_os_project               = var.ALIS_OS_PROJECT
+	  alis_region                   = var.ALIS_REGION
+	  alis_project_nr               = var.ALIS_PROJECT_NR
+	  alis_managed_spanner_project  = var.ALIS_MANAGED_SPANNER_PROJECT
+	  alis_managed_spanner_instance = var.ALIS_MANAGED_SPANNER_INSTANCE
+	  alis_managed_spanner_db       = var.ALIS_MANAGED_SPANNER_DB
+	  neuron                        = local.neuron
+
+	  depends_on = [google_project_service.environment]
+	}
+
+```
+
+Inside `modules/alis.lro.v2/main.tf`, provision the table and TTL policy that
+match the client contract:
 
 ```hcl
 
 	resource "alis_google_spanner_table" "operations" {
-	  project         = var.ALIS_MANAGED_SPANNER_PROJECT
-	  instance        = var.ALIS_MANAGED_SPANNER_INSTANCE
-	  database        = var.ALIS_MANAGED_SPANNER_DB
-	  name            = "${replace(var.ALIS_OS_PROJECT, "-", "_")}_${replace("launchpad-v1", "-", "_")}_Operations"
+	  project         = var.alis_managed_spanner_project
+	  instance        = var.alis_managed_spanner_instance
+	  database        = var.alis_managed_spanner_db
+	  name            = "${replace(var.alis_os_project, "-", "_")}_${replace(var.neuron, "-", "_")}_Operations"
 	  prevent_destroy = true
+
 	  schema = {
 	    columns = [
 	      {
@@ -73,6 +111,17 @@ Example Terraform:
 
 ```
 
+That module should line up with the runtime values passed to `lro.New` or
+derived by `lro.NewFromEnv`:
+
+  - `Project` / `CloudTasksProject` -> `ALIS_OS_PROJECT`
+  - `SpannerProject` -> `ALIS_MANAGED_SPANNER_PROJECT`
+  - `SpannerInstance` -> `ALIS_MANAGED_SPANNER_INSTANCE`
+  - `SpannerDatabase` -> `ALIS_MANAGED_SPANNER_DB`
+  - `CloudTasksQueue` -> `{neuron}-operations`
+  - `CloudTasksServiceAccount` -> `alis-build@${ALIS_OS_PROJECT}.iam.gserviceaccount.com`
+  - `Host` -> `https://{neuron}-{ALIS_PROJECT_NR}.{ALIS_REGION}.run.app` unless overridden
+
 The v2 API uses explicit client configuration and explicit HTTP binding:
 
 	client, err := lro.New(ctx, lro.Config{
@@ -90,7 +139,9 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 	if err != nil {
 		return err
 	}
-	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil {
+	if err := client.AddResumableHandlers(
+		lro.ResumableHandler{Path: "create-agent", Handler: createAgentHandler},
+	); err != nil {
 		return err
 	}
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
@@ -109,7 +160,9 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 	if err != nil {
 		return err
 	}
-	if err := client.AddResumableHandler("create-agent", createAgentHandler); err != nil { return err }
+	if err := client.AddResumableHandlers(
+		lro.ResumableHandler{Path: "create-agent", Handler: createAgentHandler},
+	); err != nil { return err }
 	if err := client.RegisterHTTPHandlers(mux); err != nil {
 		return err
 	}
@@ -143,13 +196,7 @@ Here is a typical implementation flow:
  2. Register resumable handlers during startup, not when the RPC is called.
     Use single or batch flows depending on the service setup:
 
-    Register a single handler, like the `PublishAgent` flow:
-
-    if err := client.AddResumableHandler("publish-agent", publishAgentHandler); err != nil {
-    return err
-    }
-
-    Register multiple handlers in one place:
+    Register one or more handlers in one place:
 
     if err := client.AddResumableHandlers(
     lro.ResumableHandler{Path: "publish-agent", Handler: publishAgentHandler},

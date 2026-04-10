@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/cloudtasks v1.13.7
 	cloud.google.com/go/longrunning v0.8.0
 	cloud.google.com/go/spanner v1.88.0
+	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.18.0
 	go.alis.build/alog v0.0.19
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260311181403-84a4fc48630c
@@ -33,7 +34,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
