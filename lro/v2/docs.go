@@ -145,7 +145,7 @@ The v2 API uses explicit client configuration and explicit HTTP binding:
 		return err
 	}
 	client.RegisterHTTP(mux)
-	lro.RegisterGRPC(grpcServer, client)
+	client.RegisterGRPC(grpcServer)
 
 	op, err := client.NewOperation(ctx, "operations/123", metadata)
 	if err := op.ResumeViaTasks("create-agent", 0); err != nil {
@@ -162,7 +162,7 @@ Services that use ALIS-managed infrastructure can construct the client from env:
 		lro.ResumableHandler{Path: "create-agent", Handler: createAgentHandler},
 	); err != nil { return err }
 	client.RegisterHTTP(mux)
-	lro.RegisterGRPC(grpcServer, client)
+	client.RegisterGRPC(grpcServer)
 
 `NewFromEnv` infers the callback host from the Cloud Run URL pattern and these
 env vars:
@@ -206,7 +206,7 @@ Here is a typical implementation flow:
 
     Typically, in the server.go add the following:
 
-    lro.RegisterGRPC(grpcServer, client)
+    client.RegisterGRPC(grpcServer)
     client.RegisterHTTP(mux)
 
  4. In the RPC method, create the operation, attach metadata for clients, save
