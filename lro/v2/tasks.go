@@ -17,11 +17,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+type LocalTaskScheduler func(mux *http.ServeMux, url string, scheduleTime time.Time) error
+
 type queue struct {
 	name                string
 	serviceAccountEmail string
 	client              *cloudtasks.Client
 	taskDeadline        time.Duration
+	localScheduler      LocalTaskScheduler
 }
 
 var supportedCloudTasksLocations = map[string]struct{}{
@@ -67,12 +70,19 @@ func newQueue(ctx context.Context, cfg Config) (*queue, error) {
 		serviceAccountEmail: cfg.CloudTasksServiceAccount,
 		client:              tasksClient,
 		taskDeadline:        30 * time.Minute,
+		localScheduler:      cfg.LocalTaskScheduler,
 	}, nil
 }
 
 // schedulePutRequest schedules a PUT callback, simulating it locally when not running on Cloud Run.
 func (q *queue) schedulePutRequest(ctx context.Context, mux *http.ServeMux, url string, scheduleTime time.Time) error {
 	if os.Getenv("K_SERVICE") == "" {
+		if q.localScheduler != nil {
+			return q.localScheduler(mux, url, scheduleTime)
+		}
+		if mux == nil {
+			return fmt.Errorf("local task simulation requires RegisterHTTP/RegisterHTTPAtPrefix or Config.LocalTaskScheduler")
+		}
 		return q.simulatePutRequest(mux, url, scheduleTime)
 	}
 	return q.scheduleCloudTask(ctx, url, scheduleTime)

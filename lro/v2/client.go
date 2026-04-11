@@ -46,6 +46,11 @@ type Config struct {
 	CloudTasksServiceAccount string
 
 	Host string
+
+	// LocalTaskScheduler overrides local callback simulation when not running on
+	// Cloud Run. This is useful in tests that want to verify scheduling without
+	// registering HTTP handlers or waiting for callback execution.
+	LocalTaskScheduler LocalTaskScheduler
 }
 
 type options struct {
@@ -88,6 +93,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	return &Client{
 		host:              cfg.Host,
 		db:                db,
+		muxPrefix:         normalizePrefix("/resume-operation/"),
 		taskQueue:         taskQueue,
 		muxPatterns:       &sync.Map{},
 		resumableHandlers: &sync.Map{},
@@ -346,10 +352,11 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 }
 
 // ResumeViaTasks saves the operation and schedules the registered resume path to run later via Cloud Tasks.
+//
+// RegisterHTTP is only required in processes that actually need to serve the
+// resumable callback route. Tests and other local callers can schedule without
+// binding HTTP handlers by injecting Config.LocalTaskScheduler.
 func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) error {
-	if o.client.mux == nil {
-		return fmt.Errorf("client HTTP handlers are not registered; call RegisterHTTP or RegisterHTTPAtPrefix first")
-	}
 	if path == "" {
 		return fmt.Errorf("handler path is required")
 	}
