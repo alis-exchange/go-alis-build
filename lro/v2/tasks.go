@@ -3,28 +3,21 @@ package lro
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
-	"go.alis.build/alog"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-type LocalTaskScheduler func(mux *http.ServeMux, url string, scheduleTime time.Time) error
 
 type queue struct {
 	name                string
 	serviceAccountEmail string
 	client              *cloudtasks.Client
 	taskDeadline        time.Duration
-	localScheduler      LocalTaskScheduler
 }
 
 var supportedCloudTasksLocations = map[string]struct{}{
@@ -70,22 +63,7 @@ func newQueue(ctx context.Context, cfg Config) (*queue, error) {
 		serviceAccountEmail: cfg.CloudTasksServiceAccount,
 		client:              tasksClient,
 		taskDeadline:        30 * time.Minute,
-		localScheduler:      cfg.LocalTaskScheduler,
 	}, nil
-}
-
-// schedulePutRequest schedules a PUT callback, simulating it locally when not running on Cloud Run.
-func (q *queue) schedulePutRequest(ctx context.Context, mux *http.ServeMux, url string, scheduleTime time.Time) error {
-	if os.Getenv("K_SERVICE") == "" {
-		if q.localScheduler != nil {
-			return q.localScheduler(mux, url, scheduleTime)
-		}
-		if mux == nil {
-			return fmt.Errorf("local task simulation requires RegisterHTTP/RegisterHTTPAtPrefix or Config.LocalTaskScheduler")
-		}
-		return q.simulatePutRequest(mux, url, scheduleTime)
-	}
-	return q.scheduleCloudTask(ctx, url, scheduleTime)
 }
 
 // scheduleCloudTask creates a Cloud Tasks HTTP task for the supplied callback URL.
@@ -111,29 +89,6 @@ func (q *queue) scheduleCloudTask(ctx context.Context, url string, scheduleTime 
 
 	_, err := q.client.CreateTask(ctx, req)
 	return err
-}
-
-// simulatePutRequest invokes the callback handler locally after the requested delay.
-func (q *queue) simulatePutRequest(mux *http.ServeMux, url string, scheduleTime time.Time) error {
-	go func() {
-		time.Sleep(time.Until(scheduleTime))
-
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(q.taskDeadline))
-		defer cancel()
-
-		r, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
-		if err != nil {
-			alog.Errorf(ctx, "creating http request for local task simulation: %v", err)
-			return
-		}
-
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, r)
-		if w.Code != http.StatusOK {
-			alog.Errorf(ctx, "unexpected local task simulation response: %d %s", w.Code, w.Body.String())
-		}
-	}()
-	return nil
 }
 
 // resolveCloudTasksLocation returns a supported Cloud Tasks region for the deployment region.

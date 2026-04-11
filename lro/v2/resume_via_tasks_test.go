@@ -2,7 +2,6 @@ package lro
 
 import (
 	context "context"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -10,27 +9,20 @@ import (
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 )
 
-func TestOperationResumeViaTasksWithoutHTTPHandlersUsesLocalScheduler(t *testing.T) {
-	var (
-		gotMux  *http.ServeMux
-		gotURL  string
-		gotTime time.Time
-	)
+func TestOperationResumeViaTasksWithoutHTTPHandlersInvokesHandlerDirectly(t *testing.T) {
+	resumed := make(chan *Operation, 1)
 
 	client := &Client{
 		host:      "https://example.test",
 		muxPrefix: normalizePrefix("/resume-operation/"),
 		taskQueue: &queue{
-			localScheduler: func(mux *http.ServeMux, url string, scheduleTime time.Time) error {
-				gotMux = mux
-				gotURL = url
-				gotTime = scheduleTime
-				return nil
-			},
+			taskDeadline: time.Second,
 		},
 		resumableHandlers: &sync.Map{},
 	}
-	client.resumableHandlers.Store("create-agent", ResumeHandler(func(*Operation) {}))
+	client.resumableHandlers.Store("create-agent", ResumeHandler(func(op *Operation) {
+		resumed <- op
+	}))
 
 	op := &Operation{
 		row: &OperationRow{
@@ -40,18 +32,19 @@ func TestOperationResumeViaTasksWithoutHTTPHandlersUsesLocalScheduler(t *testing
 		client: client,
 	}
 
-	before := time.Now()
-	if err := op.ResumeViaTasks("create-agent", 5*time.Second); err != nil {
+	if err := op.ResumeViaTasks("create-agent", 0); err != nil {
 		t.Fatalf("ResumeViaTasks() error = %v", err)
 	}
 
-	if gotMux != nil {
-		t.Fatalf("local scheduler mux = %#v, want nil when HTTP handlers are not registered", gotMux)
-	}
-	if gotURL != "https://example.test/resume-operation/create-agent?operation=operations/test-op" {
-		t.Fatalf("local scheduler url = %q", gotURL)
-	}
-	if gotTime.Before(before.Add(4*time.Second)) || gotTime.After(before.Add(6*time.Second)) {
-		t.Fatalf("local scheduler scheduleTime = %v, want approximately 5 seconds from now", gotTime)
+	select {
+	case resumedOp := <-resumed:
+		if resumedOp == nil {
+			t.Fatal("resumed operation is nil")
+		}
+		if resumedOp.OperationPb().GetName() != "operations/test-op" {
+			t.Fatalf("resumed operation name = %q", resumedOp.OperationPb().GetName())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for direct local resume")
 	}
 }

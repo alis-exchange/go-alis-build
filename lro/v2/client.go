@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -46,11 +47,6 @@ type Config struct {
 	CloudTasksServiceAccount string
 
 	Host string
-
-	// LocalTaskScheduler overrides local callback simulation when not running on
-	// Cloud Run. This is useful in tests that want to verify scheduling without
-	// registering HTTP handlers or waiting for callback execution.
-	LocalTaskScheduler LocalTaskScheduler
 }
 
 type options struct {
@@ -229,29 +225,16 @@ func (c *Client) registerHTTPHandlerForPath(path string) error {
 	}
 
 	c.mux.HandleFunc("PUT "+muxPattern, func(w http.ResponseWriter, r *http.Request) {
-		handlerValue, ok := c.resumableHandlers.Load(path)
-		if !ok {
-			http.Error(w, fmt.Sprintf("no resumable handler registered for path %q", path), http.StatusInternalServerError)
-			return
-		}
-		handler, _ := handlerValue.(ResumeHandler)
-
 		opName := r.URL.Query().Get("operation")
 		if opName == "" {
 			http.Error(w, "missing operation query param", http.StatusBadRequest)
 			return
 		}
 
-		opRow, err := c.db.Read(r.Context(), opName)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("reading operation row: %v", err), http.StatusInternalServerError)
+		if err := c.invokeResumableHandler(r.Context(), path, opName, nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		handler(&Operation{
-			row:    opRow,
-			Ctx:    r.Context(),
-			client: c,
-		})
 		w.WriteHeader(http.StatusOK)
 	})
 	return nil
@@ -354,8 +337,8 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 // ResumeViaTasks saves the operation and schedules the registered resume path to run later via Cloud Tasks.
 //
 // RegisterHTTP is only required in processes that actually need to serve the
-// resumable callback route. Tests and other local callers can schedule without
-// binding HTTP handlers by injecting Config.LocalTaskScheduler.
+// resumable callback route. Local callers can also resume directly without
+// binding HTTP handlers.
 func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) error {
 	if path == "" {
 		return fmt.Errorf("handler path is required")
@@ -363,15 +346,59 @@ func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) erro
 	if _, ok := o.client.resumableHandlers.Load(path); !ok {
 		return fmt.Errorf("no resumable handler registered for path %q", path)
 	}
+	if os.Getenv("K_SERVICE") == "" {
+		o.client.scheduleLocalResume(path, o.row.Operation.GetName(), o.row, time.Now().Add(waitDuration))
+		return nil
+	}
 
 	// For example, "/resume-operation/" + "create-agent" becomes "/resume-operation/create-agent".
 	muxPattern := o.client.muxPrefix + path
 	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
 
-	if err := o.client.taskQueue.schedulePutRequest(o.Ctx, o.client.mux, url, time.Now().Add(waitDuration)); err != nil {
+	if err := o.client.taskQueue.scheduleCloudTask(o.Ctx, url, time.Now().Add(waitDuration)); err != nil {
 		_ = o.Fail("scheduling cloudtask: %v", err)
 		return fmt.Errorf("scheduling cloudtask: %w", err)
 	}
+	return nil
+}
+
+func (c *Client) scheduleLocalResume(path, opName string, fallbackRow *OperationRow, scheduleTime time.Time) {
+	go func() {
+		time.Sleep(time.Until(scheduleTime))
+
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(c.taskQueue.taskDeadline))
+		defer cancel()
+
+		if err := c.invokeResumableHandler(ctx, path, opName, fallbackRow); err != nil {
+			alog.Errorf(ctx, "direct local task simulation failed: %v", err)
+		}
+	}()
+}
+
+func (c *Client) invokeResumableHandler(ctx context.Context, path, opName string, fallbackRow *OperationRow) error {
+	handlerValue, ok := c.resumableHandlers.Load(path)
+	if !ok {
+		return fmt.Errorf("no resumable handler registered for path %q", path)
+	}
+	handler, _ := handlerValue.(ResumeHandler)
+
+	opRow := fallbackRow
+	if c.db != nil {
+		row, err := c.db.Read(ctx, opName)
+		if err != nil {
+			return fmt.Errorf("reading operation row: %w", err)
+		}
+		opRow = row
+	}
+	if opRow == nil {
+		return fmt.Errorf("operation row is required")
+	}
+
+	handler(&Operation{
+		row:    opRow,
+		Ctx:    ctx,
+		client: c,
+	})
 	return nil
 }
 
