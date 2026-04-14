@@ -6,30 +6,34 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestGRPCAssertedCallerBecomesEffectiveIdentity(t *testing.T) {
 	iam := newTestIAM(t)
-	serviceToken := newTestJWT(t, map[string]any{
-		"sub":   "svc",
-		"email": "alis-build@test-project.iam.gserviceaccount.com",
+	authenticated := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+	ctx := WithRequestIdentity(context.Background(), &RequestIdentity{
+		Caller:        NewIdentity("12345", "user@example.com"),
+		Authenticated: authenticated,
 	})
-
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(AuthHeader, "Bearer "+serviceToken))
-	ctx = ContextWithGRPCMetadata(ctx)
-	ctx = WithRequestIdentity(context.Background(), mustNewRequestIdentity(t, iam, ctx, "12345", "user@example.com", nil))
 	outgoingMD, err := OutgoingGRPCMetadata(AsCaller(ctx))
 	if err != nil {
 		t.Fatalf("OutgoingGRPCMetadata() error = %v", err)
 	}
 
-	ctx = metadata.NewIncomingContext(context.Background(), outgoingMD.Copy())
-	ctx = metadata.NewIncomingContext(ctx, metadata.Join(metadata.Pairs(AuthHeader, "Bearer "+serviceToken), outgoingMD))
+	authenticatedHeaders, err := authenticated.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
+	ctx = metadata.NewIncomingContext(context.Background(), metadata.Join(metadataFromHTTPHeaders(authenticatedHeaders), outgoingMD))
 	ctx = ContextWithGRPCMetadata(ctx)
 
 	authz, err := iam.NewAuthorizer(ctx, "books.get")
@@ -53,21 +57,22 @@ func TestRequireUsesExplicitAssertedCaller(t *testing.T) {
 			Members: []string{"user:12345"},
 		}},
 	}
-	deploymentServiceToken := newTestJWT(t, map[string]any{
-		"sub":   "svc",
-		"email": "alis-build@test-project.iam.gserviceaccount.com",
-	})
-	regularServiceToken := newTestJWT(t, map[string]any{
-		"sub":   "svc-2",
-		"email": "worker@test-project.iam.gserviceaccount.com",
-	})
+	deploymentService := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+	regularService := NewIdentity("svc-2", "worker@test-project.iam.gserviceaccount.com")
+	deploymentHeaders, err := deploymentService.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
+	regularHeaders, err := regularService.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
 
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
-		AuthHeader, "Bearer "+deploymentServiceToken,
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Join(metadataFromHTTPHeaders(deploymentHeaders), metadata.Pairs(
 		AlisUserIDHeader, "12345",
 		AlisUserEmailHeader, "user@example.com",
 		AlisIdentityContextHeader, mustAssertedIdentityContextHeader(t, userPolicy),
-	))
+	)))
 	ctx = ContextWithGRPCMetadata(ctx)
 
 	authz, err := iam.NewAuthorizer(ctx, "books.get")
@@ -81,10 +86,7 @@ func TestRequireUsesExplicitAssertedCaller(t *testing.T) {
 		t.Fatalf("Require() error = %v", err)
 	}
 
-	serviceOnlyCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
-		AuthHeader, "Bearer "+regularServiceToken,
-	))
-	serviceOnlyCtx = ContextWithGRPCMetadata(serviceOnlyCtx)
+	serviceOnlyCtx := metadata.NewIncomingContext(context.Background(), metadataFromHTTPHeaders(regularHeaders))
 
 	serviceOnlyAuthz, err := iam.NewAuthorizer(serviceOnlyCtx, "books.get")
 	if err != nil {
@@ -108,16 +110,16 @@ func TestRequireUsesExplicitAssertedCaller(t *testing.T) {
 
 func TestOutgoingAuthMustBeExplicit(t *testing.T) {
 	iam := newTestIAM(t)
-	serviceToken := newTestJWT(t, map[string]any{
-		"sub":   "svc",
-		"email": "alis-build@test-project.iam.gserviceaccount.com",
-	})
+	authenticated := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+	authenticatedHeaders, err := authenticated.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
 
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
-		AuthHeader, "Bearer "+serviceToken,
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Join(metadataFromHTTPHeaders(authenticatedHeaders), metadata.Pairs(
 		AlisUserIDHeader, "12345",
 		AlisUserEmailHeader, "user@example.com",
-	))
+	)))
 	authz, err := iam.NewAuthorizer(ContextWithGRPCMetadata(ctx), "books.get")
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
@@ -186,17 +188,45 @@ func TestAssertedHeadersAndStrip(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedHeadersAndStrip(t *testing.T) {
+	identity := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+
+	headers, err := identity.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
+	if got := headers.Get(AlisAuthenticatedUserIDHeader); got != "svc" {
+		t.Fatalf("x-alis-authenticated-user-id = %q, want %q", got, "svc")
+	}
+	if got := headers.Get(AlisAuthenticatedUserEmailHeader); got != "alis-build@test-project.iam.gserviceaccount.com" {
+		t.Fatalf("x-alis-authenticated-user-email = %q, want deployment service account", got)
+	}
+
+	StripAuthenticatedIdentityHeaders(headers)
+	if got := headers.Get(AlisAuthenticatedUserIDHeader); got != "" {
+		t.Fatalf("x-alis-authenticated-user-id after strip = %q, want empty", got)
+	}
+	if got := headers.Get(AlisAuthenticatedUserEmailHeader); got != "" {
+		t.Fatalf("x-alis-authenticated-user-email after strip = %q, want empty", got)
+	}
+	if got := headers.Get(AlisAuthenticatedIdentityCtxHeader); got != "" {
+		t.Fatalf("x-alis-authenticated-identity-context after strip = %q, want empty", got)
+	}
+}
+
 func TestA2AServiceParamsMetadataExtraction(t *testing.T) {
 	iam := newTestIAM(t)
-	userToken := newTestJWT(t, map[string]any{
-		"sub":   "svc",
-		"email": "alis-build@test-project.iam.gserviceaccount.com",
-	})
+	authenticated := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+	authenticatedHeaders, err := authenticated.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
 
 	serviceParams := map[string][]string{
-		AuthHeader:          {"Bearer " + userToken},
-		AlisUserIDHeader:    {"12345"},
-		AlisUserEmailHeader: {"user@example.com"},
+		AlisAuthenticatedUserIDHeader:    {authenticatedHeaders.Get(AlisAuthenticatedUserIDHeader)},
+		AlisAuthenticatedUserEmailHeader: {authenticatedHeaders.Get(AlisAuthenticatedUserEmailHeader)},
+		AlisUserIDHeader:                 {"12345"},
+		AlisUserEmailHeader:              {"user@example.com"},
 	}
 	ctx := ContextWithA2AServiceParams(context.Background(), serviceParams, "message/send")
 	identity, err := iam.ExtractRequestIdentity(ctx)
@@ -210,16 +240,20 @@ func TestA2AServiceParamsMetadataExtraction(t *testing.T) {
 
 func TestHTTPAndJSONRPCMetadataExtraction(t *testing.T) {
 	iam := newTestIAM(t)
-	userToken := newTestJWT(t, map[string]any{
-		"sub":   "12345",
-		"email": "user@example.com",
-	})
+	authenticated := NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com")
+	authenticatedHeaders, err := authenticated.AuthenticatedHeaders()
+	if err != nil {
+		t.Fatalf("AuthenticatedHeaders() error = %v", err)
+	}
 
 	httpReq, err := http.NewRequest(http.MethodGet, "https://example.com/books/1", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error = %v", err)
 	}
-	httpReq.Header.Set(AuthHeader, "Bearer "+userToken)
+	httpReq.Header.Set(AlisAuthenticatedUserIDHeader, authenticatedHeaders.Get(AlisAuthenticatedUserIDHeader))
+	httpReq.Header.Set(AlisAuthenticatedUserEmailHeader, authenticatedHeaders.Get(AlisAuthenticatedUserEmailHeader))
+	httpReq.Header.Set(AlisUserIDHeader, "12345")
+	httpReq.Header.Set(AlisUserEmailHeader, "user@example.com")
 	httpCtx := ContextWithHTTPRequest(context.Background(), httpReq)
 	httpIdentity, err := iam.ExtractRequestIdentity(httpCtx)
 	if err != nil {
@@ -227,7 +261,10 @@ func TestHTTPAndJSONRPCMetadataExtraction(t *testing.T) {
 	}
 
 	jsonHeaders := http.Header{}
-	jsonHeaders.Set(AuthHeader, "Bearer "+userToken)
+	jsonHeaders.Set(AlisAuthenticatedUserIDHeader, authenticatedHeaders.Get(AlisAuthenticatedUserIDHeader))
+	jsonHeaders.Set(AlisAuthenticatedUserEmailHeader, authenticatedHeaders.Get(AlisAuthenticatedUserEmailHeader))
+	jsonHeaders.Set(AlisUserIDHeader, "12345")
+	jsonHeaders.Set(AlisUserEmailHeader, "user@example.com")
 	jsonCtx := ContextWithJSONRPC(context.Background(), jsonHeaders, "Books.Get")
 	jsonIdentity, err := iam.ExtractRequestIdentity(jsonCtx)
 	if err != nil {
@@ -236,6 +273,141 @@ func TestHTTPAndJSONRPCMetadataExtraction(t *testing.T) {
 
 	if httpIdentity.Caller.Email() != jsonIdentity.Caller.Email() {
 		t.Fatalf("caller mismatch: http=%q jsonrpc=%q", httpIdentity.Caller.Email(), jsonIdentity.Caller.Email())
+	}
+}
+
+func TestExtractRequestIdentityRequiresAuthenticatedIdentity(t *testing.T) {
+	iam := newTestIAM(t)
+	ctx := ContextWithHTTPRequest(context.Background(), httptestNewRequest(t))
+
+	_, err := iam.ExtractRequestIdentity(ctx)
+	if err == nil {
+		t.Fatalf("ExtractRequestIdentity() error = nil, want authenticated identity error")
+	}
+	if got := err.Error(); got != "authenticated identity not found in context or trusted headers" {
+		t.Fatalf("ExtractRequestIdentity() error = %q, want authenticated identity error", got)
+	}
+}
+
+func TestUnaryServerInterceptorAttachesAuthenticatedIdentity(t *testing.T) {
+	iam := newTestIAM(t)
+	interceptor := UnaryServerInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo) (*Identity, error) {
+		return NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com"), nil
+	})
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		AlisAuthenticatedUserIDHeader, "svc",
+		AlisAuthenticatedUserEmailHeader, "alis-build@test-project.iam.gserviceaccount.com",
+		AlisUserIDHeader, "12345",
+		AlisUserEmailHeader, "user@example.com",
+	))
+	info := &grpc.UnaryServerInfo{FullMethod: "/library.v1.BooksService/GetBook"}
+
+	resp, err := interceptor(ctx, "request", info, func(ctx context.Context, req any) (any, error) {
+		authz, err := iam.NewAuthorizer(ctx, "books.get")
+		if err != nil {
+			return nil, err
+		}
+		if got := authz.Authenticated().Email(); got != "alis-build@test-project.iam.gserviceaccount.com" {
+			t.Fatalf("Authenticated().Email() = %q, want deployment service account", got)
+		}
+		if got := authz.Caller().Email(); got != "user@example.com" {
+			t.Fatalf("Caller().Email() = %q, want %q", got, "user@example.com")
+		}
+		if md, ok := RequestMetadataFromContext(ctx); !ok {
+			t.Fatalf("RequestMetadataFromContext() ok = false, want true")
+		} else if md.Transport != TransportGRPC {
+			t.Fatalf("RequestMetadata.Transport = %q, want %q", md.Transport, TransportGRPC)
+		}
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("interceptor() error = %v", err)
+	}
+	if resp != "ok" {
+		t.Fatalf("interceptor() response = %v, want ok", resp)
+	}
+}
+
+func TestUnaryServerInterceptorRejectsMissingIdentity(t *testing.T) {
+	interceptor := UnaryServerInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo) (*Identity, error) {
+		return nil, nil
+	})
+
+	_, err := interceptor(context.Background(), "request", &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+		t.Fatalf("handler should not be called")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatalf("interceptor() error = nil, want unauthenticated")
+	}
+	if got := status.Code(err); got != codes.Unauthenticated {
+		t.Fatalf("status.Code(err) = %s, want %s", got, codes.Unauthenticated)
+	}
+}
+
+func TestHTTPMiddlewareAttachesAuthenticatedIdentity(t *testing.T) {
+	iam := newTestIAM(t)
+	middleware := HTTPMiddleware(func(req *http.Request) (*Identity, error) {
+		return NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com"), nil
+	})
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		authz, err := iam.NewAuthorizer(req.Context(), "books.get")
+		if err != nil {
+			t.Fatalf("NewAuthorizer() error = %v", err)
+		}
+		if got := authz.Authenticated().Email(); got != "alis-build@test-project.iam.gserviceaccount.com" {
+			t.Fatalf("Authenticated().Email() = %q, want deployment service account", got)
+		}
+		if got := authz.Caller().Email(); got != "user@example.com" {
+			t.Fatalf("Caller().Email() = %q, want %q", got, "user@example.com")
+		}
+		if md, ok := RequestMetadataFromContext(req.Context()); !ok {
+			t.Fatalf("RequestMetadataFromContext() ok = false, want true")
+		} else if md.Transport != TransportHTTPS {
+			t.Fatalf("RequestMetadata.Transport = %q, want %q", md.Transport, TransportHTTPS)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/books/1", nil)
+	req.Header.Set(AlisAuthenticatedUserIDHeader, "svc")
+	req.Header.Set(AlisAuthenticatedUserEmailHeader, "alis-build@test-project.iam.gserviceaccount.com")
+	req.Header.Set(AlisUserIDHeader, "12345")
+	req.Header.Set(AlisUserEmailHeader, "user@example.com")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("ServeHTTP() status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestHTTPMiddlewareAllowsHeaderDerivedIdentityWhenResolverIsNil(t *testing.T) {
+	iam := newTestIAM(t)
+	middleware := HTTPMiddleware(nil)
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		authz, err := iam.NewAuthorizer(req.Context(), "books.get")
+		if err != nil {
+			t.Fatalf("NewAuthorizer() error = %v", err)
+		}
+		if got := authz.Authenticated().Email(); got != "alis-build@test-project.iam.gserviceaccount.com" {
+			t.Fatalf("Authenticated().Email() = %q, want deployment service account", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/books/1", nil)
+	req.Header.Set(AlisAuthenticatedUserIDHeader, "svc")
+	req.Header.Set(AlisAuthenticatedUserEmailHeader, "alis-build@test-project.iam.gserviceaccount.com")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("ServeHTTP() status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
 }
 
@@ -249,32 +421,6 @@ func newTestIAM(t *testing.T) *IAM {
 		t.Fatalf("New() error = %v", err)
 	}
 	return iam
-}
-
-func newTestJWT(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	headerBytes, err := json.Marshal(map[string]any{
-		"alg": "none",
-		"typ": "JWT",
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal(header) error = %v", err)
-	}
-	payloadBytes, err := json.Marshal(claims)
-	if err != nil {
-		t.Fatalf("json.Marshal(payload) error = %v", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(payloadBytes) + ".sig"
-}
-
-func newTestJWTWithPolicy(t *testing.T, claims map[string]any, policy *iampb.Policy) string {
-	t.Helper()
-	policyBytes, err := proto.Marshal(policy)
-	if err != nil {
-		t.Fatalf("proto.Marshal(policy) error = %v", err)
-	}
-	claims["policy"] = base64.StdEncoding.EncodeToString(policyBytes)
-	return newTestJWT(t, claims)
 }
 
 func mustAssertedIdentityContextHeader(t *testing.T, policy *iampb.Policy) string {
@@ -296,18 +442,19 @@ func mustAssertedIdentityContextHeader(t *testing.T, policy *iampb.Policy) strin
 	return base64.StdEncoding.EncodeToString(payloadBytes)
 }
 
-func mustNewRequestIdentity(t *testing.T, iam *IAM, authenticatedCtx context.Context, callerID string, callerEmail string, policy *iampb.Policy) *RequestIdentity {
+func httptestNewRequest(t *testing.T) *http.Request {
 	t.Helper()
-
-	authenticated, err := iam.ExtractRequestIdentity(authenticatedCtx)
+	req, err := http.NewRequest(http.MethodGet, "https://example.com/books/1", nil)
 	if err != nil {
-		t.Fatalf("ExtractRequestIdentity(authenticatedCtx) error = %v", err)
+		t.Fatalf("http.NewRequest() error = %v", err)
 	}
+	return req
+}
 
-	caller := NewIdentity(callerID, callerEmail, WithIdentityPolicy(policy))
-
-	return &RequestIdentity{
-		Caller:        caller,
-		Authenticated: authenticated.Authenticated,
+func metadataFromHTTPHeaders(headers http.Header) metadata.MD {
+	md := metadata.MD{}
+	for key, values := range headers {
+		md[key] = append([]string(nil), values...)
 	}
+	return md
 }

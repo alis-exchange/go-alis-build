@@ -7,26 +7,26 @@ import (
 	"strings"
 )
 
-type Seat struct {
-	Plan int32 `json:"plan"`
-	Seat int32 `json:"seat"`
-}
-
-type Account struct {
-	Seats map[int32]*Seat `json:"seats"`
-}
-
 // Payload represents the decoded payload of a JWT.
 type Payload struct {
-	Issuer   string                 `json:"iss"`
-	Audience string                 `json:"aud"`
-	Expires  int64                  `json:"exp"`
-	IssuedAt int64                  `json:"iat"`
-	Subject  string                 `json:"sub,omitempty"`
-	Email    string                 `json:"email"`
-	Groups   []string               `json:"groups"`
-	Claims   map[string]interface{} `json:"-"`
-	Accounts map[string]*Account    `json:"accounts"`
+	// Issuer identifies the principal that issued the token.
+	Issuer string `json:"iss"`
+	// Audience identifies the intended recipient of the token.
+	Audience string `json:"aud"`
+	// Expires is the token expiration time as a Unix timestamp.
+	Expires int64 `json:"exp"`
+	// IssuedAt is the token issuance time as a Unix timestamp.
+	IssuedAt int64 `json:"iat"`
+	// Subject is the stable user or service account identifier for the token
+	// subject.
+	Subject string `json:"sub,omitempty"`
+	// Email is the email address associated with the token subject.
+	Email string `json:"email"`
+	// Groups lists group identifiers asserted on the token.
+	Groups []string `json:"groups"`
+	// Claims contains the full decoded claim set, including claims not modeled
+	// by the typed fields above.
+	Claims map[string]interface{} `json:"-"`
 }
 
 func ParsePayload(token string) (*Payload, error) {

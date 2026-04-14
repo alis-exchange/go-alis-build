@@ -83,3 +83,15 @@ func ContextWithOutgoingGRPCMetadata(ctx context.Context) (context.Context, erro
 	}
 	return metadata.NewOutgoingContext(ctx, md), nil
 }
+
+// AsCallerGRPC attaches outbound gRPC metadata that forwards the effective
+// caller identity.
+func AsCallerGRPC(ctx context.Context) (context.Context, error) {
+	return ContextWithOutgoingGRPCMetadata(AsCaller(ctx))
+}
+
+// AsServiceAccountGRPC attaches outbound gRPC metadata for a service-account
+// only call with no forwarded caller identity.
+func AsServiceAccountGRPC(ctx context.Context) (context.Context, error) {
+	return ContextWithOutgoingGRPCMetadata(AsServiceAccount(ctx))
+}

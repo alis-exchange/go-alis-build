@@ -14,9 +14,10 @@ import (
 type contextKey string
 
 const (
-	requestMetadataKey contextKey = "iam.v3.request-metadata"
-	requestIdentityKey contextKey = "iam.v3.request-identity"
-	outboundAuthKey    contextKey = "iam.v3.outbound-auth"
+	requestMetadataKey       contextKey = "iam.v3.request-metadata"
+	requestIdentityKey       contextKey = "iam.v3.request-identity"
+	authenticatedIdentityKey contextKey = "iam.v3.authenticated-identity"
+	outboundAuthKey          contextKey = "iam.v3.outbound-auth"
 )
 
 // Transport identifies the inbound transport from which request metadata was
