@@ -2,7 +2,6 @@ package mux
 
 import (
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -24,10 +23,7 @@ var (
 )
 
 func init() {
-	identityServiceURL := os.Getenv("IDENTITY_SERVICE_URL")
-	if identityServiceURL == "" {
-		panic("IDENTITY_SERVICE_URL is not set")
-	}
+	identityServiceURL := RequiredEnv("IDENTITY_SERVICE_URL")
 	AuthClient = authn.NewClient(identityServiceURL)
 	Get(AuthCallbackPath, callbackHandle)
 	Get(LogoutPath, logoutHandle)
@@ -129,37 +125,25 @@ func AuthenticatedHandle(pattern string, handleFunc Func, middlewares ...Middlew
 }
 
 func AuthenticatedOptions(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Options(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("OPTIONS "+pattern, handleFunc, middlewares...)
 }
 
 func AuthenticatedGet(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Get(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("GET "+pattern, handleFunc, middlewares...)
 }
 
 func AuthenticatedPost(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Post(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("POST "+pattern, handleFunc, middlewares...)
 }
 
 func AuthenticatedPatch(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Patch(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("PATCH "+pattern, handleFunc, middlewares...)
 }
 
 func AuthenticatedPut(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Put(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("PUT "+pattern, handleFunc, middlewares...)
 }
 
 func AuthenticatedDelete(pattern string, handleFunc Func, middlewares ...Middleware) {
-	Delete(pattern, handleFunc, append(
-		[]Middleware{authMiddleware}, middlewares...,
-	)...)
+	AuthenticatedHandle("DELETE "+pattern, handleFunc, middlewares...)
 }

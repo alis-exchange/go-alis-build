@@ -139,3 +139,13 @@ func IsBrowserNavigationRequest(r *http.Request) bool {
 	// for an HTML document, which usually means "load a page".
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
+
+// RequiredEnv returns the value of the required environment variable with the given name.
+// If the variable is not set, it panics with an error message.
+func RequiredEnv(name string) string {
+	value := os.Getenv(name)
+	if value == "" {
+		panic("Required environment variable " + name + " is not set")
+	}
+	return value
+}
