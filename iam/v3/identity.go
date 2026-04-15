@@ -1,5 +1,5 @@
 // Package auth provides an identity which is shared by the authn and authz packages.
-package auth
+package iam
 
 import (
 	"context"
@@ -117,12 +117,12 @@ func (i *Identity) OutgoingMetadata(ctx context.Context) context.Context {
 		return ctx
 	}
 	value := string(i.Marshal())
-	return metadata.AppendToOutgoingContext(ctx, "identity", value)
+	return metadata.AppendToOutgoingContext(ctx, string(identityCtxKey), value)
 }
 
 // FromIncomingMetadata returns the Identity inside the given gRPC context, if any.
 func FromIncomingMetadata(ctx context.Context) (*Identity, error) {
-	values := metadata.ValueFromIncomingContext(ctx, "identity")
+	values := metadata.ValueFromIncomingContext(ctx, string(identityCtxKey))
 	if len(values) == 0 {
 		return nil, errors.New("no identity value found in incoming metadata")
 	}
