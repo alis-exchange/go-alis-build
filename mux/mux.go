@@ -3,8 +3,11 @@ package mux
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
+	"go.alis.build/alog"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -64,18 +67,24 @@ func handler(handler Func, middlewares ...Middleware) func(w http.ResponseWriter
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		var err error
 		if gateway != nil {
 			err = gateway(w, r, handler)
 		} else {
 			err = handler(w, r)
 		}
+
+		invokeInfo := fmt.Sprintf("%s %s (%s)", r.Method, r.URL.Path, time.Since(start))
 		if err != nil {
+			alog.Warnf(r.Context(), "%s: %s", invokeInfo, err.Error())
 			if httpErr, ok := errors.AsType[*Error](err); ok {
 				http.Error(w, httpErr.Msg, httpErr.Code)
 			} else {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			}
+		} else {
+			alog.Debug(r.Context(), invokeInfo)
 		}
 	}
 }
