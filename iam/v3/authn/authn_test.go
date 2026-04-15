@@ -13,15 +13,7 @@ import (
 	"go.alis.build/iam/v3"
 )
 
-var testClient = Client{
-	AuthURL:                 "https://identity.alisx.com/authorize",
-	TokenURL:                "https://identity.alisx.com/token",
-	JWKSURL:                 "https://identity.alisx.com/.well-known/jwks.json",
-	ID:                      "",
-	Secret:                  "",
-	CallbackURL:             "TODO",
-	SkipSignatureValidation: false,
-}
+var testClient = NewClient("https://identity.alisx.com")
 
 func expect[T comparable](t *testing.T, got, expected T) {
 	if got != expected {
@@ -31,7 +23,12 @@ func expect[T comparable](t *testing.T, got, expected T) {
 
 func TestAuthFlow(t *testing.T) {
 	done := atomic.Bool{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/callback" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 		if code == "" {
@@ -46,18 +43,16 @@ func TestAuthFlow(t *testing.T) {
 		}
 
 		// test exchange code
-		tokens, err := testClient.ExchangeCode(code)
+		tokens, err := testClient.ExchangeCode(server.URL+"/auth/callback", code)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			t.Fatal(err)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
 
 		// test identity extraction from token
 		identity := iam.MustFromJWT(tokens.AccessToken)
 		expect(t, identity.Type, iam.User)
-		done.Store(true)
 
 		// test refresh
 		if err = testClient.Refresh(tokens); err != nil {
@@ -81,18 +76,19 @@ func TestAuthFlow(t *testing.T) {
 			t.Fatal(err)
 		}
 		expect(t, refreshed, true)
+		w.WriteHeader(http.StatusOK)
+		done.Store(true)
 	}))
 	defer server.Close()
 
 	// open user's browser and wait for callback
-	testClient.CallbackURL = server.URL + "/callback"
-	url := testClient.AuthorizeURL("mycustomstate")
+	url := testClient.AuthorizeURL(server.URL+"/auth/callback", "mycustomstate")
 	if err := openBrowser(url); err != nil {
 		t.Fatal(err)
 	}
 	startT := time.Now()
 	for !done.Load() {
-		if time.Since(startT) > time.Minute*1 {
+		if time.Since(startT) > time.Second*30 {
 			t.Fatal("timeout")
 		}
 		time.Sleep(1 * time.Second)

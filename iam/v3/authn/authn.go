@@ -20,12 +20,11 @@ import (
 )
 
 type Client struct {
-	AuthURL     string
-	TokenURL    string
-	JWKSURL     string
-	ID          string
-	Secret      string
-	CallbackURL string
+	AuthURL  string
+	TokenURL string
+	JWKSURL  string
+	ID       string
+	Secret   string
 
 	// Set to true if you store the tokens in your database for connections to OTHER services.
 	// This will skip fetching the public keys from the JWKSURL, speeding up the authentication process.
@@ -34,8 +33,18 @@ type Client struct {
 	keys                    sync.Map
 }
 
-func (c *Client) AuthorizeURL(state string) string {
-	url := fmt.Sprintf("%s?redirect_uri=%s&state=%s", c.AuthURL, c.CallbackURL, state)
+// NewClient creates a basic client for the authorization server with common endpoints.
+// Take note of the other fields on the client, like ID and Secret that might need to be set.
+func NewClient(authorizationServerBaseURL string) *Client {
+	return &Client{
+		AuthURL:  authorizationServerBaseURL + "/authorize",
+		TokenURL: authorizationServerBaseURL + "/token",
+		JWKSURL:  authorizationServerBaseURL + "/.well-known/jwks.json",
+	}
+}
+
+func (c *Client) AuthorizeURL(redirectURI, state string) string {
+	url := fmt.Sprintf("%s?redirect_uri=%s&state=%s", c.AuthURL, redirectURI, state)
 	if c.ID != "" {
 		url += "&client_id=" + c.ID
 	}
@@ -43,12 +52,12 @@ func (c *Client) AuthorizeURL(state string) string {
 }
 
 // ExchangeCode exchanges an authorization code for access and refresh tokens
-func (c *Client) ExchangeCode(code string) (*Tokens, error) {
-	return c.postToken(authorizationCode, code)
+func (c *Client) ExchangeCode(redirectURI, code string) (*Tokens, error) {
+	return c.postToken(authorizationCode, code, redirectURI)
 }
 
 func (c *Client) Refresh(tokens *Tokens) error {
-	newTokens, err := c.postToken(refreshToken, tokens.RefreshToken)
+	newTokens, err := c.postToken(refreshToken, tokens.RefreshToken, "")
 	if err != nil {
 		return err
 	}
@@ -69,7 +78,7 @@ type Tokens struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func (c *Client) postToken(grantType grantType, grant string) (*Tokens, error) {
+func (c *Client) postToken(grantType grantType, grant, redirectURI string) (*Tokens, error) {
 	// build request body
 	type bodyType struct {
 		GrantType    string `json:"grant_type"`
@@ -89,7 +98,7 @@ func (c *Client) postToken(grantType grantType, grant string) (*Tokens, error) {
 		body.RefreshToken = grant
 	case authorizationCode:
 		body.Code = grant
-		body.RedirectURI = c.CallbackURL
+		body.RedirectURI = redirectURI
 	}
 	bytesBuffer := bytes.NewBuffer(nil)
 	jsonEncoder := json.NewEncoder(bytesBuffer)
