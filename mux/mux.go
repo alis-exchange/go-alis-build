@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"go.alis.build/alog"
@@ -95,4 +97,45 @@ func ListenAndServe(addr string) error {
 		Handler: h2c.NewHandler(mux, &http2.Server{}),
 	}
 	return server.ListenAndServe()
+}
+
+var OnCloudRun = os.Getenv("K_SERVICE") != ""
+
+// RequestHost returns the host of the request, e.g. http://localhost:8080 or "https://example.com"
+func RequestHost(r *http.Request) string {
+	if r.TLS != nil {
+		return "https://" + r.Host
+	}
+	if OnCloudRun {
+		return "https://" + r.Host
+	}
+	if strings.Contains(r.Host, ".ngrok") {
+		return "https://" + r.Host
+	}
+	return "http://" + r.Host
+}
+
+// CookieIfExists returns the value of the cookie with the given name if it exists, or an empty string if it does not.
+func CookieIfExists(r *http.Request, name string) string {
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func IsBrowserNavigationRequest(r *http.Request) bool {
+	// Only top-level browser navigations should trigger the login redirect flow.
+	// API calls should get a normal unauthorized response instead, even when they
+	// come from a browser tab.
+	if r.Method != http.MethodGet {
+		return false
+	}
+	// Modern browsers mark page navigations explicitly.
+	if r.Header.Get("Sec-Fetch-Mode") == "navigate" {
+		return true
+	}
+	// Fallback for clients that do not send Sec-Fetch-* headers but still ask
+	// for an HTML document, which usually means "load a page".
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
