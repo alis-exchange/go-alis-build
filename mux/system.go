@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"go.alis.build/iam/v3"
 	"google.golang.org/api/idtoken"
 )
 
@@ -22,6 +23,9 @@ func systemMiddleware(w http.ResponseWriter, r *http.Request, handler Func) erro
 	if idToken.Claims["email"].(string) != EnvironmentServiceAccountEmail {
 		return UnauthorizedErr("not environment service account")
 	}
+
+	identity := iam.MustFromJWT(authorizationHdr)
+	r = r.WithContext(identity.Context(r.Context()))
 	return handler(w, r)
 }
 
