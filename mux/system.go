@@ -52,5 +52,5 @@ func SystemPut(pattern string, handleFunc Func, middlewares ...Middleware) {
 }
 
 func SystemDelete(pattern string, handleFunc Func, middlewares ...Middleware) {
-	AuthenticatedHandle("DELETE "+pattern, handleFunc, middlewares...)
+	SystemHandle("DELETE "+pattern, handleFunc, middlewares...)
 }
