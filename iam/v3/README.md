@@ -1,139 +1,89 @@
-# `iam/v3`
+# alis-exchange/auth
 
-`v3` is a transport-neutral IAM layer for gRPC, JSON-RPC, and HTTPS.
+This module provides packages for handling authentication (AuthN) and authorization (AuthZ) across services. It is designed around a shared `auth.Identity` model that makes it easy to pass authenticated contexts between clients, HTTP/gRPC middlewares, and authorization checks.
 
-## Design Changes From `v2`
+## Packages
 
-- Identity extraction is separated from transport wiring.
-- Authorization no longer relies on an implicit "claimed token" skip.
-- Downstream caller assertion is explicit.
-- The active permission is explicit when creating an `Authorizer`.
-- Policy fetching is transport-neutral through `PolicyFetcher`.
+### 1. `auth` (Identity)
+The core package that defines `auth.Identity`. An `Identity` represents an authenticated user, service account, or system. 
 
-## Recommended Flow
+**Key Features:**
+- Stores core user details (ID, Email, Type, Groups, Scopes, Seats).
+- Provides context helpers: `FromContext()`, `Context()`.
+- Provides gRPC metadata helpers for passing identities between microservices: `FromIncomingMetadata()`, `OutgoingMetadata()`.
+- JWT parsing: `FromJWT()` decodes tokens into an `Identity`.
 
-1. Authenticate the inbound request in trusted gateway or auth middleware.
-2. Forward the authenticated transport principal in trusted internal headers or attach it in context with `iam.WithAuthenticatedIdentity(...)`.
-3. Normalize HTTP request metadata with `iam.HTTPMiddleware(...)` when handlers only receive `*http.Request`.
-4. Create an `Authorizer` with the explicit permission being checked.
-5. Add identity or resource policies.
-6. Call `Require()`.
+### 2. `authn` (Authentication)
+Provides a client for authenticating users via OAuth2/OIDC.
 
-Examples:
+**Key Features:**
+- Generates authorization URLs (`AuthorizeURL`).
+- Exchanges authorization codes for tokens (`ExchangeCode`).
+- Refreshes tokens (`Refresh`).
+- Validates tokens (`ValidateToken`, `Authenticate`) by syncing and verifying against JWKS public keys.
 
+**Example Usage:**
 ```go
-func (s *BooksServer) GetBook(ctx context.Context, req *librarypb.GetBookRequest) (*librarypb.GetBookResponse, error) {
-	authz, err := iamInstance.NewAuthorizer(ctx, "/library.v1.BooksService/GetBook")
-	if err != nil {
-		return nil, err
-	}
-	if err := authz.AddIdentityPolicy(); err != nil {
-		return nil, err
-	}
-	if err := authz.AddPolicyFromResource("publishers/123/books/456"); err != nil {
-		return nil, err
-	}
-	if err := authz.Require(); err != nil {
-		return nil, err
-	}
-	return &librarypb.GetBookResponse{}, nil
+client := &authn.Client{
+    AuthURL:     "...",
+    TokenURL:    "...",
+    JWKSURL:     "...",
+    ID:          "client-id",
+    Secret:      "client-secret",
+    CallbackURL: "https://yourapp.com/callback",
+}
+
+// 1. Redirect user to auth provider
+url := client.AuthorizeURL("random-state-string")
+
+// 2. Exchange code for tokens
+tokens, err := client.ExchangeCode(code)
+
+// 3. Authenticate to ensure tokens are valid
+valid, err := client.Authenticate(tokens, time.Now())
+```
+
+### 3. `authz` (Authorization)
+Provides an `Authorizer` to check if a given `auth.Identity` has the necessary roles to perform an action. It evaluates IAM policies to determine role bindings.
+
+**Key Features:**
+- Extract roles from an identity's attached IAM policy or explicit Google Cloud IAM policies.
+- Check if an identity has specific roles: `HasRole(roles []string, policies ...*iampb.Policy)`.
+
+**Example Usage:**
+```go
+identity := auth.MustFromContext(ctx)
+authorizer := authz.MustNew(identity)
+
+// Check if the identity has a required role within the provided policies
+hasRole := authorizer.HasRole([]string{"roles/viewer", "roles/editor"}, myPolicy)
+if !hasRole {
+    return status.Error(codes.PermissionDenied, "unauthorized")
 }
 ```
 
+### 4. `policypool` (Concurrent Policy Fetching)
+A utility to fetch Google Cloud IAM policies (`*iampb.Policy`) concurrently, making authorization checks against multiple resources significantly faster.
+
+**Key Features:**
+- Built on `golang.org/x/sync/errgroup`.
+- Fetch from local or remote gRPC methods (`AddFromRemoteMethod`, `AddFromLocalMethod`).
+- Wait and collect all policies (`WaitPolicies`).
+
+**Example Usage:**
 ```go
-handler := iam.HTTPMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-	authz, err := iamInstance.NewAuthorizer(req.Context(), "books.get")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	_ = authz
-}))
-```
+pool := policypool.New()
 
-```go
-grpcServer := grpc.NewServer(
-	grpc.UnaryInterceptor(iam.UnaryServerInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo) (*iam.Identity, error) {
-		return iam.NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com"), nil
-	})),
-)
-_ = grpcServer
-```
+// Add concurrent policy fetch requests
+pool.AddFromRemoteMethod(ctx, remoteClient.GetIamPolicy, "resources/A")
+pool.AddFromRemoteMethod(ctx, remoteClient.GetIamPolicy, "resources/B")
 
-`iam/v3` does not authenticate bearer tokens itself. It requires a previously
-verified transport identity from trusted headers or context and uses normalized
-transport headers for trusted internal caller assertion.
-
-## Edge Helpers
-
-Gateway and proxy-specific header preparation helpers live in
-`go.alis.build/iam/v3/edge`.
-
-```go
-err := edge.PrepareForwardedHeaders(
-	req.Header,
-	iam.NewIdentity("svc", "alis-build@test-project.iam.gserviceaccount.com"),
-	iam.NewIdentity("12345", "user@example.com"),
-)
+// Block and retrieve all policies
+policies, err := pool.WaitPolicies()
 if err != nil {
-	return err
-}
-```
-
-## Explicit Outbound Identity
-
-When making downstream calls, choose the intent explicitly:
-
-```go
-outboundCtx := iam.AsCaller(ctx)
-headers, err := iam.OutgoingHTTPHeaders(outboundCtx)
-```
-
-```go
-outboundCtx := iam.AsServiceAccount(ctx)
-headers, err := iam.OutgoingHTTPHeaders(outboundCtx)
-```
-
-```go
-outboundCtx, err := iam.AsCallerGRPC(ctx)
-if err != nil {
-	return err
+    return err
 }
 
-resp, err := booksClient.GetBook(outboundCtx, &librarypb.GetBookRequest{
-	Name: "publishers/123/books/456",
-})
-if err != nil {
-	return err
-}
-_ = resp
+// Pass policies to authorizer
+authorizer.HasRole([]string{"roles/admin"}, policies...)
 ```
-
-`AsCaller` asserts caller identity using:
-
-- `x-alis-user-id`
-- `x-alis-user-email`
-- `x-alis-identity-context` as base64 JSON for optional embedded policy
-
-Authenticated transport identity can be forwarded separately using:
-
-- `x-alis-authenticated-user-id`
-- `x-alis-authenticated-user-email`
-- `x-alis-authenticated-identity-context` as base64 JSON for optional embedded policy
-
-These headers should only be trusted when the authenticated caller is a configured trusted internal service or proxy.
-
-`AsServiceAccount` does not forward caller identity headers.
-
-## Gateway Pattern
-
-For an edge gateway:
-
-1. Authenticate the external bearer token.
-2. Strip any incoming `x-alis-authenticated-*`, `x-alis-user-*`, and `x-alis-identity-context` headers.
-3. Build the authenticated transport identity with `iam.NewIdentity(...)`.
-4. Write authenticated headers with `identity.AuthenticatedHeaders()`.
-5. If proxying on behalf of a user, build the caller identity with `iam.NewIdentity(...)`.
-6. Write asserted caller headers with `identity.AssertedHeaders()`.
-
-For A2A service params, normalize them with `iam.ContextWithA2AServiceParams(...)` so downstream auth logic can use the same extraction path as HTTP, JSON-RPC, and gRPC.
