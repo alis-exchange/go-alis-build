@@ -1,4 +1,5 @@
-# alis-exchange/auth
+
+# go.alis.build/iam/v3
 
 This module provides packages for handling authentication (AuthN) and authorization (AuthZ) across services. It is designed around a shared `auth.Identity` model that makes it easy to pass authenticated contexts between clients, HTTP/gRPC middlewares, and authorization checks.
 
@@ -11,7 +12,46 @@ The core package that defines `auth.Identity`. An `Identity` represents an authe
 - Stores core user details (ID, Email, Type, Groups, Scopes, Seats).
 - Provides context helpers: `FromContext()`, `Context()`.
 - Provides gRPC metadata helpers for passing identities between microservices: `FromIncomingMetadata()`, `OutgoingMetadata()`.
+- Provides gRPC server interceptors for promoting incoming metadata into handler context: `UnaryInterceptor`, `StreamInterceptor`.
 - JWT parsing: `FromJWT()` decodes tokens into an `Identity`.
+- Supports trusted internal callers by marking known service accounts as system identities with `AddSystemEmail()`.
+
+**Example Usage:**
+```go
+package main
+
+import (
+    "context"
+
+    auth "go.alis.build/iam/v3"
+)
+
+func main() {
+    auth.AddSystemEmail("alis-build@my-project.iam.gserviceaccount.com")
+
+    identity := &auth.Identity{
+        ID:    "alis-build@my-project.iam.gserviceaccount.com",
+        Email: "alis-build@my-project.iam.gserviceaccount.com",
+        Type:  auth.ServiceAccount,
+    }
+
+    ctx := identity.Context(context.Background())
+    caller := auth.MustFromContext(ctx)
+
+    if caller.IsSystem() {
+        // Trusted internal service account.
+    }
+}
+```
+
+**gRPC Server Example:**
+```go
+server := grpc.NewServer(
+    grpc.UnaryInterceptor(auth.UnaryInterceptor),
+    grpc.StreamInterceptor(auth.StreamInterceptor),
+)
+_ = server
+```
 
 ### 2. `authn` (Authentication)
 Provides a client for authenticating users via OAuth2/OIDC.
