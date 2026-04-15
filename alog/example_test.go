@@ -14,8 +14,8 @@ func ExampleDebug() {
 	alog.SetLevel(alog.LevelDebug)
 
 	alog.Debug(ctx, "Some debug message")
-	// Output:
-	// {"message":"Some debug message", "severity":"DEBUG"}
+	// Outputs a JSON structure similar to:
+	// {"message":"Some debug message", "severity":"DEBUG", "time":"...", "logging.googleapis.com/sourceLocation":{...}}
 }
 
 func ExampleSetLevel() {
@@ -29,10 +29,10 @@ func ExampleSetLevel() {
 	alog.Info(ctx, "Some info message which will not print given the minimum logging level")
 
 	alog.Error(ctx, "Some error message which will print given the minimum logging level")
-	// Output:
-	// {"message": "Some error message which will print given the minimum logging level", "severity": "ERROR"}
+	// Outputs a JSON structure similar to:
+	// {"message": "Some error message which will print given the minimum logging level", "severity": "ERROR", "time":"..."}
 }
-func ExampleSetLevelNoLog() {
+func ExampleSetLevel_noLog() {
 
 	ctx := context.Background()
 
@@ -49,8 +49,8 @@ func ExampleInfof() {
 
 	// Using the 'f' style from the fmt.Sprintf package to print logs
 	alog.Infof(ctx, "some info: %s", "the info message")
-	// Output:
-	// {"message": "some info: the info message", "severity": "INFO"}
+	// Outputs a JSON structure similar to:
+	// {"message": "some info: the info message", "severity": "INFO", "time":"..."}
 }
 
 func ExampleSetLoggingEnvironment() {
@@ -60,7 +60,6 @@ func ExampleSetLoggingEnvironment() {
 	alog.SetLoggingEnvironment(alog.EnvironmentLocal)
 
 	alog.Info(ctx, "Some info message")
-	// Output:
-	// INFO some info message
-
+	// Outputs:
+	// [32mINFO[0m Some info message
 }

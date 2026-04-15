@@ -3,6 +3,7 @@ package alog
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -175,4 +176,9 @@ func SetLevel(level LogLevel) {
 // SetLoggingEnvironment is used to manually configure the logging environment.
 func SetLoggingEnvironment(e LoggingEnvironment) {
 	loggingEnvironment = e
+}
+
+// SetWriter configures the io.Writer used for log output. Default is os.Stderr.
+func SetWriter(writer io.Writer) {
+	w = writer
 }

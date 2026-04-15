@@ -2,6 +2,7 @@ package alog
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -332,22 +333,20 @@ func TestWarnf(t *testing.T) {
 	}
 }
 
-func Test_getTrace(t *testing.T) {
-	type args struct {
-		ctx context.Context
+func Test_applyCloudTraceFromContext(t *testing.T) {
+	ctx := WithCloudTraceContext(context.Background(), "my-trace-id/my-span-id;o=1")
+	os.Setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+
+	g := &googleLogEntry{entry: &entry{}}
+	applyCloudTraceFromContext(ctx, g)
+
+	if g.Trace != "projects/my-project/traces/my-trace-id" {
+		t.Errorf("Trace mismatch, got: %s", g.Trace)
 	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		// TODO: Add test cases.
+	if g.SpanID != "my-span-id" {
+		t.Errorf("SpanID mismatch, got: %s", g.SpanID)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := getTrace(tt.args.ctx); got != tt.want {
-				t.Errorf("getTrace() = %v, want %v", got, tt.want)
-			}
-		})
+	if !g.TraceSampled {
+		t.Errorf("TraceSampled mismatch, expected true")
 	}
 }
