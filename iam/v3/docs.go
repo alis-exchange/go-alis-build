@@ -57,4 +57,4 @@
 // does not authorize actions directly. Its job is to normalize identity data so
 // the rest of the module can authenticate, propagate, and authorize requests
 // consistently.
-package auth
+package iam

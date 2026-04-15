@@ -7,16 +7,16 @@ import (
 	"slices"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
-	auth "go.alis.build/iam/v3"
+	"go.alis.build/iam/v3"
 	"google.golang.org/protobuf/proto"
 )
 
 type Authorizer struct {
-	identity *auth.Identity
+	identity *iam.Identity
 	roles    []string
 }
 
-func New(identity *auth.Identity) (*Authorizer, error) {
+func New(identity *iam.Identity) (*Authorizer, error) {
 	var roles []string
 
 	// extract roles from iam policy if any
@@ -42,7 +42,7 @@ func New(identity *auth.Identity) (*Authorizer, error) {
 	}, nil
 }
 
-func MustNew(identity *auth.Identity) *Authorizer {
+func MustNew(identity *iam.Identity) *Authorizer {
 	authorizer, err := New(identity)
 	if err != nil {
 		panic(err)
@@ -86,7 +86,7 @@ func (a *Authorizer) AddRoles(roles ...string) {
 	a.roles = append(a.roles, roles...)
 }
 
-func rolesFromPolicies(identity *auth.Identity, policies ...*iampb.Policy) []string {
+func rolesFromPolicies(identity *iam.Identity, policies ...*iampb.Policy) []string {
 	var roles []string
 	for _, policy := range policies {
 		if policy == nil {

@@ -55,8 +55,8 @@ func TestAuthFlow(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 
 		// test identity extraction from token
-		identity := auth.MustFromJWT(tokens.AccessToken)
-		expect(t, identity.Type, auth.User)
+		identity := iam.MustFromJWT(tokens.AccessToken)
+		expect(t, identity.Type, iam.User)
 		done.Store(true)
 
 		// test refresh

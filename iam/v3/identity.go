@@ -1,5 +1,5 @@
 // Package auth provides an identity which is shared by the authn and authz packages.
-package auth
+package iam
 
 import (
 	"context"

@@ -3,7 +3,7 @@ package authz
 import (
 	"testing"
 
-	auth "go.alis.build/iam/v3"
+	"go.alis.build/iam/v3"
 )
 
 func init() {
@@ -21,8 +21,8 @@ func init() {
 }
 
 func TestHasPermission(t *testing.T) {
-	identity := &auth.Identity{
-		Type: auth.User,
+	identity := &iam.Identity{
+		Type: iam.User,
 		ID:   "1234",
 	}
 	authorizer := MustNew(identity)
