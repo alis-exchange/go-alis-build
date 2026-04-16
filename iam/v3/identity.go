@@ -1,4 +1,4 @@
-// Package auth provides an identity which is shared by the authn and authz packages.
+// Package iam provides an identity which is shared by the authn and authz packages.
 package iam
 
 import (
@@ -43,7 +43,10 @@ type (
 // PolicyMember returns the member to use in iam policy bindings.
 // E.g. "user:1234129384" or "serviceAccount:alis-build@myproject.iam.gserviceaccount.com"
 func (i *Identity) PolicyMember() string {
-	if i.Type == ServiceAccount {
+	switch i.Type {
+	case System:
+		return "system"
+	case ServiceAccount:
 		return string(i.Type) + ":" + i.Email
 	}
 	return string(i.Type) + ":" + i.ID
