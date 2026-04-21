@@ -8,6 +8,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/iam/v2/internal/jwt"
+	iamv3 "go.alis.build/iam/v3"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
@@ -48,6 +49,22 @@ type Identity struct {
 	groupIds []string
 	// The accounts that the requester is part of
 	accounts map[string]*jwt.Account
+}
+
+func (r *Identity) ForwardV3Identity(ctx context.Context) (context.Context, error) {
+	v3Identity, err := iamv3.FromJWT(r.jwt)
+	if err != nil {
+		return nil, err
+	}
+	return v3Identity.OutgoingMetadata(ctx), nil
+}
+
+func (r *Identity) MustForwardV3Identity(ctx context.Context) context.Context {
+	ctx, err := r.ForwardV3Identity(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("MustForwardV3Identity: %v", err))
+	}
+	return ctx
 }
 
 func (r *Identity) Id() string {
