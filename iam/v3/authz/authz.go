@@ -42,6 +42,9 @@ func New(identity *iam.Identity) (*Authorizer, error) {
 	}, nil
 }
 
+// MustNew returns an Authorizer for identity with any roles embedded in its IAM policy.
+//
+// It panics if the identity policy cannot be decoded or unmarshalled.
 func MustNew(identity *iam.Identity) *Authorizer {
 	authorizer, err := New(identity)
 	if err != nil {

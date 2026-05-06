@@ -39,7 +39,10 @@ func FromHeader(r *http.Request) (*Identity, error) {
 	return identity, nil
 }
 
-// MustFromHeader does the same as FromHeader, but panics on an error.
+// MustFromHeader returns the Identity stored in the request headers.
+//
+// It panics if r does not contain an Identity header or the header value cannot
+// be unmarshalled as an Identity.
 func MustFromHeader(r *http.Request) *Identity {
 	identity, err := FromHeader(r)
 	if err != nil {

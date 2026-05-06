@@ -60,6 +60,10 @@ func (pf *Pool) WaitPolicies() ([]*iampb.Policy, error) {
 	return pf.policies, nil
 }
 
+// MustWaitPolicies waits for all pending policy fetches and returns the collected policies.
+//
+// If a policy fetch fails, it returns nil when ignoreErrors is true and panics
+// when ignoreErrors is false.
 func (pf *Pool) MustWaitPolicies(ignoreErrors bool) []*iampb.Policy {
 	policies, err := pf.WaitPolicies()
 	if err != nil {

@@ -73,7 +73,9 @@ func FromContext(ctx context.Context) (*Identity, error) {
 	return identity, nil
 }
 
-// MustFromContext does the same as FromContext, but panics on an error.
+// MustFromContext returns the Identity stored in ctx.
+//
+// It panics if ctx does not contain an Identity value.
 func MustFromContext(ctx context.Context) *Identity {
 	identity, err := FromContext(ctx)
 	if err != nil {
@@ -104,7 +106,9 @@ func Unmarshal(data []byte) (*Identity, error) {
 	return &identity, nil
 }
 
-// MustUnmarshal does the same as [Unmarshal], but panics on an error.
+// MustUnmarshal parses data as an Identity.
+//
+// It panics if data cannot be unmarshalled as an Identity.
 func MustUnmarshal(data []byte) *Identity {
 	identity, err := Unmarshal(data)
 	if err != nil {
@@ -138,7 +142,10 @@ func FromIncomingMetadata(ctx context.Context) (*Identity, error) {
 	return identity, nil
 }
 
-// MustFromIncomingMetadata does the same as FromIncomingMetadata, but panics on an error.
+// MustFromIncomingMetadata returns the Identity stored in incoming gRPC metadata.
+//
+// It panics if the metadata does not contain an Identity value or the value
+// cannot be unmarshalled as an Identity.
 func MustFromIncomingMetadata(ctx context.Context) *Identity {
 	identity, err := FromIncomingMetadata(ctx)
 	if err != nil {
@@ -173,7 +180,10 @@ func FromJWT(jwt string) (*Identity, error) {
 	return &identity, nil
 }
 
-// MustFromJWT does the same as FromJWT, but panics on an error.
+// MustFromJWT decodes jwt and returns the Identity represented by its payload.
+//
+// It panics if jwt is malformed, its payload cannot be decoded, or the payload
+// cannot be unmarshalled as an Identity.
 func MustFromJWT(jwt string) *Identity {
 	identity, err := FromJWT(jwt)
 	if err != nil {
