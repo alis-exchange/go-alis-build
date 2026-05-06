@@ -10,6 +10,7 @@ Structured logging for Go that matches [Google Cloud structured logging](https:/
 - **Google** JSON: `message`, `severity`, `time`, optional `logging.googleapis.com/trace`, `spanId`, `trace_sampled`, `sourceLocation`, `labels`, `operation`, `insertId`, `httpRequest`, plus merged custom fields
 - Trace from gRPC incoming metadata or from `WithCloudTraceContext` (e.g. HTTP `X-Cloud-Trace-Context`)
 - Project id for trace resource names: `ALIS_OS_PROJECT`, then `GOOGLE_CLOUD_PROJECT`, then `GCLOUD_PROJECT`
+- Automatic defaults: local output uses `LevelDebug`; Cloud Run, Cloud Run Jobs, and Kubernetes-style runtimes use `LevelInfo`
 - `SetLevel`, `SetLoggingEnvironment`, `SetWriter`
 
 ## Installation
@@ -28,12 +29,23 @@ alog.Errorf(ctx, "failed: %v", err)
 
 ## Google vs local output
 
+`alog` chooses an output mode automatically. If `K_SERVICE`, `CLOUD_RUN_JOB`, or
+`KUBERNETES_SERVICE_HOST` is set, it uses Google JSON output. Otherwise it uses local
+ANSI-colored text.
+
 ```go
 alog.SetLoggingEnvironment(alog.EnvironmentGoogle) // JSON lines (typical on Cloud Run / GKE)
 alog.SetLoggingEnvironment(alog.EnvironmentLocal)  // ANSI-colored text
 ```
 
 ## Minimum level
+
+The minimum level is also configured automatically. Local output defaults to
+`alog.LevelDebug`. Google output defaults to `alog.LevelInfo`.
+
+On Google runtimes, set `ALOG_LEVEL` to an integer level to override the default. For
+example, `ALOG_LEVEL=-4` enables debug logs and `ALOG_LEVEL=4` keeps warning and more
+severe logs.
 
 ```go
 alog.SetLevel(alog.LevelWarning) // only Warning and more severe levels

@@ -101,7 +101,9 @@ func WithLogHTTPRequest(ctx context.Context, req LogHTTPRequest) context.Context
 }
 
 // WithLogError adds an error to the context for the log entry.
-// For Google Cloud Structured Logging, the error message and trace will be included.
+// In Google mode, the formatted error is emitted as stack_trace. Ordinary Go errors
+// produce only their message; wrapped or custom errors may include stack details if
+// they implement %+v formatting.
 func WithLogError(ctx context.Context, err error) context.Context {
 	return context.WithValue(ctx, logErrorKey{}, err)
 }

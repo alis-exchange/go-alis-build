@@ -10,16 +10,16 @@ import (
 
 func TestNewSlogLogger(t *testing.T) {
 	var buf bytes.Buffer
-	prevW := w
-	prevEnv := loggingEnvironment
-	prevLevel := loggingLevel
+	prevW := getWriter()
+	prevEnv := getLoggingEnvironment()
+	prevLevel := getLoggingLevel()
 	t.Cleanup(func() {
-		w = prevW
-		loggingEnvironment = prevEnv
-		loggingLevel = prevLevel
+		SetWriter(prevW)
+		SetLoggingEnvironment(prevEnv)
+		SetLevel(prevLevel)
 	})
 
-	w = &buf
+	SetWriter(&buf)
 	SetLoggingEnvironment(EnvironmentGoogle)
 	SetLevel(LevelInfo)
 
@@ -50,8 +50,8 @@ func TestNewSlogLogger_defaultLevelerFromAlog(t *testing.T) {
 }
 
 func TestSlogHandler_Enabled_respectsAlogLevel(t *testing.T) {
-	prev := loggingLevel
-	t.Cleanup(func() { loggingLevel = prev })
+	prev := getLoggingLevel()
+	t.Cleanup(func() { SetLevel(prev) })
 
 	SetLevel(LevelWarning)
 	h := &slogHandler{}

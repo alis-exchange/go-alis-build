@@ -19,8 +19,10 @@ EnvironmentGoogle writes one JSON object per line to the configured writer (defa
 
 EnvironmentLocal writes ANSI-colored, human-readable lines for local development.
 
-The default is chosen from environment variables (for example K_SERVICE, CLOUD_RUN_JOB,
-KUBERNETES_SERVICE_HOST). Override with [SetLoggingEnvironment].
+The default environment and log level are chosen from environment variables (for example
+K_SERVICE, CLOUD_RUN_JOB, KUBERNETES_SERVICE_HOST). Local environments default to
+[LevelDebug]. Google environments default to [LevelInfo], or the integer value of
+ALOG_LEVEL when set. Override with [SetLoggingEnvironment] and [SetLevel].
 
 # Basic usage
 
@@ -29,7 +31,8 @@ Import the package and call the level functions with a [context.Context]:
 	alog.Info(ctx, "server started")
 	alog.Errorf(ctx, "handler failed: %v", err)
 
-Configure the minimum level with [SetLevel] and the writer with [SetWriter].
+The minimum level is configured automatically from the environment defaults above. Override
+it with [SetLevel] and configure the writer with [SetWriter].
 
 # Cloud Trace and request context
 

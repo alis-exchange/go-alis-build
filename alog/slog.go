@@ -16,12 +16,12 @@ type slogHandler struct {
 	groups []string
 }
 
-// alogLeveler implements [slog.Leveler] by reading [loggingLevel]. It is used when
+// alogLeveler implements [slog.Leveler] by reading alog's configured level. It is used when
 // [slog.HandlerOptions.Level] is nil so the slog logger stays aligned with [SetLevel].
 type alogLeveler struct{}
 
 func (alogLeveler) Level() slog.Level {
-	return slog.Level(loggingLevel)
+	return slog.Level(getLoggingLevel())
 }
 
 // NewSlogLogger returns a [*slog.Logger] whose records are written using the same path as
@@ -29,7 +29,7 @@ func (alogLeveler) Level() slog.Level {
 // and context helpers ([WithCloudTraceContext], [WithLogFields], etc.) all apply.
 //
 // opts may be nil; in that case default [slog.HandlerOptions] are used.
-// If opts.Level is nil, it is set to an internal [slog.Leveler] derived from [loggingLevel]
+// If opts.Level is nil, it is set to an internal [slog.Leveler] derived from alog's configured level
 // ([SetLevel]) so slog's level gate matches alog. If you set opts.Level yourself, that
 // leveler is applied first, then alog's minimum level still applies.
 func NewSlogLogger(opts *slog.HandlerOptions) *slog.Logger {
@@ -53,14 +53,14 @@ func (h *slogHandler) clone() *slogHandler {
 func (h *slogHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	if h.opts.Level != nil {
 		// alogDerivedLeveler does not use slog's level >= minLevel rule; filtering matches
-		// package alog via loggingLevel <= slogLevelToLogLevel (see slogLevelToLogLevel).
+		// package alog via getLoggingLevel() <= slogLevelToLogLevel (see slogLevelToLogLevel).
 		if _, ok := h.opts.Level.(alogLeveler); !ok {
 			if level < h.opts.Level.Level() {
 				return false
 			}
 		}
 	}
-	return loggingLevel <= slogLevelToLogLevel(level)
+	return getLoggingLevel() <= slogLevelToLogLevel(level)
 }
 
 func (h *slogHandler) Handle(ctx context.Context, r slog.Record) error {

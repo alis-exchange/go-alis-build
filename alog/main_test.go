@@ -2,12 +2,125 @@ package alog
 
 import (
 	"context"
+	"io"
 	"os"
+	"sync"
 	"testing"
 )
 
 func init() {
 	//SetLoggingEnvironment(EnvironmentLocal)
+}
+
+func TestIsGoogleEnvironment(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{
+			name: "local",
+			want: false,
+		},
+		{
+			name: "cloud run service",
+			env: map[string]string{
+				"K_SERVICE": "service",
+			},
+			want: true,
+		},
+		{
+			name: "cloud run job",
+			env: map[string]string{
+				"CLOUD_RUN_JOB": "job",
+			},
+			want: true,
+		},
+		{
+			name: "gke",
+			env: map[string]string{
+				"KUBERNETES_SERVICE_HOST": "10.0.0.1",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("K_SERVICE", "")
+			t.Setenv("CLOUD_RUN_JOB", "")
+			t.Setenv("KUBERNETES_SERVICE_HOST", "")
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			if got := isGoogleEnvironment(); got != tt.want {
+				t.Fatalf("isGoogleEnvironment() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogLevelFromEnv(t *testing.T) {
+	t.Run("uses fallback when unset", func(t *testing.T) {
+		t.Setenv("ALOG_LEVEL", "")
+
+		if got := logLevelFromEnv("ALOG_LEVEL", LevelInfo); got != LevelInfo {
+			t.Fatalf("logLevelFromEnv() = %v, want %v", got, LevelInfo)
+		}
+	})
+
+	t.Run("uses configured level", func(t *testing.T) {
+		t.Setenv("ALOG_LEVEL", "-4")
+
+		if got := logLevelFromEnv("ALOG_LEVEL", LevelInfo); got != LevelDebug {
+			t.Fatalf("logLevelFromEnv() = %v, want %v", got, LevelDebug)
+		}
+	})
+
+	t.Run("panics on invalid level", func(t *testing.T) {
+		t.Setenv("ALOG_LEVEL", "debug")
+
+		defer func() {
+			if recover() == nil {
+				t.Fatal("logLevelFromEnv() did not panic")
+			}
+		}()
+
+		_ = logLevelFromEnv("ALOG_LEVEL", LevelInfo)
+	})
+}
+
+func TestConcurrentLoggingConfiguration(t *testing.T) {
+	prevW := getWriter()
+	prevEnv := getLoggingEnvironment()
+	prevLevel := getLoggingLevel()
+	t.Cleanup(func() {
+		SetWriter(prevW)
+		SetLoggingEnvironment(prevEnv)
+		SetLevel(prevLevel)
+	})
+
+	SetWriter(io.Discard)
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				SetLevel(LevelDebug)
+				SetLoggingEnvironment(EnvironmentLocal)
+				Debug(ctx, "debug")
+				SetLevel(LevelInfo)
+				SetLoggingEnvironment(EnvironmentGoogle)
+				Info(ctx, "info")
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 func TestAlert(t *testing.T) {

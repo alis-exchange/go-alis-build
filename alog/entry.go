@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"runtime"
@@ -27,8 +26,6 @@ const (
 	// This value is typically be used when running code on Google GKE, Google Cloud Run or Google Cloud Run Jobs.
 	EnvironmentGoogle LoggingEnvironment = "GOOGLE"
 )
-
-var w io.Writer = os.Stderr
 
 // LogEntrySourceLocation provides additional information about the source code location that produced the log entry.
 type logEntrySourceLocation struct {
@@ -101,6 +98,9 @@ func (g googleLogEntry) MarshalJSON() ([]byte, error) {
 
 // Bytes renders an entry structure to the JSON format expected by Cloud Logging.
 func (e entry) Bytes() []byte {
+	level := getLoggingLevel()
+	environment := getLoggingEnvironment()
+
 	// Add
 	e.Severity = e.Level.String()
 
@@ -112,7 +112,7 @@ func (e entry) Bytes() []byte {
 	}
 
 	// If level is at Debug, include the source location
-	if loggingLevel == LevelDebug {
+	if level == LevelDebug {
 		// Get the filename and line number of the calling function
 		pc, filename, line, ok := runtime.Caller(3 + skip)
 		if ok {
@@ -125,7 +125,7 @@ func (e entry) Bytes() []byte {
 	}
 
 	// if the logs run in local environment, then bypass the structured logging.
-	if loggingEnvironment == EnvironmentLocal {
+	if environment == EnvironmentLocal {
 		// Determine the color for local logging
 		// Codes available at https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
 		var color int
@@ -148,7 +148,7 @@ func (e entry) Bytes() []byte {
 			color = 101
 		}
 
-		if loggingLevel == LevelDebug {
+		if level == LevelDebug {
 			return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message))
 		}
 		return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))
@@ -190,7 +190,9 @@ func (e entry) Output() error {
 	b := e.Bytes()
 	// Appends a newline to the output.
 	b = append(b, '\n')
-	_, err := w.Write(b)
+	writerMu.Lock()
+	defer writerMu.Unlock()
+	_, err := getWriter().Write(b)
 	return err
 }
 
