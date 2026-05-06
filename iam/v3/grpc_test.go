@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestUnaryInterceptor(t *testing.T) {
@@ -31,6 +33,24 @@ func TestUnaryInterceptor(t *testing.T) {
 	expect(t, res.(string), "response")
 }
 
+func TestUnaryInterceptorUnauthenticated(t *testing.T) {
+	handlerCalled := false
+	res, err := UnaryInterceptor(t.Context(), "request", nil, func(ctx context.Context, req any) (any, error) {
+		handlerCalled = true
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expect(t, status.Code(err), codes.Unauthenticated)
+	if res != nil {
+		t.Fatalf("got response %v, expected nil", res)
+	}
+	if handlerCalled {
+		t.Fatal("handler was called")
+	}
+}
+
 func TestStreamInterceptor(t *testing.T) {
 	ctx := testIdentity.OutgoingMetadata(t.Context())
 	md, ok := metadata.FromOutgoingContext(ctx)
@@ -51,6 +71,22 @@ func TestStreamInterceptor(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStreamInterceptorUnauthenticated(t *testing.T) {
+	handlerCalled := false
+	stream := &testServerStream{ctx: t.Context()}
+	err := StreamInterceptor("server", stream, nil, func(srv any, stream grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expect(t, status.Code(err), codes.Unauthenticated)
+	if handlerCalled {
+		t.Fatal("handler was called")
 	}
 }
 

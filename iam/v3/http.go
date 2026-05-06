@@ -19,7 +19,11 @@ func (i *Identity) AddHeader(r *http.Request) {
 // the request headers and injects it into the request context.
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity := MustFromHeader(r)
+		identity, err := FromHeader(r)
+		if err != nil {
+			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			return
+		}
 		ctx := identity.Context(r.Context())
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
