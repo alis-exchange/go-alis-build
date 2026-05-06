@@ -12,7 +12,9 @@ import (
 func isMember(identity *iam.Identity, members []string) bool {
 	for _, memberText := range members {
 		member := new(Member).parse(memberText)
+		memberResolversMu.RLock()
 		resolver, ok := memberResolvers[member.Type]
+		memberResolversMu.RUnlock()
 		if ok {
 			if resolver(identity, member) {
 				return true
@@ -57,6 +59,10 @@ var (
 	}
 )
 
+// AddMemberResolver registers resolver for the given IAM member types.
+//
+// It is intended for process startup configuration, typically from init
+// functions, and must not be called concurrently with authorization checks.
 func AddMemberResolver(memberTypes []string, resolver func(identity *iam.Identity, member *Member) bool) error {
 	memberResolversMu.Lock()
 	defer memberResolversMu.Unlock()

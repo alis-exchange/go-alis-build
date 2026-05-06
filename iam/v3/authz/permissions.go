@@ -7,11 +7,20 @@ var (
 	permissionRoles = map[string][]string{}
 )
 
+// AddOpenRolePermissions registers role as open to all identities and associates
+// it with the given permissions.
+//
+// It is intended for process startup configuration, typically from init
+// functions, and must not be called concurrently with authorization checks.
 func AddOpenRolePermissions(role string, permissions []string) {
 	openRoles = append(openRoles, role)
 	AddRolePermissions(role, permissions)
 }
 
+// AddRolePermissions registers the permissions granted by role.
+//
+// It is intended for process startup configuration, typically from init
+// functions, and must not be called concurrently with authorization checks.
 func AddRolePermissions(role string, permissions []string) []string {
 	for _, permission := range permissions {
 		permissionRoles[permission] = append(permissionRoles[permission], role)

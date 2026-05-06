@@ -15,6 +15,10 @@ func init() {
 	}
 }
 
+// AddSystemEmail registers email as a trusted system identity.
+//
+// It is intended for process startup configuration, typically from init
+// functions, and must not be called concurrently with identity checks.
 func AddSystemEmail(email string) {
 	systemEmails = append(systemEmails, email)
 }
