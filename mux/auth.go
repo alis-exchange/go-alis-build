@@ -10,16 +10,48 @@ import (
 )
 
 const (
+	// AuthCallbackPath is the route path registered for OAuth callback handling.
+	//
+	// The package registers a GET handler for this path during init.
 	AuthCallbackPath string = "/auth/callback"
-	LogoutPath       string = "/auth/logout"
+
+	// LogoutPath is the route path registered for clearing authentication cookies.
+	//
+	// The package registers a GET handler for this path during init.
+	LogoutPath string = "/auth/logout"
 )
 
 var (
-	PostAuthRedirectCookie string        = "post_auth_redirect_uri" // You can change this
-	AccessTokenCookie      string        = "access_token"           // You can change this
-	RefreshTokenCookie     string        = "refresh_token"          // You can change this
-	AuthCookiesDomain      string        = ""                       // You can change this
-	AuthClient             *authn.Client                            // You can change this
+	// PostAuthRedirectCookie is the cookie name reserved for post-login redirects.
+	//
+	// Callers may change this value before handling requests if they need to
+	// align cookie names across services.
+	PostAuthRedirectCookie string = "post_auth_redirect_uri"
+
+	// AccessTokenCookie is the cookie name used to store the IAM access token.
+	//
+	// Callers may change this value before handling requests if their service
+	// uses a different cookie naming convention.
+	AccessTokenCookie string = "access_token"
+
+	// RefreshTokenCookie is the cookie name used to store the IAM refresh token.
+	//
+	// Callers may change this value before handling requests if their service
+	// uses a different cookie naming convention.
+	RefreshTokenCookie string = "refresh_token"
+
+	// AuthCookiesDomain is the Domain attribute applied to authentication cookies.
+	//
+	// The default empty string leaves the cookie host-only. Set this before
+	// serving requests when cookies should be shared across subdomains.
+	AuthCookiesDomain string = ""
+
+	// AuthClient is the authentication client used by the built-in auth handlers.
+	//
+	// It is initialized from IDENTITY_SERVICE_URL during package init. Tests or
+	// services with custom authentication plumbing may replace it before serving
+	// requests.
+	AuthClient *authn.Client
 )
 
 func init() {
@@ -29,6 +61,14 @@ func init() {
 	Get(LogoutPath, logoutHandle)
 }
 
+// authMiddleware authenticates a request before invoking handler.
+//
+// It reads tokens from the configured auth cookies, falls back to the bearer
+// Authorization header for the access token, and refreshes auth cookies when the
+// authentication client rotates tokens. When authentication fails, browser page
+// navigations are redirected to the identity service authorization URL with the
+// original path and query as state. Non-navigation requests, including API calls
+// from browsers, receive a 401 Unauthorized error instead of a redirect.
 func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error {
 	// extract tokens
 	tokens := &authn.Tokens{
@@ -98,8 +138,11 @@ func logoutHandle(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// ClearAuthCookies clears the access and refresh tokens to effectively log out the user.
-// Used by the default logout handler, but can also be used by your own handlers.
+// ClearAuthCookies expires the access and refresh token cookies.
+//
+// It uses the currently configured AccessTokenCookie, RefreshTokenCookie, and
+// AuthCookiesDomain values. The default logout handler calls this function, and
+// custom handlers can call it when they need to terminate a browser session.
 func ClearAuthCookies(w http.ResponseWriter) {
 	setAuthCookie(w, AccessTokenCookie, "", -1)
 	setAuthCookie(w, RefreshTokenCookie, "", -1)
@@ -118,32 +161,70 @@ func setAuthCookie(w http.ResponseWriter, name, value string, maxAge int) {
 	})
 }
 
+// AuthenticatedHandle registers an authenticated route on the package-level mux.
+//
+// The auth middleware runs before any middlewares supplied by the caller. It
+// authenticates access and refresh tokens from cookies, falls back to a bearer
+// Authorization header for the access token, refreshes cookies when needed, and
+// stores the IAM identity in the request context before invoking handleFunc.
+//
+// If authentication fails for a browser navigation request, the middleware
+// redirects the user to the identity service authorization URL. The redirect uses
+// RequestHost plus AuthCallbackPath as the OAuth callback URI and preserves the
+// requested path and query in the authorization state so the callback can return
+// the browser to the originally requested page. Requests that do not look like
+// top-level browser navigations receive UnauthorizedErr instead, which avoids
+// converting API calls into HTML login redirects.
 func AuthenticatedHandle(pattern string, handleFunc Func, middlewares ...Middleware) {
 	Handle(pattern, handleFunc, append(
 		[]Middleware{authMiddleware}, middlewares...,
 	)...)
 }
 
+// AuthenticatedOptions registers an authenticated OPTIONS route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "OPTIONS " prefixed to
+// pattern.
 func AuthenticatedOptions(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("OPTIONS "+pattern, handleFunc, middlewares...)
 }
 
+// AuthenticatedGet registers an authenticated GET route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "GET " prefixed to
+// pattern.
 func AuthenticatedGet(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("GET "+pattern, handleFunc, middlewares...)
 }
 
+// AuthenticatedPost registers an authenticated POST route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "POST " prefixed to
+// pattern.
 func AuthenticatedPost(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("POST "+pattern, handleFunc, middlewares...)
 }
 
+// AuthenticatedPatch registers an authenticated PATCH route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "PATCH " prefixed to
+// pattern.
 func AuthenticatedPatch(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("PATCH "+pattern, handleFunc, middlewares...)
 }
 
+// AuthenticatedPut registers an authenticated PUT route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "PUT " prefixed to
+// pattern.
 func AuthenticatedPut(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("PUT "+pattern, handleFunc, middlewares...)
 }
 
+// AuthenticatedDelete registers an authenticated DELETE route for pattern.
+//
+// It is equivalent to calling AuthenticatedHandle with "DELETE " prefixed to
+// pattern.
 func AuthenticatedDelete(pattern string, handleFunc Func, middlewares ...Middleware) {
 	AuthenticatedHandle("DELETE "+pattern, handleFunc, middlewares...)
 }

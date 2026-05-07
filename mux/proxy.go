@@ -14,7 +14,11 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// HTTPProxy returns a handler that proxies http requests to another local server on the given port.
+// HTTPProxy returns a handler that proxies HTTP/1.x requests to localhost:port.
+//
+// The proxy preserves the incoming Host header so the upstream service sees the
+// original request host. If an IAM identity is present in the request context,
+// HTTPProxy forwards it to the upstream service using the identity header.
 func HTTPProxy(port int) Func {
 	targetURL := &url.URL{
 		Scheme: "http",
@@ -33,7 +37,11 @@ func HTTPProxy(port int) Func {
 	}
 }
 
-// HTTP2Proxy returns a handler that proxies http2 requests (like gRPC) to another local server on the given port.
+// HTTP2Proxy returns a handler that proxies cleartext HTTP/2 requests to localhost:port.
+//
+// It is intended for local gRPC-style upstreams that expect h2c. The proxy
+// preserves the incoming Host header and forwards any IAM identity found in the
+// request context using the identity header.
 func HTTP2Proxy(port int) Func {
 	targetURL := &url.URL{
 		Scheme: "http",
