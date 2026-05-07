@@ -61,6 +61,18 @@
 // AddGateway installs a package-wide middleware that wraps all registered
 // routes. This is useful for cross-cutting behavior such as CORS or recovery.
 //
+// Existing http.Handler implementations can be mounted with HandleHTTP. This is
+// the right shape for servers that combine generated REST handlers, resumable
+// operation endpoints, and gRPC on one listener. For example, a grpc.Server can
+// be mounted with HandleGRPC while more specific REST routes are registered
+// alongside it. HandleGRPC uses the broad "POST /" pattern, so REST routes with
+// more specific paths continue to take precedence. Requests that reach the broad
+// pattern are served by the gRPC handler only when they look like standard gRPC
+// requests; unmatched non-gRPC POST requests receive a 404 response.
+//
+//	grpcServer := grpc.NewServer()
+//	mux.HandleGRPC(grpcServer)
+//
 // Call ListenAndServe to start serving the package-level mux. The server uses
 // h2c so it can accept cleartext HTTP/2 as well as HTTP/1.1.
 //

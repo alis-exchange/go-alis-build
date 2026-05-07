@@ -53,6 +53,48 @@ func Handle(pattern string, handleFunc Func, middlewares ...Middleware) {
 	mux.HandleFunc(pattern, handler(handleFunc, middlewares...))
 }
 
+// HandleHTTP registers an http.Handler for pattern on the package-level ServeMux.
+//
+// This is useful when an existing component already exposes a standard
+// http.Handler instead of a mux.Func, such as a grpc.Server, generated REST
+// gateway, long-running operation handler, or another ServeMux. The handler is
+// adapted into a Func, so route-specific middleware and any package-wide gateway
+// installed with AddGateway still run before the handler serves the request.
+//
+// For mixed REST and gRPC servers, register REST routes on their specific
+// patterns and mount the gRPC server on a broad HTTP/2 pattern such as "POST /".
+// ListenAndServe already serves the package mux through h2c, which allows
+// cleartext HTTP/2 gRPC requests and ordinary HTTP/1.1 REST requests to share
+// the same listener.
+func HandleHTTP(pattern string, httpHandler http.Handler, middlewares ...Middleware) {
+	Handle(pattern, func(w http.ResponseWriter, r *http.Request) error {
+		httpHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
+// HandleGRPC registers a gRPC-compatible http.Handler on the package-level ServeMux.
+//
+// grpc.Server implements http.Handler for HTTP/2 requests, so callers can pass a
+// configured grpc.Server without this package depending on google.golang.org/grpc.
+// The handler is mounted at "POST /", which matches gRPC method calls such as
+// POST /package.Service/Method. More specific REST routes registered on the same
+// mux take precedence over this broad fallback pattern.
+//
+// The registered handler still runs through route-specific middleware and any
+// package-wide gateway installed with AddGateway. ListenAndServe serves the mux
+// through h2c, allowing cleartext HTTP/2 gRPC calls and HTTP/1.1 REST calls to
+// share the same listener.
+func HandleGRPC(grpcHandler http.Handler, middlewares ...Middleware) {
+	Handle("POST /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC request")
+		}
+		grpcHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
 // Options registers an OPTIONS route for pattern.
 //
 // It is equivalent to calling Handle with "OPTIONS " prefixed to pattern.
@@ -203,6 +245,19 @@ func IsBrowserNavigationRequest(r *http.Request) bool {
 	// Fallback for clients that do not send Sec-Fetch-* headers but still ask
 	// for an HTML document, which usually means "load a page".
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// IsGRPCRequest reports whether r looks like a standard gRPC request.
+//
+// It returns true for HTTP/2 POST requests whose Content-Type is application/grpc
+// or an application/grpc subtype such as application/grpc+proto. HandleGRPC uses
+// this guard because it is mounted on the broad "POST /" pattern, which would
+// otherwise catch unmatched REST POST requests.
+func IsGRPCRequest(r *http.Request) bool {
+	contentType := r.Header.Get("Content-Type")
+	return r.Method == http.MethodPost &&
+		r.ProtoMajor == 2 &&
+		(contentType == "application/grpc" || strings.HasPrefix(contentType, "application/grpc+"))
 }
 
 // RequiredEnv returns the value of a required environment variable.
