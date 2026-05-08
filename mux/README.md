@@ -9,6 +9,7 @@
 - **Error Handling**: Handlers return an `error` which is automatically logged and mapped to HTTP status codes.
 - **Authentication**: Built-in integration with `go.alis.build/iam/v3/authn` for easy protected routes (`mux.AuthenticatedGet`).
 - **System Routes**: Built-in support for securing system-to-system routes in Google Cloud using ID tokens (`mux.SystemGet`).
+- **Mixed Protocol Servers**: Mount standard `http.Handler` values, native gRPC handlers, and gRPC-Web handlers on the same listener.
 
 ## Usage
 
@@ -61,7 +62,7 @@ func main() {
  mux.AuthenticatedGet("/profile", func(w http.ResponseWriter, r *http.Request) error {
   // Retrieve the authenticated user's identity from the request context
   identity := iam.MustFromContext(r.Context())
-  
+
   w.Write([]byte("Hello, " + identity.Email))
   return nil
  })
@@ -90,6 +91,93 @@ func main() {
 
  mux.ListenAndServe(":8080")
 }
+```
+
+### Standard HTTP Handlers
+
+Use `mux.HandleHTTP` when a component already exposes a standard `http.Handler` instead of a `mux.Func`. This is useful for generated REST gateways, resumable operation handlers, nested `http.ServeMux` values, and other standard library compatible handlers.
+
+```go
+package main
+
+import (
+ "net/http"
+ "go.alis.build/mux"
+)
+
+func main() {
+ raw := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  w.Write([]byte("Handled by a standard http.Handler"))
+ })
+
+ mux.HandleHTTP("GET /raw", raw)
+ mux.ListenAndServe(":8080")
+}
+```
+
+### Native gRPC
+
+Use `mux.HandleGRPC` to serve native gRPC and REST endpoints on the same listener. `mux.ListenAndServe` serves through h2c, so cleartext HTTP/2 gRPC requests and ordinary HTTP/1.1 REST requests can share the same port.
+
+`HandleGRPC` mounts the gRPC handler at the broad `POST /` pattern. More specific REST routes take precedence. Requests that reach the fallback are served by the gRPC handler only when they look like standard gRPC requests (`POST`, HTTP/2, and `Content-Type: application/grpc` or `application/grpc+...`). Other unmatched POST requests receive a 404 response.
+
+```go
+package main
+
+import (
+ "net/http"
+ "go.alis.build/mux"
+ "google.golang.org/grpc"
+)
+
+func main() {
+ grpcServer := grpc.NewServer()
+ // Register your generated gRPC services here.
+
+ mux.Post("/resume-operation/", func(w http.ResponseWriter, r *http.Request) error {
+  w.Write([]byte("REST handler"))
+  return nil
+ })
+ mux.HandleGRPC(grpcServer)
+
+ mux.ListenAndServe(":8080")
+}
+```
+
+### gRPC-Web
+
+Browser clients cannot call native gRPC services directly. They need a gRPC-Web adapter that exposes the gRPC server as an `http.Handler`.
+
+Use `mux.HandleGRPCWeb` when the listener should only accept gRPC-Web traffic. Use `mux.HandleGRPCAndWeb` when the same listener should accept both native gRPC and gRPC-Web traffic. The combined helper registers the broad `POST /` fallback once, dispatches native gRPC requests to the gRPC handler, dispatches gRPC-Web requests to the gRPC-Web handler, and registers `OPTIONS /` for gRPC-Web CORS preflight requests.
+
+The mux package does not depend on a specific gRPC-Web implementation. Pass any adapter that implements `http.Handler`.
+
+```go
+package main
+
+import (
+ "go.alis.build/mux"
+ "github.com/improbable-eng/grpc-web/go/grpcweb"
+ "google.golang.org/grpc"
+)
+
+func main() {
+ grpcServer := grpc.NewServer()
+ // Register your generated gRPC services here.
+
+ grpcWebServer := grpcweb.WrapServer(grpcServer)
+
+ // Choose this when the listener serves browser gRPC-Web clients only:
+ mux.HandleGRPCWeb(grpcWebServer)
+
+ mux.ListenAndServe(":8080")
+}
+```
+
+If the same listener should serve both native gRPC clients and browser gRPC-Web clients, use the combined helper instead of `mux.HandleGRPCWeb`:
+
+```go
+mux.HandleGRPCAndWeb(grpcServer, grpcWebServer)
 ```
 
 ### Middleware

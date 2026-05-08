@@ -95,6 +95,65 @@ func HandleGRPC(grpcHandler http.Handler, middlewares ...Middleware) {
 	}, middlewares...)
 }
 
+// HandleGRPCWeb registers a gRPC-Web-compatible http.Handler on the package-level ServeMux.
+//
+// The handler is mounted on "POST /" for gRPC-Web calls and "OPTIONS /" for
+// gRPC-Web CORS preflight requests. It is intended for handlers produced by a
+// gRPC-Web adapter such as an improbable grpcweb.WrappedGrpcServer, while keeping
+// this package independent from any specific gRPC-Web implementation.
+//
+// More specific REST routes registered on the same mux take precedence over
+// these broad fallback patterns. Requests that reach the fallback patterns but
+// do not look like gRPC-Web requests receive a 404 response.
+func HandleGRPCWeb(grpcWebHandler http.Handler, middlewares ...Middleware) {
+	Handle("POST /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCWebRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC-Web request")
+		}
+		grpcWebHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+	Handle("OPTIONS /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCWebRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC-Web preflight request")
+		}
+		grpcWebHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
+// HandleGRPCAndWeb registers native gRPC and gRPC-Web handlers on one fallback route.
+//
+// Both native gRPC and gRPC-Web use broad POST request paths such as
+// /package.Service/Method. Registering them separately would register "POST /"
+// twice, which http.ServeMux rejects. This helper registers the broad POST
+// fallback once, dispatches native gRPC requests to grpcHandler, dispatches
+// gRPC-Web requests to grpcWebHandler, and registers "OPTIONS /" for gRPC-Web
+// preflight requests.
+//
+// More specific REST routes registered on the same mux take precedence over the
+// broad fallback patterns.
+func HandleGRPCAndWeb(grpcHandler http.Handler, grpcWebHandler http.Handler, middlewares ...Middleware) {
+	Handle("POST /", func(w http.ResponseWriter, r *http.Request) error {
+		switch {
+		case IsGRPCRequest(r):
+			grpcHandler.ServeHTTP(w, r)
+		case IsGRPCWebRequest(r):
+			grpcWebHandler.ServeHTTP(w, r)
+		default:
+			return NotFoundErr("request did not match a REST route, gRPC request, or gRPC-Web request")
+		}
+		return nil
+	}, middlewares...)
+	Handle("OPTIONS /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCWebRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC-Web preflight request")
+		}
+		grpcWebHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
 // Options registers an OPTIONS route for pattern.
 //
 // It is equivalent to calling Handle with "OPTIONS " prefixed to pattern.
@@ -254,10 +313,37 @@ func IsBrowserNavigationRequest(r *http.Request) bool {
 // this guard because it is mounted on the broad "POST /" pattern, which would
 // otherwise catch unmatched REST POST requests.
 func IsGRPCRequest(r *http.Request) bool {
-	contentType := r.Header.Get("Content-Type")
+	contentType := requestContentType(r)
 	return r.Method == http.MethodPost &&
 		r.ProtoMajor == 2 &&
 		(contentType == "application/grpc" || strings.HasPrefix(contentType, "application/grpc+"))
+}
+
+// IsGRPCWebRequest reports whether r looks like a standard gRPC-Web request.
+//
+// It returns true for POST requests whose Content-Type is application/grpc-web
+// or an application/grpc-web subtype such as application/grpc-web+proto. It also
+// returns true for CORS preflight requests that ask to POST with gRPC-Web
+// headers, allowing HandleGRPCWeb and HandleGRPCAndWeb to route browser
+// preflights to the gRPC-Web adapter.
+func IsGRPCWebRequest(r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		contentType := requestContentType(r)
+		return contentType == "application/grpc-web" || strings.HasPrefix(contentType, "application/grpc-web+")
+	}
+	if r.Method != http.MethodOptions || r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
+		return false
+	}
+	requestHeaders := strings.ToLower(r.Header.Get("Access-Control-Request-Headers"))
+	return strings.Contains(requestHeaders, "x-grpc-web")
+}
+
+func requestContentType(r *http.Request) string {
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if i := strings.Index(contentType, ";"); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.TrimSpace(contentType)
 }
 
 // RequiredEnv returns the value of a required environment variable.

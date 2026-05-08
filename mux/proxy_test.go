@@ -95,3 +95,80 @@ func TestHandleGRPC(t *testing.T) {
 		t.Fatalf("unexpected unmatched rest body: %q", unmatchedRESTRec.Body.String())
 	}
 }
+
+func TestHandleGRPCWeb(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+
+	HandleGRPCWeb(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	grpcWebReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+	grpcWebReq.Header.Set("Content-Type", "application/grpc-web+proto")
+	grpcWebRec := httptest.NewRecorder()
+	mux.ServeHTTP(grpcWebRec, grpcWebReq)
+	if grpcWebRec.Code != http.StatusAccepted {
+		t.Fatalf("unexpected grpc-web status code: %d", grpcWebRec.Code)
+	}
+
+	preflightReq := httptest.NewRequest(http.MethodOptions, "/package.Service/Method", nil)
+	preflightReq.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	preflightReq.Header.Set("Access-Control-Request-Headers", "content-type,x-grpc-web")
+	preflightRec := httptest.NewRecorder()
+	mux.ServeHTTP(preflightRec, preflightReq)
+	if preflightRec.Code != http.StatusAccepted {
+		t.Fatalf("unexpected grpc-web preflight status code: %d", preflightRec.Code)
+	}
+
+	unmatchedReq := httptest.NewRequest(http.MethodPost, "/unmatched-rest", nil)
+	unmatchedReq.Header.Set("Content-Type", "application/json")
+	unmatchedRec := httptest.NewRecorder()
+	mux.ServeHTTP(unmatchedRec, unmatchedReq)
+	if unmatchedRec.Code != http.StatusNotFound {
+		t.Fatalf("unexpected unmatched status code: %d", unmatchedRec.Code)
+	}
+}
+
+func TestHandleGRPCAndWeb(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+
+	Post("/rest", func(w http.ResponseWriter, r *http.Request) error {
+		w.WriteHeader(http.StatusOK)
+		return nil
+	})
+	HandleGRPCAndWeb(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}),
+	)
+
+	grpcReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+	grpcReq.ProtoMajor = 2
+	grpcReq.ProtoMinor = 0
+	grpcReq.Header.Set("Content-Type", "application/grpc")
+	grpcRec := httptest.NewRecorder()
+	mux.ServeHTTP(grpcRec, grpcReq)
+	if grpcRec.Code != http.StatusAccepted {
+		t.Fatalf("unexpected grpc status code: %d", grpcRec.Code)
+	}
+
+	grpcWebReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+	grpcWebReq.Header.Set("Content-Type", "application/grpc-web+json")
+	grpcWebRec := httptest.NewRecorder()
+	mux.ServeHTTP(grpcWebRec, grpcWebReq)
+	if grpcWebRec.Code != http.StatusCreated {
+		t.Fatalf("unexpected grpc-web status code: %d", grpcWebRec.Code)
+	}
+
+	restReq := httptest.NewRequest(http.MethodPost, "/rest", nil)
+	restRec := httptest.NewRecorder()
+	mux.ServeHTTP(restRec, restReq)
+	if restRec.Code != http.StatusOK {
+		t.Fatalf("unexpected rest status code: %d", restRec.Code)
+	}
+}
