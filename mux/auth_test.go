@@ -11,7 +11,61 @@ import (
 	"time"
 
 	"go.alis.build/iam/v3"
+	"go.alis.build/iam/v3/authn"
 )
+
+func TestAuthenticatedHandleHTTP(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+	oldAuthClient := AuthClient
+	AuthClient = &authn.Client{TokenURL: ":"}
+	defer func() {
+		AuthClient = oldAuthClient
+	}()
+
+	AuthenticatedHandleHTTP("GET /raw-handler", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run for unauthenticated request")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/raw-handler", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+}
+
+func TestAuthenticatedHandleGRPCWeb(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+	oldAuthClient := AuthClient
+	AuthClient = &authn.Client{TokenURL: ":"}
+	defer func() {
+		AuthClient = oldAuthClient
+	}()
+
+	AuthenticatedHandleGRPCWeb(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	postReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+	postReq.Header.Set("Content-Type", "application/grpc-web+proto")
+	postRec := httptest.NewRecorder()
+	mux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected grpc-web post status code: %d", postRec.Code)
+	}
+
+	preflightReq := httptest.NewRequest(http.MethodOptions, "/package.Service/Method", nil)
+	preflightReq.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	preflightReq.Header.Set("Access-Control-Request-Headers", "content-type,x-grpc-web")
+	preflightRec := httptest.NewRecorder()
+	mux.ServeHTTP(preflightRec, preflightReq)
+	if preflightRec.Code != http.StatusAccepted {
+		t.Fatalf("unexpected grpc-web preflight status code: %d", preflightRec.Code)
+	}
+}
 
 func TestAuthFlow(t *testing.T) {
 	done := atomic.Bool{}

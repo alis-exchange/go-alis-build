@@ -76,7 +76,9 @@
 //
 // Browser clients need gRPC-Web rather than native gRPC. Use HandleGRPCAndWeb
 // when the same service should accept native gRPC and gRPC-Web traffic on the
-// same broad fallback route:
+// same broad fallback route. Use AuthenticatedHandleGRPCWeb when browser
+// gRPC-Web calls should use the same cookie/session authentication as
+// authenticated HTTP routes:
 //
 //	grpcServer := grpc.NewServer()
 //	grpcWebServer := grpcweb.WrapServer(grpcServer)

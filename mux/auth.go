@@ -181,6 +181,44 @@ func AuthenticatedHandle(pattern string, handleFunc Func, middlewares ...Middlew
 	)...)
 }
 
+// AuthenticatedHandleHTTP registers an authenticated http.Handler on the package-level mux.
+//
+// It adapts httpHandler into a Func and applies the same auth middleware used by
+// AuthenticatedHandle before running any caller-supplied middlewares. Use this
+// for generated REST gateways, nested ServeMux values, or other standard
+// http.Handler implementations that should use the browser/session
+// authentication flow.
+func AuthenticatedHandleHTTP(pattern string, httpHandler http.Handler, middlewares ...Middleware) {
+	AuthenticatedHandle(pattern, func(w http.ResponseWriter, r *http.Request) error {
+		httpHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
+// AuthenticatedHandleGRPCWeb registers an authenticated gRPC-Web handler.
+//
+// POST requests are authenticated with the same browser/session auth middleware
+// used by AuthenticatedHandle and are served only when they look like gRPC-Web
+// requests. OPTIONS preflight requests are not authenticated, because browsers
+// must receive the gRPC-Web adapter's CORS preflight response before sending the
+// authenticated POST request.
+func AuthenticatedHandleGRPCWeb(grpcWebHandler http.Handler, middlewares ...Middleware) {
+	AuthenticatedHandle("POST /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCWebRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC-Web request")
+		}
+		grpcWebHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+	Handle("OPTIONS /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCWebRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC-Web preflight request")
+		}
+		grpcWebHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
 // AuthenticatedOptions registers an authenticated OPTIONS route for pattern.
 //
 // It is equivalent to calling AuthenticatedHandle with "OPTIONS " prefixed to

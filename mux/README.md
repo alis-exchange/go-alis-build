@@ -97,6 +97,8 @@ func main() {
 
 Use `mux.HandleHTTP` when a component already exposes a standard `http.Handler` instead of a `mux.Func`. This is useful for generated REST gateways, resumable operation handlers, nested `http.ServeMux` values, and other standard library compatible handlers.
 
+Use `mux.AuthenticatedHandleHTTP` for standard `http.Handler` values that should use the same browser/session authentication flow as `mux.AuthenticatedGet` and the other authenticated route helpers.
+
 ```go
 package main
 
@@ -150,6 +152,8 @@ Browser clients cannot call native gRPC services directly. They need a gRPC-Web 
 
 Use `mux.HandleGRPCWeb` when the listener should only accept gRPC-Web traffic. Use `mux.HandleGRPCAndWeb` when the same listener should accept both native gRPC and gRPC-Web traffic. The combined helper registers the broad `POST /` fallback once, dispatches native gRPC requests to the gRPC handler, dispatches gRPC-Web requests to the gRPC-Web handler, and registers `OPTIONS /` for gRPC-Web CORS preflight requests.
 
+Use `mux.AuthenticatedHandleGRPCWeb` when browser gRPC-Web calls should use the same cookie/session authentication flow as authenticated HTTP routes. The actual gRPC-Web `POST` requests are authenticated; CORS `OPTIONS` preflight requests are allowed through to the gRPC-Web adapter so it can return the required preflight headers.
+
 The mux package does not depend on a specific gRPC-Web implementation. Pass any adapter that implements `http.Handler`.
 
 ```go
@@ -172,6 +176,12 @@ func main() {
 
  mux.ListenAndServe(":8080")
 }
+```
+
+If browser gRPC-Web calls should require session auth, use the authenticated helper instead of `mux.HandleGRPCWeb`:
+
+```go
+mux.AuthenticatedHandleGRPCWeb(grpcWebServer)
 ```
 
 If the same listener should serve both native gRPC clients and browser gRPC-Web clients, use the combined helper instead of `mux.HandleGRPCWeb`:
