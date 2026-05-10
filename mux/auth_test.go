@@ -37,25 +37,39 @@ func TestAuthenticatedHandleHTTP(t *testing.T) {
 }
 
 func TestAuthenticatedHandleGRPCWeb(t *testing.T) {
+	for _, contentType := range []string{
+		"application/grpc-web+proto",
+		"application/grpc-web-text",
+		"application/grpc-web-text+proto",
+	} {
+		t.Run(contentType, func(t *testing.T) {
+			mux = http.NewServeMux()
+			gateway = nil
+			oldAuthClient := AuthClient
+			AuthClient = &authn.Client{TokenURL: ":"}
+			defer func() {
+				AuthClient = oldAuthClient
+			}()
+
+			AuthenticatedHandleGRPCWeb(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusAccepted)
+			}))
+
+			postReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+			postReq.Header.Set("Content-Type", contentType)
+			postRec := httptest.NewRecorder()
+			mux.ServeHTTP(postRec, postReq)
+			if postRec.Code != http.StatusUnauthorized {
+				t.Fatalf("unexpected grpc-web post status code: %d", postRec.Code)
+			}
+		})
+	}
+
 	mux = http.NewServeMux()
 	gateway = nil
-	oldAuthClient := AuthClient
-	AuthClient = &authn.Client{TokenURL: ":"}
-	defer func() {
-		AuthClient = oldAuthClient
-	}()
-
 	AuthenticatedHandleGRPCWeb(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
-
-	postReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
-	postReq.Header.Set("Content-Type", "application/grpc-web+proto")
-	postRec := httptest.NewRecorder()
-	mux.ServeHTTP(postRec, postReq)
-	if postRec.Code != http.StatusUnauthorized {
-		t.Fatalf("unexpected grpc-web post status code: %d", postRec.Code)
-	}
 
 	preflightReq := httptest.NewRequest(http.MethodOptions, "/package.Service/Method", nil)
 	preflightReq.Header.Set("Access-Control-Request-Method", http.MethodPost)

@@ -322,14 +322,17 @@ func IsGRPCRequest(r *http.Request) bool {
 // IsGRPCWebRequest reports whether r looks like a standard gRPC-Web request.
 //
 // It returns true for POST requests whose Content-Type is application/grpc-web
-// or an application/grpc-web subtype such as application/grpc-web+proto. It also
-// returns true for CORS preflight requests that ask to POST with gRPC-Web
-// headers, allowing HandleGRPCWeb and HandleGRPCAndWeb to route browser
-// preflights to the gRPC-Web adapter.
+// or application/grpc-web-text, including subtypes such as application/grpc-web+proto
+// and application/grpc-web-text+proto. It also returns true for CORS preflight
+// requests that ask to POST with gRPC-Web headers, allowing HandleGRPCWeb and
+// HandleGRPCAndWeb to route browser preflights to the gRPC-Web adapter.
 func IsGRPCWebRequest(r *http.Request) bool {
 	if r.Method == http.MethodPost {
 		contentType := requestContentType(r)
-		return contentType == "application/grpc-web" || strings.HasPrefix(contentType, "application/grpc-web+")
+		return contentType == "application/grpc-web" ||
+			strings.HasPrefix(contentType, "application/grpc-web+") ||
+			contentType == "application/grpc-web-text" ||
+			strings.HasPrefix(contentType, "application/grpc-web-text+")
 	}
 	if r.Method != http.MethodOptions || r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
 		return false
