@@ -1,6 +1,8 @@
 package authn
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +41,119 @@ func TestAuthorizeURL(t *testing.T) {
 	expect(t, parsed.Query().Get("state"), "/dashboard")
 	expect(t, parsed.Query().Get("client_id"), "client-id")
 	expect(t, parsed.Query().Get("nonce"), "nonce-value")
+}
+
+func TestLoginTransaction(t *testing.T) {
+	var tokenRequest struct {
+		GrantType   string `json:"grant_type"`
+		Code        string `json:"code"`
+		RedirectURI string `json:"redirect_uri"`
+	}
+	var transaction *LoginTransaction
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&tokenRequest); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(&Tokens{
+			AccessToken:  testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix()}),
+			RefreshToken: "refresh-token",
+			IDToken:      testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix(), "nonce": transaction.Nonce}),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer tokenServer.Close()
+
+	client := NewClient("https://identity.alisx.com")
+	client.TokenURL = tokenServer.URL
+	client.SkipSignatureValidation = true
+
+	startReq := httptest.NewRequest(http.MethodGet, "https://app.example.com/login", nil)
+	startResp := httptest.NewRecorder()
+	var err error
+	transaction, err = client.StartLogin(startResp, startReq, "https://app.example.com/auth/callback", "/dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transaction.State == "" {
+		t.Fatal("missing state")
+	}
+	if transaction.Nonce == "" {
+		t.Fatal("missing nonce")
+	}
+
+	authURL, err := url.Parse(transaction.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, authURL.Query().Get("state"), transaction.State)
+	expect(t, authURL.Query().Get("nonce"), transaction.Nonce)
+	expect(t, authURL.Query().Get("redirect_uri"), "https://app.example.com/auth/callback")
+
+	cookies := startResp.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("got %d cookies, expected 1", len(cookies))
+	}
+	expect(t, cookies[0].Name, loginTransactionCookieName)
+	if !cookies[0].HttpOnly {
+		t.Fatal("expected HttpOnly cookie")
+	}
+	if !cookies[0].Secure {
+		t.Fatal("expected Secure cookie")
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "https://app.example.com/auth/callback?code=auth-code&state="+url.QueryEscape(transaction.State), nil)
+	callbackReq.AddCookie(cookies[0])
+	callbackResp := httptest.NewRecorder()
+	tokens, returnTo, err := client.CompleteLogin(callbackResp, callbackReq, "https://app.example.com/auth/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, tokens.RefreshToken, "refresh-token")
+	expect(t, returnTo, "/dashboard")
+	expect(t, tokenRequest.GrantType, "authorization_code")
+	expect(t, tokenRequest.Code, "auth-code")
+	expect(t, tokenRequest.RedirectURI, "https://app.example.com/auth/callback")
+
+	clearCookies := callbackResp.Result().Cookies()
+	if len(clearCookies) != 1 {
+		t.Fatalf("got %d clear cookies, expected 1", len(clearCookies))
+	}
+	expect(t, clearCookies[0].Name, loginTransactionCookieName)
+	expect(t, clearCookies[0].MaxAge, -1)
+}
+
+func TestCompleteLoginRejectsNonceMismatch(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(&Tokens{
+			AccessToken:  testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix()}),
+			RefreshToken: "refresh-token",
+			IDToken:      testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix(), "nonce": "wrong-nonce"}),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer tokenServer.Close()
+
+	client := NewClient("https://identity.alisx.com")
+	client.TokenURL = tokenServer.URL
+	client.SkipSignatureValidation = true
+
+	startReq := httptest.NewRequest(http.MethodGet, "https://app.example.com/login", nil)
+	startResp := httptest.NewRecorder()
+	transaction, err := client.StartLogin(startResp, startReq, "https://app.example.com/auth/callback", "/dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "https://app.example.com/auth/callback?code=auth-code&state="+url.QueryEscape(transaction.State), nil)
+	callbackReq.AddCookie(startResp.Result().Cookies()[0])
+	_, _, err = client.CompleteLogin(httptest.NewRecorder(), callbackReq, "https://app.example.com/auth/callback")
+	if err == nil {
+		t.Fatal("expected nonce mismatch")
+	}
 }
 
 func TestAuthFlow(t *testing.T) {
@@ -134,4 +249,17 @@ func openBrowser(url string) error {
 	}
 
 	return exec.Command(cmd, args...).Start()
+}
+
+func testJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]any{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }

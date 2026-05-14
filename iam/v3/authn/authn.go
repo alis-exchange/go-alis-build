@@ -6,6 +6,7 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -82,6 +83,7 @@ const (
 type Tokens struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token,omitempty"`
 }
 
 func (c *Client) postToken(grantType grantType, grant, redirectURI string) (*Tokens, error) {
@@ -168,7 +170,7 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 	}
 
 	// decode payload
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payload, err := decodeJWTPayload(token)
 	if err != nil {
 		return fmt.Errorf("failed to decode payload: %w", err)
 	}
@@ -188,6 +190,46 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 	}
 
 	return nil
+}
+
+// ValidateIDTokenNonce validates the ID token and checks that it contains the expected nonce.
+func (c *Client) ValidateIDTokenNonce(idToken, nonce string, now time.Time) error {
+	if idToken == "" {
+		return errors.New("missing id_token")
+	}
+	if nonce == "" {
+		return errors.New("missing nonce")
+	}
+	if err := c.ValidateToken(idToken, now); err != nil {
+		return err
+	}
+
+	payload, err := decodeJWTPayload(idToken)
+	if err != nil {
+		return fmt.Errorf("failed to decode payload: %w", err)
+	}
+	type idTokenClaims struct {
+		Nonce string `json:"nonce"`
+	}
+	var claims idTokenClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+	if claims.Nonce == "" {
+		return errors.New("missing nonce claim")
+	}
+	if subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(nonce)) != 1 {
+		return errors.New("nonce mismatch")
+	}
+	return nil
+}
+
+func decodeJWTPayload(token string) ([]byte, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("invalid token format, expect {hdr}.{body}.{sig}")
+	}
+	return base64.RawURLEncoding.DecodeString(parts[1])
 }
 
 func (c *Client) validateSignature(hdr, body, sig string, now time.Time) error {
