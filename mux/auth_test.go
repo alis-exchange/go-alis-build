@@ -1,9 +1,12 @@
 package mux
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"sync/atomic"
@@ -13,6 +16,135 @@ import (
 	"go.alis.build/iam/v3"
 	"go.alis.build/iam/v3/authn"
 )
+
+func expect[T comparable](t *testing.T, got, expected T) {
+	if got != expected {
+		t.Fatalf("got %v, expected %v", got, expected)
+	}
+}
+
+func TestAuthMiddlewareStartsLoginTransaction(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+	oldAuthClient := AuthClient
+	AuthClient = authn.NewClient("https://identity.example.com")
+	AuthClient.TokenURL = ":"
+	defer func() {
+		AuthClient = oldAuthClient
+	}()
+
+	AuthenticatedGet("/secure", func(w http.ResponseWriter, r *http.Request) error {
+		t.Fatal("handler should not run for unauthenticated request")
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/secure?tab=one", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("unexpected status code: %d", rec.Code)
+	}
+	location := rec.Header().Get("Location")
+	authURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, authURL.Scheme, "https")
+	expect(t, authURL.Host, "identity.example.com")
+	expect(t, authURL.Path, "/authorize")
+	expect(t, authURL.Query().Get("redirect_uri"), "http://app.example.com/auth/callback")
+	if authURL.Query().Get("state") == "" {
+		t.Fatal("missing state")
+	}
+	if authURL.Query().Get("state") == "/secure?tab=one" {
+		t.Fatal("state should be opaque")
+	}
+	if authURL.Query().Get("nonce") == "" {
+		t.Fatal("missing nonce")
+	}
+
+	var foundTransactionCookie bool
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "alis_authn_login" {
+			foundTransactionCookie = true
+			if !cookie.HttpOnly {
+				t.Fatal("expected HttpOnly login transaction cookie")
+			}
+		}
+	}
+	if !foundTransactionCookie {
+		t.Fatal("missing login transaction cookie")
+	}
+}
+
+func TestCallbackHandleCompletesLoginTransaction(t *testing.T) {
+	oldAuthClient := AuthClient
+	var tokenRequest struct {
+		GrantType   string `json:"grant_type"`
+		Code        string `json:"code"`
+		RedirectURI string `json:"redirect_uri"`
+	}
+	var login *authn.LoginTransaction
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&tokenRequest); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(&authn.Tokens{
+			AccessToken:  testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix(), "type": string(iam.User), "email": "jan@example.com"}),
+			RefreshToken: "refresh-token",
+			IDToken:      testJWT(t, map[string]any{"exp": time.Now().Add(time.Minute).Unix(), "nonce": login.Nonce}),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer tokenServer.Close()
+
+	AuthClient = authn.NewClient("https://identity.example.com")
+	AuthClient.TokenURL = tokenServer.URL
+	AuthClient.SkipSignatureValidation = true
+	defer func() {
+		AuthClient = oldAuthClient
+	}()
+
+	startReq := httptest.NewRequest(http.MethodGet, "http://app.example.com/secure", nil)
+	startResp := httptest.NewRecorder()
+	var err error
+	login, err = AuthClient.StartLogin(startResp, startReq, "http://app.example.com/auth/callback", "/secure")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "http://app.example.com/auth/callback?code=auth-code&state="+url.QueryEscape(login.State), nil)
+	callbackReq.AddCookie(startResp.Result().Cookies()[0])
+	callbackResp := httptest.NewRecorder()
+	if err := callbackHandle(callbackResp, callbackReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if callbackResp.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("unexpected status code: %d", callbackResp.Code)
+	}
+	expect(t, callbackResp.Header().Get("Location"), "/secure")
+	expect(t, tokenRequest.GrantType, "authorization_code")
+	expect(t, tokenRequest.Code, "auth-code")
+	expect(t, tokenRequest.RedirectURI, "http://app.example.com/auth/callback")
+
+	cookies := callbackResp.Result().Cookies()
+	if CookieByName(cookies, AccessTokenCookie) == nil {
+		t.Fatal("missing access token cookie")
+	}
+	if CookieByName(cookies, RefreshTokenCookie) == nil {
+		t.Fatal("missing refresh token cookie")
+	}
+	loginCookie := CookieByName(cookies, "alis_authn_login")
+	if loginCookie == nil {
+		t.Fatal("missing cleared login transaction cookie")
+	}
+	expect(t, loginCookie.MaxAge, -1)
+}
 
 func TestAuthenticatedHandleHTTP(t *testing.T) {
 	mux = http.NewServeMux()
@@ -133,4 +265,26 @@ func openBrowser(url string) error {
 	}
 
 	return exec.Command(cmd, args...).Start()
+}
+
+func CookieByName(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}
+
+func testJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]any{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }

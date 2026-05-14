@@ -90,8 +90,11 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 			fullPath += "?" + r.URL.RawQuery
 		}
 		callbackURI := RequestHost(r) + AuthCallbackPath
-		redirectURI := AuthClient.AuthorizeURL(callbackURI, fullPath)
-		http.Redirect(w, r, redirectURI, http.StatusTemporaryRedirect)
+		login, err := AuthClient.StartLogin(w, r, callbackURI, fullPath)
+		if err != nil {
+			return InternalServerErr("Failed to start login: %s", err.Error())
+		}
+		http.Redirect(w, r, login.URL, http.StatusTemporaryRedirect)
 		return nil
 	}
 
@@ -108,27 +111,16 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 }
 
 func callbackHandle(w http.ResponseWriter, r *http.Request) error {
-	// get query params
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		return BadRequestErr("Missing code")
-	}
-	state := r.URL.Query().Get("state")
-	if state == "" {
-		return BadRequestErr("Missing state")
-	}
-
-	// exchange code for tokens and set cookies
-	callbackURI := RequestHost(r) + "/auth/callback"
-	tokens, err := AuthClient.ExchangeCode(callbackURI, code)
+	callbackURI := RequestHost(r) + AuthCallbackPath
+	tokens, returnTo, err := AuthClient.CompleteLogin(w, r, callbackURI)
 	if err != nil {
-		return InternalServerErr("Failed to exchange code: %s", err.Error())
+		return BadRequestErr("Failed to complete login: %s", err.Error())
 	}
 	setAuthCookie(w, AccessTokenCookie, tokens.AccessToken, 400*24*3600)
 	setAuthCookie(w, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
 
 	// redirect to post auth redirect uri
-	http.Redirect(w, r, state, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, returnTo, http.StatusTemporaryRedirect)
 	return nil
 }
 
