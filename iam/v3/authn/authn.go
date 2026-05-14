@@ -14,6 +14,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -43,12 +44,17 @@ func NewClient(authorizationServerBaseURL string) *Client {
 	}
 }
 
-func (c *Client) AuthorizeURL(redirectURI, state string) string {
-	url := fmt.Sprintf("%s?redirect_uri=%s&state=%s", c.AuthURL, redirectURI, state)
+func (c *Client) AuthorizeURL(redirectURI, state string, nonce ...string) string {
+	values := url.Values{}
+	values.Set("redirect_uri", redirectURI)
+	values.Set("state", state)
 	if c.ID != "" {
-		url += "&client_id=" + c.ID
+		values.Set("client_id", c.ID)
 	}
-	return url
+	if len(nonce) > 0 && nonce[0] != "" {
+		values.Set("nonce", nonce[0])
+	}
+	return c.AuthURL + "?" + values.Encode()
 }
 
 // ExchangeCode exchanges an authorization code for access and refresh tokens

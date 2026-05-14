@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"sync/atomic"
@@ -19,6 +20,25 @@ func expect[T comparable](t *testing.T, got, expected T) {
 	if got != expected {
 		t.Fatalf("got %v, expected %v", got, expected)
 	}
+}
+
+func TestAuthorizeURL(t *testing.T) {
+	client := NewClient("https://identity.alisx.com")
+	client.ID = "client-id"
+
+	authURL := client.AuthorizeURL("https://app.example.com/auth/callback", "/dashboard", "nonce-value")
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect(t, parsed.Scheme, "https")
+	expect(t, parsed.Host, "identity.alisx.com")
+	expect(t, parsed.Path, "/authorize")
+	expect(t, parsed.Query().Get("redirect_uri"), "https://app.example.com/auth/callback")
+	expect(t, parsed.Query().Get("state"), "/dashboard")
+	expect(t, parsed.Query().Get("client_id"), "client-id")
+	expect(t, parsed.Query().Get("nonce"), "nonce-value")
 }
 
 func TestAuthFlow(t *testing.T) {
