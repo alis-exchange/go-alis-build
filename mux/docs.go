@@ -74,6 +74,9 @@
 //	grpcServer := grpc.NewServer()
 //	mux.HandleGRPC(grpcServer)
 //
+// Use SystemHandleGRPC when native gRPC calls should be protected with the same
+// Google ID token validation as other system routes.
+//
 // Browser clients need gRPC-Web rather than native gRPC. Use HandleGRPCAndWeb
 // when the same service should accept native gRPC and gRPC-Web traffic on the
 // same broad fallback route. Use AuthenticatedHandleGRPCWeb when browser
@@ -84,8 +87,8 @@
 //	grpcWebServer := grpcweb.WrapServer(grpcServer)
 //	mux.HandleGRPCAndWeb(grpcServer, grpcWebServer)
 //
-// Call ListenAndServe to start serving the package-level mux. The server uses
-// h2c so it can accept cleartext HTTP/2 as well as HTTP/1.1.
+// Call ListenAndServe to start serving the package-level mux. The server accepts
+// unencrypted HTTP/2 so it can serve cleartext HTTP/2 as well as HTTP/1.1.
 //
 //	mux.ListenAndServe(":8080")
 //

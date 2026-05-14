@@ -50,6 +50,20 @@ func SystemHandle(pattern string, handleFunc Func, middlewares ...Middleware) {
 	)...)
 }
 
+// SystemHandleGRPC registers a system-authenticated gRPC-compatible handler.
+//
+// It is equivalent to HandleGRPC, but validates the system bearer token before
+// checking whether the request should be served by grpcHandler.
+func SystemHandleGRPC(grpcHandler http.Handler, middlewares ...Middleware) {
+	SystemHandle("POST /", func(w http.ResponseWriter, r *http.Request) error {
+		if !IsGRPCRequest(r) {
+			return NotFoundErr("request did not match a REST route or gRPC request")
+		}
+		grpcHandler.ServeHTTP(w, r)
+		return nil
+	}, middlewares...)
+}
+
 // SystemOptions registers a system-authenticated OPTIONS route for pattern.
 //
 // It is equivalent to calling SystemHandle with "OPTIONS " prefixed to pattern.

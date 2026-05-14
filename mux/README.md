@@ -119,9 +119,11 @@ func main() {
 
 ### Native gRPC
 
-Use `mux.HandleGRPC` to serve native gRPC and REST endpoints on the same listener. `mux.ListenAndServe` serves through h2c, so cleartext HTTP/2 gRPC requests and ordinary HTTP/1.1 REST requests can share the same port.
+Use `mux.HandleGRPC` to serve native gRPC and REST endpoints on the same listener. `mux.ListenAndServe` accepts unencrypted HTTP/2, so cleartext HTTP/2 gRPC requests and ordinary HTTP/1.1 REST requests can share the same port.
 
 `HandleGRPC` mounts the gRPC handler at the broad `POST /` pattern. More specific REST routes take precedence. Requests that reach the fallback are served by the gRPC handler only when they look like standard gRPC requests (`POST`, HTTP/2, and `Content-Type: application/grpc` or `application/grpc+...`). Other unmatched POST requests receive a 404 response.
+
+Use `mux.SystemHandleGRPC` when native gRPC calls should be protected with the same Google ID token validation as `mux.SystemGet` and the other system route helpers.
 
 ```go
 package main

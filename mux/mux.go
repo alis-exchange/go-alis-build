@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"go.alis.build/alog"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 var (
@@ -63,9 +61,8 @@ func Handle(pattern string, handleFunc Func, middlewares ...Middleware) {
 //
 // For mixed REST and gRPC servers, register REST routes on their specific
 // patterns and mount the gRPC server on a broad HTTP/2 pattern such as "POST /".
-// ListenAndServe already serves the package mux through h2c, which allows
-// cleartext HTTP/2 gRPC requests and ordinary HTTP/1.1 REST requests to share
-// the same listener.
+// ListenAndServe accepts unencrypted HTTP/2, which allows cleartext HTTP/2 gRPC
+// requests and ordinary HTTP/1.1 REST requests to share the same listener.
 func HandleHTTP(pattern string, httpHandler http.Handler, middlewares ...Middleware) {
 	Handle(pattern, func(w http.ResponseWriter, r *http.Request) error {
 		httpHandler.ServeHTTP(w, r)
@@ -82,9 +79,9 @@ func HandleHTTP(pattern string, httpHandler http.Handler, middlewares ...Middlew
 // mux take precedence over this broad fallback pattern.
 //
 // The registered handler still runs through route-specific middleware and any
-// package-wide gateway installed with AddGateway. ListenAndServe serves the mux
-// through h2c, allowing cleartext HTTP/2 gRPC calls and HTTP/1.1 REST calls to
-// share the same listener.
+// package-wide gateway installed with AddGateway. ListenAndServe accepts
+// unencrypted HTTP/2, allowing cleartext HTTP/2 gRPC calls and HTTP/1.1 REST
+// calls to share the same listener.
 func HandleGRPC(grpcHandler http.Handler, middlewares ...Middleware) {
 	Handle("POST /", func(w http.ResponseWriter, r *http.Request) error {
 		if !IsGRPCRequest(r) {
@@ -233,13 +230,18 @@ func handler(handler Func, middlewares ...Middleware) func(w http.ResponseWriter
 
 // ListenAndServe starts an HTTP server on addr using the package-level mux.
 //
-// The server accepts cleartext HTTP/2 through h2c in addition to HTTP/1.1, which
-// allows the same listener to serve ordinary HTTP handlers and local gRPC-style
+// The server accepts unencrypted HTTP/2 in addition to HTTP/1.1, which allows
+// the same listener to serve ordinary HTTP handlers and local gRPC-style
 // traffic. The returned error is the result of http.Server.ListenAndServe.
 func ListenAndServe(addr string) error {
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
 	server := &http.Server{
-		Addr:    addr,
-		Handler: h2c.NewHandler(mux, &http2.Server{}),
+		Addr:      addr,
+		Handler:   mux,
+		Protocols: protocols,
 	}
 	return server.ListenAndServe()
 }

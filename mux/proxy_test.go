@@ -96,6 +96,33 @@ func TestHandleGRPC(t *testing.T) {
 	}
 }
 
+func TestSystemHandleGRPC(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+
+	SystemHandleGRPC(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run without system authorization")
+	}))
+
+	grpcReq := httptest.NewRequest(http.MethodPost, "/package.Service/Method", nil)
+	grpcReq.ProtoMajor = 2
+	grpcReq.ProtoMinor = 0
+	grpcReq.Header.Set("Content-Type", "application/grpc")
+	grpcRec := httptest.NewRecorder()
+	mux.ServeHTTP(grpcRec, grpcReq)
+	if grpcRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected grpc status code: %d", grpcRec.Code)
+	}
+
+	unmatchedRESTReq := httptest.NewRequest(http.MethodPost, "/unmatched-rest", nil)
+	unmatchedRESTReq.Header.Set("Content-Type", "application/json")
+	unmatchedRESTRec := httptest.NewRecorder()
+	mux.ServeHTTP(unmatchedRESTRec, unmatchedRESTReq)
+	if unmatchedRESTRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected unmatched rest status code: %d", unmatchedRESTRec.Code)
+	}
+}
+
 func TestHandleGRPCWeb(t *testing.T) {
 	mux = http.NewServeMux()
 	gateway = nil
