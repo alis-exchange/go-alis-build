@@ -1,9 +1,14 @@
 package authn
 
 import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -156,6 +161,42 @@ func TestCompleteLoginRejectsNonceMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateTokenUsesStandardJWKFields(t *testing.T) {
+	now := time.Now()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenString, err := signedTestJWT(key, map[string]any{"kid": now.Format("2006-01-02")}, map[string]any{"exp": now.Add(time.Minute).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"keys": []map[string]string{
+				{
+					"kid": now.Format("2006-01-02"),
+					"kty": "RSA",
+					"alg": "RS256",
+					"use": "sig",
+					"n":   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+					"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes()),
+				},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer jwksServer.Close()
+
+	client := NewClient("https://identity.alisx.com")
+	client.JWKSURL = jwksServer.URL
+	if err := client.ValidateToken(tokenString, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAuthFlow(t *testing.T) {
 	done := atomic.Bool{}
 	var server *httptest.Server
@@ -262,4 +303,24 @@ func testJWT(t *testing.T, claims map[string]any) string {
 		t.Fatal(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+func signedTestJWT(key *rsa.PrivateKey, header map[string]any, claims map[string]any) (string, error) {
+	header["alg"] = "RS256"
+	header["typ"] = "JWT"
+	headerBytes, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	payloadBytes, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(payloadBytes)
+	hashed := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hashed[:])
+	if err != nil {
+		return "", err
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }

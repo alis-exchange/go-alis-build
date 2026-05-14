@@ -299,8 +299,8 @@ func (c *Client) SyncPublicKeys(now time.Time) {
 	type JWKS struct {
 		Keys []struct {
 			Kid string `json:"kid"`
-			Mod string `json:"mod"`
-			Exp string `json:"exp"`
+			N   string `json:"n"`
+			E   string `json:"e"`
 		} `json:"keys"`
 	}
 
@@ -311,12 +311,12 @@ func (c *Client) SyncPublicKeys(now time.Time) {
 	}
 
 	for _, key := range jwks.Keys {
-		n, err := base64.RawURLEncoding.DecodeString(key.Mod)
+		n, err := base64.RawURLEncoding.DecodeString(key.N)
 		if err != nil {
 			log.Printf("failed to decode modulus: %v", err)
 			continue
 		}
-		e, err := base64.RawURLEncoding.DecodeString(key.Exp)
+		e, err := base64.RawURLEncoding.DecodeString(key.E)
 		if err != nil {
 			log.Printf("failed to decode exponent: %v", err)
 			continue
