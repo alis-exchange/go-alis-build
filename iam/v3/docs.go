@@ -22,11 +22,13 @@
 // System identities bypass authz role and permission checks, which is useful
 // for trusted internal service calls. Use [AddSystemEmail] to mark known
 // service account emails as system identities, or use [SystemIdentity] when a
-// service should act as itself.
+// service should act as itself. Use [AddAdminEmail] to give human users the
+// same authorization bypass while keeping their identity type as user.
 //
 // Example:
 //
 //	auth.AddSystemEmail("alis-build@my-project.iam.gserviceaccount.com")
+//	auth.AddAdminEmail("admin@example.com")
 //
 //	identity := &auth.Identity{
 //		ID:    "alis-build@my-project.iam.gserviceaccount.com",

@@ -100,6 +100,23 @@ func TestHasRoleFromOnceOffPolicy(t *testing.T) {
 	}
 }
 
+func TestHasRoleForAdmin(t *testing.T) {
+	admin := &iam.Identity{
+		Type:  iam.User,
+		ID:    "admin-user-id",
+		Email: "role-admin@example.com",
+	}
+	iam.AddAdminEmail(admin.Email)
+
+	testAZ := MustNew(admin)
+	if !testAZ.HasRole([]string{"roles/admin"}) {
+		t.Fatal("expected admin identity to have role 'roles/admin'")
+	}
+	if admin.Type != iam.User {
+		t.Fatalf("expected admin identity to remain user, got %v", admin.Type)
+	}
+}
+
 func TestMemberResolvers(t *testing.T) {
 	AddMemberResolver([]string{"account"}, func(identity *iam.Identity, member *Member) bool {
 		switch member.ID {

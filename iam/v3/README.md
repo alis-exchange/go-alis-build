@@ -17,6 +17,7 @@ The core package that defines `auth.Identity`. An `Identity` represents an authe
 - Provides gRPC server interceptors for promoting incoming metadata into handler context: `UnaryInterceptor`, `StreamInterceptor`.
 - JWT parsing: `FromJWT()` decodes tokens into an `Identity`.
 - Supports trusted internal callers by marking known service accounts as system identities with `AddSystemEmail()`.
+- Supports human super admins with `AddAdminEmail()` while keeping them as user identities.
 
 **Example Usage:**
 
@@ -31,6 +32,7 @@ import (
 
 func main() {
     auth.AddSystemEmail("alis-build@my-project.iam.gserviceaccount.com")
+    auth.AddAdminEmail("admin@example.com")
 
     identity := &auth.Identity{
         ID:    "alis-build@my-project.iam.gserviceaccount.com",

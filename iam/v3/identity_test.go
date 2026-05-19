@@ -61,6 +61,25 @@ func TestUser(t *testing.T) {
 	expect(t, serviceAccount.User(), "")
 }
 
+func TestAdminEmail(t *testing.T) {
+	admin := &Identity{
+		Type:  User,
+		ID:    "admin-user-id",
+		Email: "admin@example.com",
+	}
+	expect(t, admin.IsAdmin(), false)
+	expect(t, admin.IsPrivileged(), false)
+
+	AddAdminEmail(admin.Email)
+
+	expect(t, admin.IsAdmin(), true)
+	expect(t, admin.IsPrivileged(), true)
+	expect(t, admin.IsSystem(), false)
+	expect(t, admin.Type, User)
+	expect(t, admin.PolicyMember(), "user:admin-user-id")
+	expect(t, admin.User(), "users/admin-user-id")
+}
+
 func TestMetadata(t *testing.T) {
 	ctx := testIdentity.OutgoingMetadata(t.Context())
 	md, ok := metadata.FromOutgoingContext(ctx)

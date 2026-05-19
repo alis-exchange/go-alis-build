@@ -52,3 +52,20 @@ func TestHasPermission(t *testing.T) {
 		t.Errorf("expected to have permission /example.v1.Examples/Delete")
 	}
 }
+
+func TestHasPermissionForAdmin(t *testing.T) {
+	admin := &iam.Identity{
+		Type:  iam.User,
+		ID:    "admin-user-id",
+		Email: "permission-admin@example.com",
+	}
+	iam.AddAdminEmail(admin.Email)
+
+	authorizer := MustNew(admin)
+	if !authorizer.HasPermission("/example.v1.Examples/Delete") {
+		t.Errorf("expected admin identity to have permission /example.v1.Examples/Delete")
+	}
+	if admin.Type != iam.User {
+		t.Fatalf("expected admin identity to remain user, got %v", admin.Type)
+	}
+}
