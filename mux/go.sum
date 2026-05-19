@@ -33,8 +33,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 go.alis.build/alog v0.1.0 h1:XiNnZ6EXEcKbKmABNLxDicipg0nezX6FocdhgIYkMX4=
 go.alis.build/alog v0.1.0/go.mod h1:PY1zq0HD5NnBkqZT+krUndhUTVhPtraieCM1DqxmPeQ=
-go.alis.build/iam/v3 v3.5.0 h1:dxqYgn269dra8sTLNKUnKIL46CnbSaucy5ga5aSlzxI=
-go.alis.build/iam/v3 v3.5.0/go.mod h1:h3zOJW0Z9Zu9QS0elcf75kFoIin5dFVGY71cXI8PAO0=
+go.alis.build/iam/v3 v3.6.0 h1:E0HF+9M8bOV/oXghO2a1GlPolgndAjR4393sLBzGXQ8=
+go.alis.build/iam/v3 v3.6.0/go.mod h1:h3zOJW0Z9Zu9QS0elcf75kFoIin5dFVGY71cXI8PAO0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 h1:yI1/OhfEPy7J9eoa6Sj051C7n5dvpj0QX8g4sRchg04=
