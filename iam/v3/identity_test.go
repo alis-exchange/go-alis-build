@@ -50,6 +50,17 @@ func TestMarshal(t *testing.T) {
 	expectSlice(t, identity.GroupIDs, testIdentity.GroupIDs)
 }
 
+func TestUser(t *testing.T) {
+	expect(t, testIdentity.User(), "users/1934872948")
+
+	serviceAccount := &Identity{
+		Type:  ServiceAccount,
+		ID:    "110273892410436981091",
+		Email: "alis-build@alis-ge-prod-qg6.iam.gserviceaccount.com",
+	}
+	expect(t, serviceAccount.User(), "")
+}
+
 func TestMetadata(t *testing.T) {
 	ctx := testIdentity.OutgoingMetadata(t.Context())
 	md, ok := metadata.FromOutgoingContext(ctx)

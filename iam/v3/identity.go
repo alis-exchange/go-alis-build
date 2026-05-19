@@ -52,6 +52,15 @@ func (i *Identity) PolicyMember() string {
 	return string(i.Type) + ":" + i.ID
 }
 
+// User returns the User resource name for identities that have one.
+// E.g. "users/1234129384"
+func (i *Identity) User() string {
+	if i.Type == User {
+		return "users/" + i.ID
+	}
+	return ""
+}
+
 // Context returns a derived context with the identity value in it to use locally.
 // Use OutgoingMetadata if you want remote services to identify the requester.
 // You can use Context and OutgoingMetadata together.
