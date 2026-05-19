@@ -53,9 +53,10 @@ var (
 	// requests.
 	AuthClient *authn.Client
 
-	// Optional function used to resolve the "WWW-Authenticate" header when an unauthorized
-	// request is received.
-	ResolveWWWAuthenticateHeader func(w http.ResponseWriter, r *http.Request) string
+	// What to do for unauthorized requests. By default this just returns a 401 status.
+	UnauthorizedHandler = func(w http.ResponseWriter, r *http.Request, details string) error {
+		return UnauthorizedErr("%s", details)
+	}
 )
 
 func init() {
@@ -87,10 +88,7 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 	refreshed, err := AuthClient.Authenticate(tokens, time.Now())
 	if err != nil {
 		if !IsBrowserNavigationRequest(r) {
-			if ResolveWWWAuthenticateHeader != nil {
-				w.Header().Set("WWW-Authenticate", ResolveWWWAuthenticateHeader(w, r))
-			}
-			return UnauthorizedErr("%s", err.Error())
+			return UnauthorizedHandler(w, r, err.Error())
 		}
 		fullPath := r.URL.Path
 		if r.URL.RawQuery != "" {
