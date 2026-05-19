@@ -146,6 +146,9 @@ func (c *Client) postToken(grantType grantType, grant, redirectURI string) (*Tok
 // Authenticate refreshes the user's access token if its invalid/expired and returns true if it was refreshed.
 func (c *Client) Authenticate(tokens *Tokens, now time.Time) (bool, error) {
 	if err := c.ValidateToken(tokens.AccessToken, now); err != nil {
+		if tokens.RefreshToken == "" {
+			return false, err
+		}
 		if err := c.Refresh(tokens); err != nil {
 			return false, err
 		}
