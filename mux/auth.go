@@ -53,9 +53,9 @@ var (
 	// requests.
 	AuthClient *authn.Client
 
-	// WWWAuthenticateHeader is the optional 'WWW-Authenticate' response header value
-	// written with non-browser unauthorized requests.
-	WWWAuthenticateHeader = ""
+	// Optional function used to resolve the "WWW-Authenticate" header when an unauthorized
+	// request is received.
+	ResolveWWWAuthenticateHeader func(w http.ResponseWriter, r *http.Request) string
 )
 
 func init() {
@@ -87,8 +87,8 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 	refreshed, err := AuthClient.Authenticate(tokens, time.Now())
 	if err != nil {
 		if !IsBrowserNavigationRequest(r) {
-			if WWWAuthenticateHeader != "" {
-				w.Header().Set("WWW-Authenticate", WWWAuthenticateHeader)
+			if ResolveWWWAuthenticateHeader != nil {
+				w.Header().Set("WWW-Authenticate", ResolveWWWAuthenticateHeader(w, r))
 			}
 			return UnauthorizedErr("%s", err.Error())
 		}
