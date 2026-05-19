@@ -126,6 +126,16 @@ func MustUnmarshal(data []byte) *Identity {
 	return identity
 }
 
+// LegacyOutgoingMetadata returns a derived context with the identity value in it.
+// Enables downstream gRPC services in the same environment to identify the requester.
+// Does the same as OutgoingMetadata but also adds "x-alis-forwarded-authorization" with a
+// derived jwt token.
+func (i *Identity) LegacyOutgoingMetadata(ctx context.Context) context.Context {
+	ctx = i.OutgoingMetadata(ctx)
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-alis-forwarded-authorization", i.UnsignedJWT(ctx))
+	return ctx
+}
+
 // OutgoingMetadata returns a derived context with the identity value in it.
 // Enables downstream gRPC services in the same environment to identify the requester.
 func (i *Identity) OutgoingMetadata(ctx context.Context) context.Context {
@@ -161,6 +171,17 @@ func MustFromIncomingMetadata(ctx context.Context) *Identity {
 		panic(fmt.Sprintf("identity.MustFromIncomingMetadata: %v", err))
 	}
 	return identity
+}
+
+func (i *Identity) UnsignedJWT(ctx context.Context) string {
+	jsonIdentity, err := json.Marshal(i)
+	if err != nil {
+		panic(err) // impossible
+	}
+	identityBase64 := base64.RawURLEncoding.EncodeToString(jsonIdentity)
+	headJSON := []byte(`{"alg":"none"}`)
+	headB64 := base64.RawURLEncoding.EncodeToString(headJSON)
+	return fmt.Sprintf("%s.%s.###", headB64, identityBase64)
 }
 
 // FromJWT decodes and unmarshals the given jwt into an Identity.

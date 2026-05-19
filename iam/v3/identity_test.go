@@ -109,6 +109,8 @@ func TestUserJWT(t *testing.T) {
 		"05a6b136-3bd3-4246-ba42-0e8dc87b5ae9",
 	})
 	expect(t, identity.PolicyMember(), "user:108301630970503992041")
+
+	println(identity.UnsignedJWT(t.Context()))
 }
 
 func TestServiceAccountJWT(t *testing.T) {
