@@ -139,11 +139,57 @@ func TestCallbackHandleCompletesLoginTransaction(t *testing.T) {
 	if CookieByName(cookies, RefreshTokenCookie) == nil {
 		t.Fatal("missing refresh token cookie")
 	}
+	if CookieByName(cookies, AccessTokenCookie).Secure {
+		t.Fatal("expected non-secure access token cookie for HTTP callback")
+	}
+	if CookieByName(cookies, RefreshTokenCookie).Secure {
+		t.Fatal("expected non-secure refresh token cookie for HTTP callback")
+	}
 	loginCookie := CookieByName(cookies, "alis_authn_login")
 	if loginCookie == nil {
 		t.Fatal("missing cleared login transaction cookie")
 	}
 	expect(t, loginCookie.MaxAge, -1)
+}
+
+func TestShouldSecureAuthCookies(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *http.Request
+		want bool
+	}{
+		{
+			name: "nil request defaults secure",
+			req:  nil,
+			want: true,
+		},
+		{
+			name: "local HTTP",
+			req:  httptest.NewRequest(http.MethodGet, "http://localhost:8080/auth/callback", nil),
+			want: false,
+		},
+		{
+			name: "plain HTTP",
+			req:  httptest.NewRequest(http.MethodGet, "http://app.example.com/auth/callback", nil),
+			want: false,
+		},
+		{
+			name: "TLS",
+			req:  httptest.NewRequest(http.MethodGet, "https://app.example.com/auth/callback", nil),
+			want: true,
+		},
+		{
+			name: "ngrok",
+			req:  httptest.NewRequest(http.MethodGet, "http://example.ngrok-free.app/auth/callback", nil),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expect(t, shouldSecureAuthCookies(tt.req), tt.want)
+		})
+	}
 }
 
 func TestAuthenticatedHandleHTTP(t *testing.T) {

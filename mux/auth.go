@@ -105,8 +105,8 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 
 	// save refreshed tokens if any
 	if refreshed {
-		setAuthCookie(w, AccessTokenCookie, tokens.AccessToken, 400*24*3600)
-		setAuthCookie(w, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
+		setAuthCookie(w, r, AccessTokenCookie, tokens.AccessToken, 400*24*3600)
+		setAuthCookie(w, r, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
 	}
 
 	// set identity in context
@@ -121,8 +121,8 @@ func callbackHandle(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return BadRequestErr("Failed to complete login: %s", err.Error())
 	}
-	setAuthCookie(w, AccessTokenCookie, tokens.AccessToken, 400*24*3600)
-	setAuthCookie(w, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
+	setAuthCookie(w, r, AccessTokenCookie, tokens.AccessToken, 400*24*3600)
+	setAuthCookie(w, r, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
 
 	// redirect to post auth redirect uri
 	http.Redirect(w, r, returnTo, http.StatusTemporaryRedirect)
@@ -141,21 +141,41 @@ func logoutHandle(w http.ResponseWriter, r *http.Request) error {
 // AuthCookiesDomain values. The default logout handler calls this function, and
 // custom handlers can call it when they need to terminate a browser session.
 func ClearAuthCookies(w http.ResponseWriter) {
-	setAuthCookie(w, AccessTokenCookie, "", -1)
-	setAuthCookie(w, RefreshTokenCookie, "", -1)
+	setAuthCookie(w, nil, AccessTokenCookie, "", -1)
+	setAuthCookie(w, nil, RefreshTokenCookie, "", -1)
 }
 
-func setAuthCookie(w http.ResponseWriter, name, value string, maxAge int) {
+func setAuthCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    value,
 		Domain:   AuthCookiesDomain,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   shouldSecureAuthCookies(r),
 		MaxAge:   maxAge,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func shouldSecureAuthCookies(r *http.Request) bool {
+	// Cookie Secure must match the scheme the browser is using for this app.
+	// Local development commonly runs on plain http://localhost, and browsers
+	// will not store Secure cookies set by an HTTP response. If we mark those
+	// callback cookies as Secure, the callback succeeds, redirects to the app,
+	// and the next request starts a fresh login because no auth cookies were
+	// persisted.
+	if r == nil {
+		// Callers such as ClearAuthCookies do not have the request available.
+		// Default to secure in that case so cookie writes without request context
+		// preserve the safest production behavior.
+		return true
+	}
+
+	// RequestHost centralizes the scheme decision for TLS, Cloud Run, ngrok, and
+	// local HTTP. Reusing it keeps the cookie policy aligned with the callback
+	// URL we send to the identity service for the same request.
+	return strings.HasPrefix(RequestHost(r), "https://")
 }
 
 // AuthenticatedHandle registers an authenticated route on the package-level mux.
