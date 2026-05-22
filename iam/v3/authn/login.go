@@ -99,8 +99,10 @@ func (c *Client) CompleteLogin(w http.ResponseWriter, r *http.Request, redirectU
 	if err != nil {
 		return nil, "", err
 	}
-	if err := c.ValidateIDTokenNonce(tokens.IDToken, transaction.Nonce, time.Now()); err != nil {
-		return nil, "", err
+	if transaction.Nonce != "" {
+		if err := c.ValidateIDTokenNonce(tokens.IDToken, transaction.Nonce, time.Now()); err != nil {
+			return nil, "", err
+		}
 	}
 	return tokens, transaction.ReturnTo, nil
 }
