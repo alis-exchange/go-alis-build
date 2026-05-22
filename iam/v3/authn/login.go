@@ -69,7 +69,8 @@ func (c *Client) StartLogin(w http.ResponseWriter, r *http.Request, redirectURI,
 	}, nil
 }
 
-// CompleteLogin validates the login transaction, exchanges the authorization code, and validates the ID token nonce.
+// CompleteLogin validates the login transaction, exchanges the authorization code.
+// Does not validate the ID token nonce: use ValidateIDTokenNonce to validate the nonce.
 func (c *Client) CompleteLogin(w http.ResponseWriter, r *http.Request, redirectURI string) (*Tokens, string, error) {
 	if authErr := r.URL.Query().Get("error"); authErr != "" {
 		return nil, "", fmt.Errorf("authorization failed: %s", authErr)
@@ -98,11 +99,6 @@ func (c *Client) CompleteLogin(w http.ResponseWriter, r *http.Request, redirectU
 	tokens, err := c.ExchangeCode(redirectURI, code)
 	if err != nil {
 		return nil, "", err
-	}
-	if transaction.Nonce != "" {
-		if err := c.ValidateIDTokenNonce(tokens.IDToken, transaction.Nonce, time.Now()); err != nil {
-			return nil, "", err
-		}
 	}
 	return tokens, transaction.ReturnTo, nil
 }
