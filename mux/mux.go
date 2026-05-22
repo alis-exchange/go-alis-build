@@ -228,6 +228,14 @@ func handler(handler Func, middlewares ...Middleware) func(w http.ResponseWriter
 	}
 }
 
+// HTTPHandler returns the package-level ServeMux as an http.Handler.
+//
+// Use this when a caller needs to run the mux on a custom http.Server, for
+// example to set timeouts or perform graceful shutdown.
+func HTTPHandler() http.Handler {
+	return mux
+}
+
 // ListenAndServe starts an HTTP server on addr using the package-level mux.
 //
 // The server accepts unencrypted HTTP/2 in addition to HTTP/1.1, which allows

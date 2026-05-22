@@ -92,6 +92,12 @@
 //
 //	mux.ListenAndServe(":8080")
 //
+// HTTPHandler exposes the same ServeMux for callers that need a custom http.Server
+// (timeouts, graceful shutdown). ListenAndServe is unchanged and still the default.
+//
+//	srv := &http.Server{Addr: ":8080", Handler: mux.HTTPHandler()}
+//	srv.ListenAndServe()
+//
 // The package reads these environment variables during initialization:
 //
 //   - IDENTITY_SERVICE_URL: required identity service URL for user authentication.
