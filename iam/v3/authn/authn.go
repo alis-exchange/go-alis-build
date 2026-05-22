@@ -203,9 +203,6 @@ func (c *Client) ValidateIDTokenNonce(idToken, nonce string, now time.Time) erro
 	if nonce == "" {
 		return errors.New("missing nonce")
 	}
-	if err := c.ValidateToken(idToken, now); err != nil {
-		return err
-	}
 
 	payload, err := decodeJWTPayload(idToken)
 	if err != nil {
