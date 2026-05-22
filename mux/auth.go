@@ -57,6 +57,10 @@ var (
 	UnauthorizedHandler = func(w http.ResponseWriter, r *http.Request, details string) error {
 		return UnauthorizedErr("%s", details)
 	}
+
+	PostAuthMiddleware Middleware = func(w http.ResponseWriter, r *http.Request, handler Func) error {
+		return handler(w, r)
+	}
 )
 
 func init() {
@@ -112,7 +116,7 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 	// set identity in context
 	identity := iam.MustFromJWT(tokens.AccessToken)
 	r = r.WithContext(identity.Context(r.Context()))
-	return handler(w, r)
+	return PostAuthMiddleware(w, r, handler)
 }
 
 func callbackHandle(w http.ResponseWriter, r *http.Request) error {
