@@ -10,6 +10,8 @@ cloud.google.com/go/iam v1.5.2/go.mod h1:SE1vg0N81zQqLzQEwxL2WI6yhetBdbNQuTvIKCS
 cloud.google.com/go/parametermanager v0.2.1 h1:MZNbZUmJw6pyJkry/TIc2otO2uLzHpjL7jtYjhHDTxs=
 cloud.google.com/go/parametermanager v0.2.1/go.mod h1:KBy6d+By6zSgSUKd5+l/64xf4FCWyXIB4HwpAUdqtCg=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+github.com/alis-exchange/go-alis-build/iam v1.2.1 h1:1z3krgD99TiImIu8vXnfhli7Rau7J6tK6tRMi1BvVf4=
+github.com/alis-exchange/go-alis-build/iam v1.2.1/go.mod h1:i1HgZClpri+08sBGyZGLNEkyMzbrMieuXX9fZfO2mAw=
 github.com/benbjohnson/clock v1.1.0/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZxNJlLklBHA=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=

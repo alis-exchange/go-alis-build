@@ -1,10 +1,11 @@
-module github.com/alis-exchange/go-alis-build/iam
+module go.alis.build/iam
 
 go 1.24.2
 
 require (
 	cloud.google.com/go/iam v1.5.2
 	cloud.google.com/go/parametermanager v0.2.1
+	github.com/alis-exchange/go-alis-build/iam v1.2.1
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	go.alis.build/alog v0.0.19
