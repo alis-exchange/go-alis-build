@@ -21,22 +21,26 @@ const (
 
 type (
 	Identity struct {
-		Type     Type              // Type of the identity
-		ID       string            `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
-		Email    string            `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
-		Accounts map[string]*Seats `json:"accounts"` // User's seats in their accounts
-		GroupIDs []string          `json:"groups"`   // IDs of the groups the user belongs to
-		Policy   string            `json:"policy"`   // Base64 encoded iam policy
-		Exp      int64             `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
-		App      string            `json:"app"`      // Client ID (if any) of the registered third party app.
-		Scopes   []string          `json:"scopes"`   // Set of scopes that the third party app has been granted.
+		Type     Type                // Type of the identity
+		ID       string              `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
+		Email    string              `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
+		Accounts map[string]*Account `json:"accounts"` // User's seats in their accounts
+		GroupIDs []string            `json:"groups"`   // IDs of the groups the user belongs to
+		Policy   string              `json:"policy"`   // Base64 encoded iam policy
+		Exp      int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
+		App      string              `json:"app"`      // Client ID (if any) of the registered third party app.
+		Scopes   []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
 	}
 	Type string
 	Seat struct {
-		Plan int32
-		Seat int32
+		Plan int32 `json:"plan"`
+		Seat int32 `json:"seat"`
 	}
-	Seats  map[string]*Seat
+	Account struct {
+		Seats                    map[int32]*Seat `json:"seats"`
+		IdeateAccountCreditLimit float64         `json:"ideate_account_credit_limit"`
+		IdeateUserCreditLimit    float64         `json:"ideate_user_credit_limit"`
+	}
 	ctxKey string
 )
 
