@@ -14,7 +14,9 @@ type Seat struct {
 	Seat int32 `json:"seat"`
 }
 type Account struct {
-	Seats map[int32]*Seat `json:"seats"`
+	Seats                    map[int32]*Seat `json:"seats"`
+	IdeateAccountCreditLimit float64         `json:"ideate_account_credit_limit"`
+	IdeateUserCreditLimit    float64         `json:"ideate_user_credit_limit"`
 }
 
 // Payload represents a decoded payload of an ID Token.
