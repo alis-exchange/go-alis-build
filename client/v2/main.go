@@ -96,10 +96,15 @@ func (c customHeaderCredentials) RequireTransportSecurity() bool {
 // Tokens have a one-hour expiration; the TokenSource caches and refreshes them automatically.
 func NewConn(ctx context.Context, host string, insecure bool, opts ...NewConnOption) (*grpc.ClientConn, error) {
 	// If the host is provided as an https URL, strip the scheme and append :443 if no port is present.
-	if after, ok :=strings.CutPrefix(host, "https://"); ok  {
+	if after, ok := strings.CutPrefix(host, "https://"); ok {
 		host = after
 		if !strings.Contains(host, ":") {
 			host = host + ":443"
+		}
+	} else if after, ok := strings.CutPrefix(host, "http://"); ok {
+		host = after
+		if !strings.Contains(host, ":") {
+			host = host + ":80"
 		}
 	}
 
