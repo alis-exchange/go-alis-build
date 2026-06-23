@@ -7,7 +7,7 @@ provides gRPC client/server options backed by `otelgrpc`.
 
 ```go
 shutdown, err := trace.Start(ctx, trace.Config{
-	ServiceName: "skills-v1",
+	Package:     "alis.os.skills.v1",
 	ProjectID:   trace.ProjectIDFromEnv(),
 	SampleRatio: 0.7,
 })

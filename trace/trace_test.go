@@ -8,7 +8,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-func TestValidateConfigRequiresServiceName(t *testing.T) {
+func TestValidateConfigRequiresPackage(t *testing.T) {
 	err := validateConfig(Config{})
 	if err == nil {
 		t.Fatal("validateConfig returned nil error")
@@ -18,7 +18,7 @@ func TestValidateConfigRequiresServiceName(t *testing.T) {
 func TestValidateConfigRejectsInvalidSampleRatio(t *testing.T) {
 	for _, ratio := range []float64{-0.1, 1.1} {
 		err := validateConfig(Config{
-			ServiceName: "skills-v1",
+			Package:     "alis.os.skills.v1",
 			SampleRatio: ratio,
 		})
 		if err == nil {

@@ -11,7 +11,7 @@
 //
 //	ctx := context.Background()
 //	shutdown, err := trace.Start(ctx, trace.Config{
-//		ServiceName: "skills-v1",
+//		Package:     "alis.os.skills.v1",
 //		ProjectID:   trace.ProjectIDFromEnv(),
 //		SampleRatio: 0.7,
 //	})
@@ -42,7 +42,7 @@
 // buffered spans are flushed to Cloud Trace.
 //
 // The package intentionally does not configure tracing in init. Explicit setup
-// keeps tests predictable, lets applications choose their service name and
+// keeps tests predictable, lets applications choose their protobuf package and
 // sampling ratio, and avoids surprising Cloud Trace exporter initialization when
 // a library is imported.
 //
@@ -52,9 +52,16 @@
 // Google client environment variables, and Config.ProjectID can be set directly
 // when the destination project should be explicit.
 //
-// Config.ServiceName is required because Cloud Trace and other OpenTelemetry
-// tools use the service.name resource attribute to group spans by service. Use
-// the stable neuron or service id, for example "skills-v1".
+// Config.Package is required because the protocol buffer package is the stable
+// Alis Build service boundary. The value is recorded as the OpenTelemetry
+// service.name resource attribute, which Cloud Trace and other OpenTelemetry
+// tools use to group spans by running service. For example, Package
+// "alis.os.iam.v2" becomes service.name "alis.os.iam.v2".
+//
+// Using the protobuf package scales to servers that host multiple protobuf
+// services from the same package. Individual RPC spans still carry the full
+// protobuf service and method names, for example
+// "alis.os.iam.v2.UsersService/GetUser".
 //
 // Sampling uses ParentBased TraceIDRatioBased sampling. ParentBased preserves an
 // upstream sampling decision when the service receives a request that already

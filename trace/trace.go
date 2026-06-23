@@ -32,10 +32,11 @@ type Config struct {
 	// empty, the Cloud Trace exporter uses Application Default Credentials and
 	// environment-based project detection.
 	ProjectID string
-	// ServiceName is recorded as the OpenTelemetry service.name resource
-	// attribute. It should be the stable neuron or service id, for example
-	// "skills-v1".
-	ServiceName string
+	// Package is the protobuf package implemented by this Cloud Run service, for
+	// example "alis.os.skills.v1". It is recorded as the OpenTelemetry
+	// service.name resource attribute so Cloud Trace groups spans by the Alis
+	// protocol buffer package.
+	Package string
 	// SampleRatio is the head sampling ratio used for root spans. Zero means
 	// "use the default", which is currently 1.0. Values must be between 0 and 1.
 	SampleRatio float64
@@ -126,8 +127,8 @@ func GRPCDialOption() grpc.DialOption {
 }
 
 func validateConfig(cfg Config) error {
-	if cfg.ServiceName == "" {
-		return errors.New("trace: ServiceName is required")
+	if cfg.Package == "" {
+		return errors.New("trace: Package is required")
 	}
 	if cfg.SampleRatio < 0 || cfg.SampleRatio > 1 {
 		return fmt.Errorf("trace: SampleRatio must be between 0 and 1: %v", cfg.SampleRatio)
@@ -137,7 +138,7 @@ func validateConfig(cfg Config) error {
 
 func newResource(ctx context.Context, cfg Config) (*resource.Resource, error) {
 	attrs := make([]attribute.KeyValue, 0, len(cfg.ResourceAttributes)+1)
-	attrs = append(attrs, semconv.ServiceName(cfg.ServiceName))
+	attrs = append(attrs, semconv.ServiceName(cfg.Package))
 	attrs = append(attrs, cfg.ResourceAttributes...)
 
 	res, err := resource.New(ctx, resource.WithAttributes(attrs...))
