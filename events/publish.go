@@ -176,8 +176,6 @@ The following PublishOptions can be provided to customize the publishing behavio
 If an error occurs during publishing, the function will return an error.
 */
 func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts ...PublishOption) error {
-	results := make([]*pubsub.PublishResult, len(events))
-
 	// Configure the defualt options
 	options := &PublishOptions{}
 	// Add any user overrides, if provided.
@@ -213,11 +211,15 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 		topic := c.pubsub.Topic(topicName)
 		defer topic.Stop()
 
+		// Publish results for this topic's events. Scoped to the current topic
+		// group so the Get loop below never observes a nil result belonging to
+		// another group (which would panic) or one overwritten across groups.
+		results := make([]*pubsub.PublishResult, len(events))
+
 		// Iterate though the events
 		for i, event := range events {
-			i := i
 			if event == nil {
-				return fmt.Errorf("event at index %d is required but not provided", i)
+				return fmt.Errorf("event of type %s at index %d is required but not provided", eventType, i)
 			}
 
 			// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
@@ -232,20 +234,17 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 				time.Sleep(delay)
 			}
 
-			result := topic.Publish(ctx, &pubsub.Message{
+			results[i] = topic.Publish(ctx, &pubsub.Message{
 				Data:        data,
 				OrderingKey: options.orderingKey,
 			})
-
-			results[i] = result
 		}
 
-		// Once all the messages has been sent, use the .Get method to confirm that all is done.  The Get method
+		// Once all the messages have been sent, use the .Get method to confirm that all is done.  The Get method
 		// blocks until the Publish method is done.
 		for i, r := range results {
-			_, err := r.Get(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to send the message at batch index %d: %w", i, err)
+			if _, err := r.Get(ctx); err != nil {
+				return fmt.Errorf("failed to send the %s message at index %d: %w", eventType, i, err)
 			}
 		}
 	}
