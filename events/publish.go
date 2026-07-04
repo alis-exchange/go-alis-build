@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -77,6 +77,9 @@ WithTopic overrides the default topic.
 
 The default topic is inferred from the provided event proto message, for example:
 projects/my-project-123/topics/myorg.aa.files.v1.EmailCreatedEvent
+
+topic may be either a topic ID or a fully-qualified Pub/Sub topic resource
+name in the form projects/<project>/topics/<topic>.
 */
 func WithTopic(topic string) PublishOption {
 	return func(opts *PublishOptions) {
@@ -139,7 +142,7 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 		time.Sleep(delay)
 	}
 
-	topic := c.pubsub.Topic(options.topic)
+	topic := c.topic(options.topic)
 	result := topic.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: options.orderingKey,
@@ -199,16 +202,7 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	// Now iterate through each Topic
 	for eventType, events := range eventsByType {
 
-		var topicName string
-		if options.topic != "" {
-			// Use the user provided topic if available.
-			topicName = options.topic
-		} else {
-			// With the Alis Build Platform, each event has their own topic, for example:
-			// Example: projects/my-project-123/topics/myorg.aa.files.v1.EmailCreatedEvent
-			topicName = fmt.Sprintf("projects/%s/topics/%s", os.Getenv("ALIS_OS_PROJECT"), eventType)
-		}
-		topic := c.pubsub.Topic(topicName)
+		topic := c.topic(topicNameForEventType(eventType, options))
 		defer topic.Stop()
 
 		// Publish results for this topic's events. Scoped to the current topic
@@ -250,4 +244,26 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	}
 
 	return nil
+}
+
+func topicNameForEventType(eventType string, options *PublishOptions) string {
+	if options.topic != "" {
+		return options.topic
+	}
+	return eventType
+}
+
+func (c *Client) topic(topic string) *pubsub.Topic {
+	if projectID, topicID, ok := parseTopicResourceName(topic); ok {
+		return c.pubsub.TopicInProject(topicID, projectID)
+	}
+	return c.pubsub.Topic(topic)
+}
+
+func parseTopicResourceName(name string) (projectID, topicID string, ok bool) {
+	parts := strings.Split(name, "/")
+	if len(parts) != 4 || parts[0] != "projects" || parts[2] != "topics" || parts[1] == "" || parts[3] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[3], true
 }
