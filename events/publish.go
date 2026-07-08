@@ -29,9 +29,9 @@ type PublishOptions struct {
 
 // Jitter is used to configure any randomness within the Publish method.
 type jitter struct {
-	// MinimumDelay sets the shortest possible delay to introduce before processing an event or performing an action.
-	mininumDelay time.Duration
-	// MaximumDelay sets the longest possible delay to introduce.
+	// minimumDelay sets the shortest possible delay to introduce before processing an event or performing an action.
+	minimumDelay time.Duration
+	// maximumDelay sets the longest possible delay to introduce.
 	maximumDelay time.Duration
 }
 
@@ -62,11 +62,15 @@ Consider factors like:
   - System Load: Consider the overall system load and adjust jitter values to avoid introducing bottlenecks or performance issues.
 
 Jitter is applied using a Uniform distribution(Equal probability for any delay value within the range).
+
+Both delays must be non-negative and maximumDelay must be >= minimumDelay;
+otherwise the maximum is snapped up to the minimum so the delay is always
+well-defined.
 */
 func WithJitter(minimumDelay, maximumDelay time.Duration) PublishOption {
 	return func(opts *PublishOptions) {
 		opts.jitter = &jitter{
-			mininumDelay: minimumDelay,
+			minimumDelay: minimumDelay,
 			maximumDelay: maximumDelay,
 		}
 	}
@@ -105,15 +109,13 @@ func WithBackground() PublishOption {
 	}
 }
 
-/*
-WithSync is retained for backwards compatibility and forwards to
-[WithBackground].
-
-Deprecated: WithSync is misnamed — it does not make Publish synchronous.
-It enables fire-and-forget publishing where Publish returns without
-waiting for the Pub/Sub broker to ack the message. Use [WithBackground]
-instead.
-*/
+// WithSync is retained for backwards compatibility and forwards to
+// [WithBackground].
+//
+// Deprecated: WithSync is misnamed — it does not make Publish synchronous.
+// It enables fire-and-forget publishing where Publish returns without
+// waiting for the Pub/Sub broker to ack the message. Use [WithBackground]
+// instead.
 func WithSync() PublishOption {
 	return WithBackground()
 }
@@ -147,41 +149,29 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 		return fmt.Errorf("event is required but not provided")
 	}
 
-	// Set the default options.
-	// The topic is derived from the message type, using proto reflection.
 	options := &PublishOptions{
 		topic: string(event.ProtoReflect().Descriptor().FullName()), // -> myorg.co.files.v1.EmailCreatedEvent
 	}
-
-	// Add any user overrides, if provided.
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
 	data, err := proto.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal the message to bytes: %w", err)
 	}
 
-	// Apply Jitter is specified
-	if options.jitter != nil {
-		delay := time.Duration(rand.Int63n(int64(options.jitter.maximumDelay-options.jitter.mininumDelay))) + options.jitter.mininumDelay
-		time.Sleep(delay)
-	}
+	applyJitter(options.jitter)
 
-	publisher := c.pubsub.Publisher(options.topic)
+	publisher := c.publisherFor(options.topic)
 	result := publisher.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: options.orderingKey,
 	})
 
 	if options.background {
-		go publisher.Stop()
 		return nil
 	}
-
-	defer publisher.Stop()
 	if _, err = result.Get(ctx); err != nil {
 		return fmt.Errorf("waiting for publish event to complete: %w", err)
 	}
@@ -205,9 +195,7 @@ The following PublishOptions can be provided to customize the publishing behavio
 If an error occurs during publishing, the function will return an error.
 */
 func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts ...PublishOption) error {
-	// Configure the defualt options
 	options := &PublishOptions{}
-	// Add any user overrides, if provided.
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -217,42 +205,28 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	eventsByType := map[string][]proto.Message{}
 	for _, e := range events {
 		eventType := string(e.ProtoReflect().Descriptor().FullName())
-
-		// Ensure that we don't append to an empty array.
-		if _, ok := eventsByType[eventType]; !ok {
-			eventsByType[eventType] = []proto.Message{}
-		}
 		eventsByType[eventType] = append(eventsByType[eventType], e)
 	}
 
-	// Now iterate through each Topic
 	for eventType, events := range eventsByType {
-
-		publisher := c.pubsub.Publisher(topicNameForEventType(eventType, options))
-		defer publisher.Stop()
+		publisher := c.publisherFor(topicNameForEventType(eventType, options))
 
 		// Publish results for this topic's events. Scoped to the current topic
 		// group so the Get loop below never observes a nil result belonging to
 		// another group (which would panic) or one overwritten across groups.
 		results := make([]*pubsub.PublishResult, len(events))
 
-		// Iterate though the events
 		for i, event := range events {
 			if event == nil {
 				return fmt.Errorf("event of type %s at index %d is required but not provided", eventType, i)
 			}
 
-			// Convert the event message to a []byte format, as required by Pub/Sub's data attribute
 			data, err := proto.Marshal(event)
 			if err != nil {
 				return fmt.Errorf("marshal the message to bytes: %w", err)
 			}
 
-			// Apply Jitter is specified
-			if options.jitter != nil {
-				delay := time.Duration(rand.Int63n(int64(options.jitter.maximumDelay-options.jitter.mininumDelay))) + options.jitter.mininumDelay
-				time.Sleep(delay)
-			}
+			applyJitter(options.jitter)
 
 			results[i] = publisher.Publish(ctx, &pubsub.Message{
 				Data:        data,
@@ -260,8 +234,9 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 			})
 		}
 
-		// Once all the messages have been sent, use the .Get method to confirm that all is done.  The Get method
-		// blocks until the Publish method is done.
+		// Once all the messages have been sent, use the .Get method to confirm
+		// that all is done. The Get method blocks until the Publish method is
+		// done.
 		for i, r := range results {
 			if _, err := r.Get(ctx); err != nil {
 				return fmt.Errorf("failed to send the %s message at index %d: %w", eventType, i, err)
@@ -270,6 +245,28 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	}
 
 	return nil
+}
+
+// applyJitter sleeps for a random duration in [minimumDelay, maximumDelay).
+// If j is nil or the span is non-positive, no random delay is drawn (the
+// minimumDelay is applied verbatim when the span is zero, and nothing at
+// all when j is nil). Guards against rand.Int63n panicking on a
+// non-positive argument.
+func applyJitter(j *jitter) {
+	if j == nil {
+		return
+	}
+	span := j.maximumDelay - j.minimumDelay
+	var delay time.Duration
+	switch {
+	case span > 0:
+		delay = time.Duration(rand.Int63n(int64(span))) + j.minimumDelay
+	case j.minimumDelay > 0:
+		delay = j.minimumDelay
+	default:
+		return
+	}
+	time.Sleep(delay)
 }
 
 // topicNameForEventType returns the topic name to publish an event of the

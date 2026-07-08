@@ -1,41 +1,9 @@
 package events
 
 import (
-	"context"
 	"testing"
-
-	"cloud.google.com/go/pubsub/v2"
-	"google.golang.org/protobuf/proto"
+	"time"
 )
-
-func TestClient_Publish(t *testing.T) {
-	type fields struct {
-		pubsub *pubsub.Client
-	}
-	type args struct {
-		ctx   context.Context
-		event proto.Message
-		opts  []PublishOption
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				pubsub: tt.fields.pubsub,
-			}
-			if err := c.Publish(tt.args.ctx, tt.args.event, tt.args.opts...); (err != nil) != tt.wantErr {
-				t.Errorf("Client.Publish() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
 
 func TestTopicNameForEventType(t *testing.T) {
 	const eventType = "alis.os.build.activity.v1.SessionStartedEvent"
@@ -70,3 +38,37 @@ func TestTopicNameForEventType(t *testing.T) {
 	}
 }
 
+// TestApplyJitter_guardsAgainstBadInput verifies applyJitter does not panic
+// on nil, zero-span, and inverted bounds — all of which would trip
+// rand.Int63n on a naive implementation.
+func TestApplyJitter_guardsAgainstBadInput(t *testing.T) {
+	tests := []struct {
+		name string
+		j    *jitter
+	}{
+		{"nil jitter", nil},
+		{"zero bounds", &jitter{}},
+		{"equal bounds", &jitter{minimumDelay: 5 * time.Millisecond, maximumDelay: 5 * time.Millisecond}},
+		{"inverted bounds", &jitter{minimumDelay: 10 * time.Millisecond, maximumDelay: time.Millisecond}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyJitter(tt.j)
+		})
+	}
+}
+
+func TestWithSync_aliasesWithBackground(t *testing.T) {
+	sync := &PublishOptions{}
+	WithSync()(sync)
+
+	bg := &PublishOptions{}
+	WithBackground()(bg)
+
+	if sync.background != bg.background {
+		t.Errorf("WithSync.background = %v, WithBackground.background = %v; want equal", sync.background, bg.background)
+	}
+	if !sync.background {
+		t.Errorf("WithSync should enable background publishing; got background=false")
+	}
+}
