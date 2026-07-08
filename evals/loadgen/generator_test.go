@@ -1,0 +1,320 @@
+package loadgen
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// zeroLatencyTarget returns nil immediately. Useful for testing pacing
+// without adding scheduler variance to worker execution time.
+func zeroLatencyTarget(context.Context) error { return nil }
+
+// TestInProcess_PacingAccuracy verifies that RequestCount is close to
+// QPS × Duration within a reasonable tolerance for a fast target. We do not
+// assert a tight bound: go test scheduling on shared CI can move things
+// around, so ±25% is the practical envelope for a 500ms window at 50 QPS.
+func TestInProcess_PacingAccuracy(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	p := Profile{QPS: 50, Concurrency: 5, Duration: 500 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, zeroLatencyTarget)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := p.QPS * p.Duration.Seconds()
+	lo, hi := want*0.75, want*1.25
+	if m.RequestCount < int64(lo) || m.RequestCount > int64(hi) {
+		t.Fatalf("RequestCount=%d, want between %.0f and %.0f", m.RequestCount, lo, hi)
+	}
+	if m.ErrorCount != 0 {
+		t.Fatalf("ErrorCount=%d, want 0", m.ErrorCount)
+	}
+	if m.ActualQPS <= 0 {
+		t.Fatalf("ActualQPS=%v, want > 0", m.ActualQPS)
+	}
+}
+
+// TestInProcess_WarmupExcluded verifies that samples produced during the
+// warmup window are not counted in aggregate metrics.
+func TestInProcess_WarmupExcluded(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	p := Profile{
+		QPS:         50,
+		Concurrency: 5,
+		Warmup:      300 * time.Millisecond,
+		Duration:    300 * time.Millisecond,
+	}
+
+	// Warmup + Duration = 600ms at 50 QPS ≈ 30 total requests. Only the ~15
+	// that fall inside the measurement window should be counted.
+	m, err := g.Run(context.Background(), p, zeroLatencyTarget)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Upper bound: with warmup, we should never see more than roughly the
+	// full window's worth of requests. Using 25 gives comfortable headroom
+	// while still catching an accidental "warmup samples included" bug (which
+	// would push the count toward ~30).
+	if m.RequestCount > 25 {
+		t.Fatalf("RequestCount=%d includes warmup samples; want ≤25", m.RequestCount)
+	}
+	if m.RequestCount < 5 {
+		t.Fatalf("RequestCount=%d suspiciously low; want ~15", m.RequestCount)
+	}
+	if m.Duration != p.Duration {
+		t.Fatalf("Duration=%v, want %v (measurement window only)", m.Duration, p.Duration)
+	}
+}
+
+// TestInProcess_ErrorAccounting verifies error grouping by canonical code.
+func TestInProcess_ErrorAccounting(t *testing.T) {
+	t.Parallel()
+
+	var (
+		counter atomic.Int64
+	)
+	target := func(context.Context) error {
+		n := counter.Add(1)
+		switch n % 3 {
+		case 0:
+			return status.Error(codes.Unavailable, "boom")
+		case 1:
+			return status.Error(codes.DeadlineExceeded, "slow")
+		default:
+			return nil
+		}
+	}
+
+	g := New()
+	p := Profile{QPS: 30, Concurrency: 5, Duration: 500 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.ErrorCount == 0 {
+		t.Fatal("ErrorCount=0, want > 0")
+	}
+	var sum int64
+	for _, v := range m.ErrorsByCode {
+		sum += v
+	}
+	if sum != m.ErrorCount {
+		t.Fatalf("ErrorsByCode sum=%d, ErrorCount=%d, want equal", sum, m.ErrorCount)
+	}
+	// Sanity: both codes should appear given the round-robin above.
+	for _, want := range []string{codes.Unavailable.String(), codes.DeadlineExceeded.String()} {
+		if m.ErrorsByCode[want] == 0 {
+			t.Fatalf("ErrorsByCode missing %q: %v", want, m.ErrorsByCode)
+		}
+	}
+}
+
+// TestInProcess_LatencyPercentiles verifies percentile ordering and sane
+// values for a bimodal latency distribution.
+func TestInProcess_LatencyPercentiles(t *testing.T) {
+	t.Parallel()
+
+	var counter atomic.Int64
+	target := func(context.Context) error {
+		n := counter.Add(1)
+		if n%10 == 0 {
+			time.Sleep(20 * time.Millisecond) // slow tail
+		} else {
+			time.Sleep(2 * time.Millisecond) // fast body
+		}
+		return nil
+	}
+
+	g := New()
+	p := Profile{QPS: 40, Concurrency: 10, Duration: 800 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount < 10 {
+		t.Fatalf("RequestCount=%d, want plenty of samples", m.RequestCount)
+	}
+	l := m.Latency
+	if l.MinMs > l.P50Ms || l.P50Ms > l.P95Ms || l.P95Ms > l.P99Ms || l.P99Ms > l.MaxMs {
+		t.Fatalf("percentile ordering violated: %+v", l)
+	}
+	if l.P50Ms > 15 {
+		t.Fatalf("P50=%vms too high — should reflect fast body", l.P50Ms)
+	}
+	if l.P99Ms < 5 {
+		t.Fatalf("P99=%vms too low — should reflect slow tail", l.P99Ms)
+	}
+}
+
+// TestInProcess_Saturation verifies that when the pool is far too small to
+// hold the target rate, ActualQPS drops below target but the run still
+// completes without deadlock.
+func TestInProcess_Saturation(t *testing.T) {
+	t.Parallel()
+
+	target := func(context.Context) error {
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	}
+	g := New()
+	// Single worker × 50ms latency ≈ 20 QPS ceiling, well below 100 target.
+	p := Profile{QPS: 100, Concurrency: 1, Duration: 400 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.ActualQPS >= p.QPS {
+		t.Fatalf("ActualQPS=%.1f, want < target %.1f under saturation", m.ActualQPS, p.QPS)
+	}
+	if m.RequestCount == 0 {
+		t.Fatal("saturation deadlocked — no samples recorded")
+	}
+}
+
+// TestInProcess_Cancellation verifies that ctx cancellation returns partial
+// metrics and the underlying error.
+func TestInProcess_Cancellation(t *testing.T) {
+	t.Parallel()
+
+	target := func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			return nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	g := New()
+	p := Profile{QPS: 100, Concurrency: 5, Duration: time.Second}
+	m, err := g.Run(ctx, p, target)
+	if err == nil {
+		t.Fatal("expected ctx error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v, want ctx error", err)
+	}
+	if m == nil {
+		t.Fatal("expected partial metrics on cancellation, got nil")
+	}
+}
+
+// TestInProcess_PanicRecovered verifies that a panicking target is caught
+// and recorded as an INTERNAL error rather than killing the process.
+func TestInProcess_PanicRecovered(t *testing.T) {
+	t.Parallel()
+
+	var count atomic.Int64
+	target := func(context.Context) error {
+		n := count.Add(1)
+		if n%2 == 0 {
+			panic("boom")
+		}
+		return nil
+	}
+
+	g := New()
+	p := Profile{QPS: 20, Concurrency: 3, Duration: 400 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.ErrorCount == 0 {
+		t.Fatal("ErrorCount=0, want panics counted")
+	}
+	// status.Code on a non-status error returns Unknown.
+	if m.ErrorsByCode[codes.Unknown.String()] == 0 {
+		t.Fatalf("expected panics under Unknown: %v", m.ErrorsByCode)
+	}
+}
+
+// TestInProcess_InvalidProfile returns ErrInvalidProfile before any goroutines
+// are spawned.
+func TestInProcess_InvalidProfile(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	_, err := g.Run(context.Background(), Profile{}, zeroLatencyTarget)
+	if err == nil {
+		t.Fatal("expected error for zero profile")
+	}
+	if !errors.Is(err, ErrInvalidProfile) {
+		t.Fatalf("err=%v, want wrapped ErrInvalidProfile", err)
+	}
+}
+
+// TestInProcess_NilTarget returns an error before spawning goroutines.
+func TestInProcess_NilTarget(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	_, err := g.Run(context.Background(), Profile{QPS: 1, Concurrency: 1, Duration: time.Millisecond}, nil)
+	if err == nil {
+		t.Fatal("expected error for nil target")
+	}
+}
+
+// concurrentInvocations records the maximum number of workers observed in
+// flight simultaneously, used to sanity-check the concurrency knob.
+type concurrentInvocations struct {
+	mu      sync.Mutex
+	current int
+	peak    int
+}
+
+func (c *concurrentInvocations) enter() {
+	c.mu.Lock()
+	c.current++
+	if c.current > c.peak {
+		c.peak = c.current
+	}
+	c.mu.Unlock()
+}
+
+func (c *concurrentInvocations) leave() {
+	c.mu.Lock()
+	c.current--
+	c.mu.Unlock()
+}
+
+func (c *concurrentInvocations) Peak() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peak
+}
+
+// TestInProcess_ConcurrencyRespected checks that the worker pool actually
+// caps in-flight requests. A slow target that starts many requests should
+// see peak in-flight equal to (roughly) Concurrency.
+func TestInProcess_ConcurrencyRespected(t *testing.T) {
+	t.Parallel()
+
+	inv := &concurrentInvocations{}
+	target := func(context.Context) error {
+		inv.enter()
+		defer inv.leave()
+		time.Sleep(30 * time.Millisecond)
+		return nil
+	}
+	g := New()
+	p := Profile{QPS: 500, Concurrency: 4, Duration: 400 * time.Millisecond}
+	if _, err := g.Run(context.Background(), p, target); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if peak := inv.Peak(); peak > p.Concurrency {
+		t.Fatalf("peak in-flight %d exceeds Concurrency %d", peak, p.Concurrency)
+	}
+}
+
