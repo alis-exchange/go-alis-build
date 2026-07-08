@@ -7,7 +7,7 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	go.alis.build/adk/launchers v1.0.1
 	go.alis.build/alog v0.1.0
-	go.alis.build/common v1.1.9
+	go.alis.build/common v1.1.10
 	go.alis.build/iam/v3 v3.7.0
 	go.einride.tech/protobuf-bigquery v0.29.0
 	golang.org/x/oauth2 v0.36.0

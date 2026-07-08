@@ -92,8 +92,8 @@ go.alis.build/adk/launchers v1.0.1 h1:QJg13f+onyKAvxcWQlBvX9kQjnSjFaot+6+duR9M5S
 go.alis.build/adk/launchers v1.0.1/go.mod h1:EOX6uC5rIVLChfhOCV6hNsFQpJPlV6IdkEY2ScGzkSw=
 go.alis.build/alog v0.1.0 h1:XiNnZ6EXEcKbKmABNLxDicipg0nezX6FocdhgIYkMX4=
 go.alis.build/alog v0.1.0/go.mod h1:PY1zq0HD5NnBkqZT+krUndhUTVhPtraieCM1DqxmPeQ=
-go.alis.build/common v1.1.9 h1:tYEwrV/D/JZ8ktBaaHuU0r55dRaIho0lOO1IPavOagE=
-go.alis.build/common v1.1.9/go.mod h1:PwCtHaSYYR8bN1Dk0eRao+aaCPnapxBwgG0GZyzaaXg=
+go.alis.build/common v1.1.10 h1:Wuxz9WhxW9OPGVXQ52wQDDURdCevZFC1/g+4pozCA7M=
+go.alis.build/common v1.1.10/go.mod h1:PwCtHaSYYR8bN1Dk0eRao+aaCPnapxBwgG0GZyzaaXg=
 go.alis.build/iam/v3 v3.7.0 h1:uDW03n4+en6Zlsm4V9cUrBrntAGiEUu5NXbmDE53pgU=
 go.alis.build/iam/v3 v3.7.0/go.mod h1:h3zOJW0Z9Zu9QS0elcf75kFoIin5dFVGY71cXI8PAO0=
 go.einride.tech/aip v0.80.0 h1:yB+FMVA2homjwYyH4lD3VB+1rQj1OaRPSR1nBRp4/3c=
