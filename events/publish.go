@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strings"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -23,8 +22,9 @@ type PublishOptions struct {
 	jitter *jitter
 	// Topic
 	topic string
-	// Async Publish
-	async bool
+	// background makes Publish return without waiting for the Pub/Sub broker to
+	// ack the message. When false (the default), Publish blocks on the ack.
+	background bool
 }
 
 // Jitter is used to configure any randomness within the Publish method.
@@ -88,12 +88,34 @@ func WithTopic(topic string) PublishOption {
 }
 
 /*
-WithSync configures the Publish method to run synchronously.
+WithBackground makes Publish return without waiting for the Pub/Sub broker
+to ack the message. The publish is scheduled on the topic's internal
+goroutine and Publish returns nil immediately.
+
+Delivery is not guaranteed: if the process exits before the topic finishes
+flushing, the message may be lost. Use only when publish latency dominates
+and best-effort delivery is acceptable.
+
+By default (i.e. without this option) Publish blocks until the ack is
+received and any broker error is returned to the caller.
+*/
+func WithBackground() PublishOption {
+	return func(opts *PublishOptions) {
+		opts.background = true
+	}
+}
+
+/*
+WithSync is retained for backwards compatibility and forwards to
+[WithBackground].
+
+Deprecated: WithSync is misnamed — it does not make Publish synchronous.
+It enables fire-and-forget publishing where Publish returns without
+waiting for the Pub/Sub broker to ack the message. Use [WithBackground]
+instead.
 */
 func WithSync() PublishOption {
-	return func(opts *PublishOptions) {
-		opts.async = false
-	}
+	return WithBackground()
 }
 
 /*
@@ -107,9 +129,16 @@ Example: projects/my-project-123/topics/myorg.aa.files.v1.EmailCreatedEvent.
 
 The topic name is constructed using the ALIS_OS_PROJECT environment variable and the event type.
 
+By default, Publish blocks until the Pub/Sub broker acknowledges the message
+and returns any broker error to the caller. Pass [WithBackground] to schedule
+the publish on a background goroutine and return immediately (best-effort
+delivery, no error surfaced for broker failures).
+
 The following PublishOptions can be provided to customize the publishing behavior:
   - WithOrderingKey: Sets the ordering key for the message.
   - WithJitter: Adds a random delay before publishing the message.
+  - WithTopic: Overrides the default topic name derived from the message type.
+  - WithBackground: Publishes without waiting for the broker ack.
 
 If an error occurs during publishing, the function will return an error.
 */
@@ -122,7 +151,6 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 	// The topic is derived from the message type, using proto reflection.
 	options := &PublishOptions{
 		topic: string(event.ProtoReflect().Descriptor().FullName()), // -> myorg.co.files.v1.EmailCreatedEvent
-		async: true,
 	}
 
 	// Add any user overrides, if provided.
@@ -142,23 +170,21 @@ func (c *Client) Publish(ctx context.Context, event proto.Message, opts ...Publi
 		time.Sleep(delay)
 	}
 
-	topic := c.topic(options.topic)
-	result := topic.Publish(ctx, &pubsub.Message{
+	publisher := c.pubsub.Publisher(options.topic)
+	result := publisher.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: options.orderingKey,
 	})
 
-	if options.async {
-		defer topic.Stop()
-		// Use the Get method to block until the Publish call completes or the context is done
-		_, err = result.Get(ctx)
-		if err != nil {
-			return fmt.Errorf("waiting for publish event to complete: %w", err)
-		}
-	} else {
-		go topic.Stop()
+	if options.background {
+		go publisher.Stop()
+		return nil
 	}
 
+	defer publisher.Stop()
+	if _, err = result.Get(ctx); err != nil {
+		return fmt.Errorf("waiting for publish event to complete: %w", err)
+	}
 	return nil
 }
 
@@ -202,8 +228,8 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	// Now iterate through each Topic
 	for eventType, events := range eventsByType {
 
-		topic := c.topic(topicNameForEventType(eventType, options))
-		defer topic.Stop()
+		publisher := c.pubsub.Publisher(topicNameForEventType(eventType, options))
+		defer publisher.Stop()
 
 		// Publish results for this topic's events. Scoped to the current topic
 		// group so the Get loop below never observes a nil result belonging to
@@ -228,7 +254,7 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 				time.Sleep(delay)
 			}
 
-			results[i] = topic.Publish(ctx, &pubsub.Message{
+			results[i] = publisher.Publish(ctx, &pubsub.Message{
 				Data:        data,
 				OrderingKey: options.orderingKey,
 			})
@@ -246,24 +272,11 @@ func (c *Client) BatchPublish(ctx context.Context, events []proto.Message, opts 
 	return nil
 }
 
+// topicNameForEventType returns the topic name to publish an event of the
+// given type to, respecting an explicit override on options when set.
 func topicNameForEventType(eventType string, options *PublishOptions) string {
 	if options.topic != "" {
 		return options.topic
 	}
 	return eventType
-}
-
-func (c *Client) topic(topic string) *pubsub.Topic {
-	if projectID, topicID, ok := parseTopicResourceName(topic); ok {
-		return c.pubsub.TopicInProject(topicID, projectID)
-	}
-	return c.pubsub.Topic(topic)
-}
-
-func parseTopicResourceName(name string) (projectID, topicID string, ok bool) {
-	parts := strings.Split(name, "/")
-	if len(parts) != 4 || parts[0] != "projects" || parts[2] != "topics" || parts[1] == "" || parts[3] == "" {
-		return "", "", false
-	}
-	return parts[1], parts[3], true
 }

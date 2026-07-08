@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 )
 
 // Client object to manage Publishing to a Pub/Sub topic.
@@ -33,7 +33,11 @@ func WithProject(project string) ClientOption {
 	}
 }
 
-// New creates a new instance of the Client object.
+// NewClient creates a new instance of the Client object.
+//
+// The Google Cloud project defaults to the ALIS_OS_PROJECT environment
+// variable and can be overridden with [WithProject]. NewClient returns an
+// error if no project can be resolved.
 func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 	// Configure the defualt options
 	options := &ClientOptions{
@@ -55,4 +59,17 @@ func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 	return &Client{
 		pubsub: client,
 	}, nil
+}
+
+/*
+Close releases resources held by the underlying Pub/Sub client.
+
+Close should be called when the Client is no longer needed. It is safe to
+call Close on a nil Client. After Close returns, the Client must not be used.
+*/
+func (c *Client) Close() error {
+	if c == nil || c.pubsub == nil {
+		return nil
+	}
+	return c.pubsub.Close()
 }
