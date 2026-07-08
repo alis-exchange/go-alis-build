@@ -22,7 +22,6 @@ import (
     "context"
 
     "go.alis.build/evals"
-    iam "go.alis.build/iam/v3"
 
     "example.com/internal/clients"
     "example.com/internal/judge"
@@ -32,7 +31,6 @@ import (
 func Register() {
     s := evals.MustNewAgentEvalSuite("example-agent-v1",
         evals.WithEnv("agent-runtime"),
-        evals.WithIdentity(iam.SystemIdentity),
     )
 
     s.MustCase("golden-short-summary", func(ctx context.Context, t *evals.T) {

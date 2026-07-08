@@ -10,11 +10,17 @@ import (
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
 	"go.alis.build/evals/loadgen"
-	iam "go.alis.build/iam/v3"
 )
 
 // SuiteHook runs once per suite execution (before or after selected cases).
 type SuiteHook func(context.Context) error
+
+// ContextDecorator transforms an outgoing context before the runner hands
+// it to suite hooks and case bodies. It is the framework's only
+// auth-adjacent surface: callers stamp caller identity, auth tokens,
+// tracing state, or any other request-scoped data by returning a derived
+// context. The framework itself never inspects the values it carries.
+type ContextDecorator func(context.Context) context.Context
 
 // TestSuite groups test cases that share optional environment and lifecycle hooks.
 // Case names are qualified as "{suite}.{case}" at construction time.
@@ -24,7 +30,7 @@ type TestSuite struct {
 	setup         SuiteHook
 	teardown      SuiteHook
 	cases         []TestCase
-	identity      *iam.Identity
+	decorate      ContextDecorator
 	stopOnFailure bool
 }
 
@@ -35,7 +41,7 @@ type EvalSuite struct {
 	setup         SuiteHook
 	teardown      SuiteHook
 	cases         []EvalCase
-	identity      *iam.Identity
+	decorate      ContextDecorator
 	stopOnFailure bool
 }
 
@@ -91,18 +97,22 @@ func WithEvalEnvironment(names ...string) EvalSuiteOption {
 	}
 }
 
-// WithIdentity simulates a specific caller for every case in the suite.
-func WithIdentity(identity *iam.Identity) TestSuiteOption {
+// WithContext installs a [ContextDecorator] applied to the context passed
+// to the suite's setup, teardown, and every case body. It is the seam
+// through which callers stamp caller identity, auth headers, or any
+// other request-scoped values on outgoing calls. A nil decorator is a
+// no-op.
+func WithContext(fn ContextDecorator) TestSuiteOption {
 	return func(s *TestSuite) error {
-		s.identity = identity
+		s.decorate = fn
 		return nil
 	}
 }
 
-// WithEvalIdentity simulates a specific caller for every case in the eval suite.
-func WithEvalIdentity(identity *iam.Identity) EvalSuiteOption {
+// WithEvalContext is [WithContext] for eval suites.
+func WithEvalContext(fn ContextDecorator) EvalSuiteOption {
 	return func(s *EvalSuite) error {
-		s.identity = identity
+		s.decorate = fn
 		return nil
 	}
 }
@@ -278,7 +288,7 @@ type TestSuiteRun struct {
 	Setup         SuiteHook
 	Teardown      SuiteHook
 	Cases         []TestCase
-	Identity      *iam.Identity
+	Decorate      ContextDecorator
 	StopOnFailure bool
 }
 
@@ -289,7 +299,7 @@ type EvalSuiteRun struct {
 	Setup         SuiteHook
 	Teardown      SuiteHook
 	Cases         []EvalCase
-	Identity      *iam.Identity
+	Decorate      ContextDecorator
 	StopOnFailure bool
 }
 
@@ -344,11 +354,11 @@ func (s *EvalSuite) Environments() []string {
 	return append([]string(nil), s.environments...)
 }
 
-// SuiteIdentity returns the identity every case in the suite runs as,
-// or nil to fall back to the runner default.
-func (s *TestSuite) SuiteIdentity() *iam.Identity {
+// Decorator returns the [ContextDecorator] applied to every case in the
+// suite, or nil to fall back to the runner default.
+func (s *TestSuite) Decorator() ContextDecorator {
 	if s != nil {
-		return s.identity
+		return s.decorate
 	}
 	return nil
 }
@@ -392,11 +402,11 @@ func (s *EvalSuite) TeardownHook() SuiteHook {
 	return nil
 }
 
-// SuiteIdentity returns the identity every case in the eval suite runs as,
-// or nil to fall back to the runner default.
-func (s *EvalSuite) SuiteIdentity() *iam.Identity {
+// Decorator returns the [ContextDecorator] applied to every case in the
+// eval suite, or nil to fall back to the runner default.
+func (s *EvalSuite) Decorator() ContextDecorator {
 	if s != nil {
-		return s.identity
+		return s.decorate
 	}
 	return nil
 }

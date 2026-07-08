@@ -6,8 +6,13 @@ import (
 
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/suite"
-	iam "go.alis.build/iam/v3"
 )
+
+// ContextDecorator transforms an outgoing context before the runner hands
+// it to suite hooks and case bodies. Use it with [WithContext] to stamp
+// caller identity, auth tokens, tracing state, or any other request-scoped
+// value on outgoing calls made from inside a case.
+type ContextDecorator = suite.ContextDecorator
 
 // CaseFunc is the shape of a case body: measure the SUT via Call, then record
 // leaves on T.
@@ -102,11 +107,22 @@ func WithTeardown(h suite.SuiteHook) SuiteOption {
 	}
 }
 
-// WithIdentity simulates a specific caller for every case in the suite.
-func WithIdentity(identity *iam.Identity) SuiteOption {
+// WithContext installs a [ContextDecorator] applied to the context handed
+// to the suite's setup, teardown, and every case body. It is the framework's
+// only auth-adjacent surface: callers use it to stamp caller identity,
+// auth headers, tracing state, or any other request-scoped values on
+// outgoing calls issued from inside cases. The framework never inspects
+// what a decorator attaches; it only propagates it.
+//
+// Case authors can further decorate the context they receive inside a
+// case body — the ctx handed to a case is always a descendant of the
+// caller's ctx (deadlines, cancellation, and values are preserved).
+//
+// A nil decorator is a no-op.
+func WithContext(fn ContextDecorator) SuiteOption {
 	return configApplier{
-		test: suite.WithIdentity(identity),
-		eval: suite.WithEvalIdentity(identity),
+		test: suite.WithContext(fn),
+		eval: suite.WithEvalContext(fn),
 	}
 }
 

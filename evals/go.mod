@@ -9,9 +9,7 @@ require (
 	go.alis.build/alog v0.1.0
 	go.alis.build/common v1.1.10
 	go.alis.build/events v1.0.5
-	go.alis.build/iam/v3 v3.7.0
 	go.einride.tech/protobuf-bigquery v0.29.0
-	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.287.1
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
@@ -54,6 +52,7 @@ require (
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect

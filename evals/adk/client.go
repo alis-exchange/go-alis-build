@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
-	"google.golang.org/api/idtoken"
-	"google.golang.org/api/option"
-	"golang.org/x/oauth2"
 )
 
 // Client runs agent evaluations via the ADK evals HTTP sublauncher.
@@ -41,55 +38,96 @@ type runEvalResponse struct {
 	RunEvalResults []models.RunEvalResult `json:"runEvalResults"`
 }
 
-// HTTPClient calls the ADK evals launcher over HTTP with Cloud Run auth headers.
+// defaultTimeout is the request timeout applied to newly constructed
+// HTTPClients when the caller does not override via [WithTimeout]. It is
+// generous by design: ADK eval runs are typically slow.
+const defaultTimeout = 10 * time.Minute
+
+// HTTPClient calls the ADK evals launcher over HTTP. It is transport-agnostic:
+// callers plug in any authentication they need via [WithTransport].
 type HTTPClient struct {
 	httpClient *http.Client
 	baseURL    string
 	pathPrefix string
 }
 
-// NewHTTPClient constructs a client that mints a Cloud Run ID token for baseURL.
-func NewHTTPClient(ctx context.Context, baseURL string) (*HTTPClient, error) {
-	audience, err := AudienceFromBaseURL(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	tokenSource, err := idtoken.NewTokenSource(ctx, audience, option.WithAudiences(audience))
-	if err != nil {
-		return nil, fmt.Errorf("adk client: token source: %w", err)
-	}
-	return NewHTTPClientWithTokenSource(baseURL, "/api", tokenSource), nil
+// HTTPClientOption configures an [HTTPClient] at construction time.
+type HTTPClientOption func(*httpClientConfig)
+
+type httpClientConfig struct {
+	transport  http.RoundTripper
+	timeout    time.Duration
+	timeoutSet bool
+	pathPrefix string
 }
 
-// NewHTTPClientWithTokenSource constructs a client with a preconfigured token source.
-func NewHTTPClientWithTokenSource(baseURL, pathPrefix string, tokenSource oauth2.TokenSource) *HTTPClient {
+// WithTransport sets the [http.RoundTripper] used for outbound requests.
+// Callers install their own authentication here (bearer tokens, oauth2,
+// IAM identity headers, mTLS, etc.). A nil transport is equivalent to
+// [http.DefaultTransport].
+func WithTransport(rt http.RoundTripper) HTTPClientOption {
+	return func(c *httpClientConfig) {
+		c.transport = rt
+	}
+}
+
+// WithTimeout overrides the default 10-minute request timeout applied by
+// the underlying [http.Client]. A zero or negative duration disables the
+// client-level timeout; callers can still cap individual requests via
+// context deadlines.
+func WithTimeout(d time.Duration) HTTPClientOption {
+	return func(c *httpClientConfig) {
+		c.timeout = d
+		c.timeoutSet = true
+	}
+}
+
+// WithPathPrefix overrides the default "/api" path prefix mounted by the
+// ADK evals sublauncher. An empty prefix restores the default.
+func WithPathPrefix(prefix string) HTTPClientOption {
+	return func(c *httpClientConfig) {
+		c.pathPrefix = prefix
+	}
+}
+
+// NewHTTPClient constructs a client for the ADK evals sublauncher at
+// baseURL. With no options the client uses [http.DefaultTransport] (no
+// auth), a 10-minute request timeout suitable for long-running eval runs,
+// and the "/api" path prefix.
+//
+// Plug in authentication via [WithTransport]; tune the request timeout
+// via [WithTimeout]; override the path prefix via [WithPathPrefix].
+func NewHTTPClient(baseURL string, opts ...HTTPClientOption) *HTTPClient {
+	cfg := httpClientConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	transport := cfg.transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	timeout := defaultTimeout
+	if cfg.timeoutSet {
+		if cfg.timeout > 0 {
+			timeout = cfg.timeout
+		} else {
+			timeout = 0
+		}
+	}
+	pathPrefix := cfg.pathPrefix
 	if pathPrefix == "" {
-		pathPrefix = "/api"
+		pathPrefix = defaultPathPrefix
 	}
 	return &HTTPClient{
 		baseURL:    strings.TrimSuffix(strings.TrimSpace(baseURL), "/"),
 		pathPrefix: pathPrefix,
 		httpClient: &http.Client{
-			Transport: &Transport{
-				Base:        http.DefaultTransport,
-				TokenSource: tokenSource,
-			},
-			Timeout: 10 * time.Minute,
+			Transport: transport,
+			Timeout:   timeout,
 		},
 	}
-}
-
-// WithPathPrefix overrides the default "/api" path prefix.
-func (c *HTTPClient) WithPathPrefix(prefix string) *HTTPClient {
-	if c == nil {
-		return nil
-	}
-	if prefix == "" {
-		c.pathPrefix = "/api"
-	} else {
-		c.pathPrefix = prefix
-	}
-	return c
 }
 
 // RunEval POSTs to .../eval_sets/{evalSetId}/run_eval and decodes results.

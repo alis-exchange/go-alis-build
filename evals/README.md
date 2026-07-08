@@ -38,7 +38,7 @@ Pub/Sub or BigQuery pin that module directly.
 - [Helpers](#helpers)
 
 8. [Filter grammar](#filter-grammar)
-9. [Authentication](#authentication)
+9. [Context and authentication](#context-and-authentication)
 10. [Package layout](#package-layout)
 11. [End-to-end lifecycle](#end-to-end-lifecycle)
 
@@ -283,7 +283,6 @@ import (
 
     "go.alis.build/evals"
     "go.alis.build/evals/env"
-    iam "go.alis.build/iam/v3"
 
     "example.com/internal/clients"
     examplepb "example.com/pb/example/v1"
@@ -303,7 +302,6 @@ func Register() {
     s := evals.MustNewIntegrationSuite("example-v1",
         evals.WithEnv(exampleEnv),
         evals.WithSetup(sanityCheck),
-        evals.WithIdentity(iam.SystemIdentity),
     )
 
     s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
@@ -369,7 +367,6 @@ import (
     "context"
 
     "go.alis.build/evals"
-    iam "go.alis.build/iam/v3"
 
     "example.com/internal/clients"
     "example.com/internal/judge"
@@ -379,7 +376,6 @@ import (
 func Register() {
     s := evals.MustNewAgentEvalSuite("example-agent-v1",
         evals.WithEnv("agent-runtime"),
-        evals.WithIdentity(iam.SystemIdentity),
     )
 
     s.MustCase("golden-short-summary", func(ctx context.Context, t *evals.T) {
@@ -569,13 +565,14 @@ All apply to both `NewIntegrationSuite` and `NewAgentEvalSuite`.
 | `evals.WithEnv(names ...string)`           | Declare shared environments. Every name must have been passed to `env.Register` before the suite is constructed.                                                                 |
 | `evals.WithSetup(hook suite.SuiteHook)`    | Runs once per LRO before the suite's cases. Signature: `func(ctx context.Context) error`. Failure fails every case in the suite with a `setup` marker and skips teardown.        |
 | `evals.WithTeardown(hook suite.SuiteHook)` | Runs once after the suite's cases (or before propagating cancellation). Errors are logged but ignored.                                                                           |
-| `evals.WithIdentity(id *iam.Identity)`     | Simulate a caller. Every RPC issued from cases in the suite carries the identity's headers (`x-alis-identity`, `x-alis-forwarded-authorization`). Nil uses `iam.SystemIdentity`. |
+| `evals.WithContext(fn evals.ContextDecorator)` | Install a `func(ctx) ctx` applied to the suite's setup, teardown, and every case body. The framework's only auth-adjacent surface: use it to stamp caller identity, auth headers, tokens, tracing, or any request-scoped context values. See [Context and authentication](#context-and-authentication). |
 | `evals.StopOnFailure()`                    | Once any case in the suite ends non-`PASSED`, remaining cases are recorded `NOT_EVALUATED` with a "preceding case … failed" reason. Use for stateful flows.                      |
 
 ### Load-suite options
 
 Applied to `NewLoadSuite`. Kept separate from `SuiteOption` because several test/eval options
-(`StopOnFailure`, `WithIdentity`) do not have sensible load-test semantics.
+(`StopOnFailure`, `WithContext`) do not have sensible load-test semantics — load suites always
+run under whatever context the runner installs so measurements match production traffic.
 
 | Option                                                                   | Effect                                                                                                                                                                 |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -939,26 +936,64 @@ Unknown suite/case ids are rejected synchronously at the RPC boundary with `Inva
 
 ---
 
-## Authentication
+## Context and authentication
 
-Two independent layers:
+The framework does **not** attach any authentication to outgoing calls. It propagates whatever
+context the caller supplies, so consumers wire auth (bearer tokens, oauth2, IAM identity headers,
+mTLS, service-account impersonation, …) via a single seam: a `ContextDecorator`.
 
-- **Cloud Run invoker auth** is added by `go.alis.build/client/v2` on every outbound gRPC call (OIDC
-  ID token in the `Authorization` header). Nothing in this framework touches it.
-- **Application-level caller identity** is what `evals.WithIdentity` controls. It is set on the
-  outgoing context by `evals/auth.Outgoing` as two headers:
-  - `x-alis-identity` — marshaled `iam.Identity`
-  - `x-alis-forwarded-authorization` — `identity.UnsignedJWT`
+```go
+type ContextDecorator = func(context.Context) context.Context
+```
 
-If no `WithIdentity` is set on the suite, the runner uses `iam.SystemIdentity`. Load suites always
-run with system identity — the goal is to measure the SUT under the same identity production traffic
-uses.
+Two layers apply the decorator:
 
-For ADK-backed agent evals the equivalent HTTP headers are set on every request:
+- `evals.WithContext(fn)` — suite level. Applied to the suite's setup, teardown, and every case body.
+- Runner level (via the runner's own `WithContext`) — applied to environment hooks and to any suite
+  that doesn't declare its own decorator. A suite-level decorator fully replaces the runner-level
+  one for that suite; there is no chaining.
 
-- `X-Serverless-Authorization` — Cloud Run ID token
-- `X-Alis-Identity` — marshaled `iam.Identity`
-- `X-Alis-Forwarded-Authorization` — `identity.UnsignedJWT`
+**Context propagation contract.** Every `ctx` handed to user code (env hooks, suite hooks, case
+bodies, load workers) is a descendant, via zero or more `ContextDecorator` calls, of the ctx the
+caller passed to the framework. Nothing in the framework calls `context.Background()`,
+`context.TODO()`, or `context.WithoutCancel()`. Deadlines, cancellation, tracing state, and custom
+values propagate through to every outbound call the case body issues.
+
+Case authors always retain the escape hatch of further decorating `ctx` inside the case body.
+
+### Example: stamping IAM identity headers
+
+Consumers of the Alis IAM stack write a tiny adapter in their own repo (this package deliberately
+has no `iam` dependency):
+
+```go
+func WithAlisIdentity(id *iam.Identity) evals.SuiteOption {
+    if id == nil {
+        id = iam.SystemIdentity
+    }
+    return evals.WithContext(func(ctx context.Context) context.Context {
+        ctx = id.Context(ctx)
+        return id.LegacyOutgoingMetadata(ctx)
+    })
+}
+
+s := evals.MustNewIntegrationSuite("example-v1", WithAlisIdentity(iam.SystemIdentity))
+```
+
+### ADK agent evals
+
+The ADK HTTP client is likewise transport-agnostic. Consumers plug in whatever auth they use via
+`adk.WithTransport`:
+
+```go
+client := adk.NewHTTPClient(baseURL,
+    adk.WithTransport(myAuthTransport),   // any http.RoundTripper
+    adk.WithTimeout(30*time.Minute),      // override default 10 minutes
+)
+```
+
+For Cloud Run–hosted sublaunchers, `adk.AudienceFromBaseURL(baseURL)` returns the audience string
+callers pass into their own token source when building the transport.
 
 ---
 
@@ -967,8 +1002,7 @@ For ADK-backed agent evals the equivalent HTTP headers are set on every request:
 | Path                    | Role                                                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
-| `evals/adk`             | ADK evaluation-launcher client and lazy `AgentEvalProvider`.                                                                             |
-| `evals/auth`            | Outgoing gRPC identity headers (`Outgoing`, `SystemOutgoing`).                                                                           |
+| `evals/adk`             | ADK evaluation-launcher client (transport-agnostic) and lazy `AgentEvalProvider`.                                                        |
 | `evals/env`             | Shared environment registration and activation.                                                                                          |
 | `evals/errors`          | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                               |
 | `evals/execution`       | Proto-free in-process result types (boundary between case-facing and wire-facing).                                                       |

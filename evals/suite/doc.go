@@ -43,7 +43,8 @@
 //   - [WithEnvironment] / [WithEvalEnvironment] — declare env dependencies
 //   - [WithSetup] / [WithEvalSetup]             — before-cases hook
 //   - [WithTeardown] / [WithEvalTeardown]       — after-cases hook
-//   - [WithIdentity] / [WithEvalIdentity]       — simulate caller identity
+//   - [WithContext] / [WithEvalContext]         — decorate the outgoing
+//     context (stamp caller identity, auth headers, tracing, etc.)
 //   - [WithStopOnFailure] / [WithEvalStopOnFailure] — halt-on-first-fail
 //
 // Load suites use their own set:
@@ -52,9 +53,10 @@
 //   - [WithLoadSetup] / [WithLoadTeardown]      — before/after-cases hooks
 //   - [WithLoadProfileOverride](mode, profile)  — per-mode profile override
 //
-// Load suites deliberately have no identity option: load tests should
-// run under the service's default identity so their measurements match
-// production traffic.
+// Load suites deliberately have no per-suite [ContextDecorator]: load
+// tests should run under whatever the runner's default decorator installs
+// so measurements match production traffic. Use runner-level context
+// decoration for cross-suite defaults.
 //
 // # Errors
 //

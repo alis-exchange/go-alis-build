@@ -17,7 +17,7 @@ eval).
 | `evals.WithEnv(names ...string)` | Declare shared environments. Every name must have been passed to [`env.Register`](/api/environment.md) before the suite is constructed, or the constructor panics with `suite.ErrUnknownEnvironment`. |
 | `evals.WithSetup(hook suite.SuiteHook)` | Runs once per LRO before the suite's cases. Signature: `func(ctx context.Context) error`. Failure fails every case in the suite with a `setup` marker and skips teardown. |
 | `evals.WithTeardown(hook suite.SuiteHook)` | Runs once after the suite's cases (or before propagating cancellation). Errors are logged but ignored. |
-| `evals.WithIdentity(id *iam.Identity)` | Simulate a caller. Every RPC issued from cases in the suite carries the identity's headers (`x-alis-identity`, `x-alis-forwarded-authorization`). Nil uses `iam.SystemIdentity`. |
+| `evals.WithContext(fn evals.ContextDecorator)` | Install a `func(ctx) ctx` applied to the suite's setup, teardown, and every case body. The framework's only auth-adjacent surface: use it to stamp caller identity, auth headers, tokens, tracing state, or any request-scoped values. The framework itself attaches no auth. |
 | `evals.StopOnFailure()` | Once any case in the suite ends non-`PASSED`, remaining cases are recorded `NOT_EVALUATED` with a "preceding case … failed" reason. Use for stateful flows. |
 
 # Hook signatures

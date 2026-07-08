@@ -28,15 +28,17 @@ func WithClientFactory(fn clientFactory) ProviderOption {
 }
 
 // NewProvider constructs a lazy agent eval provider for the given agent config.
+//
+// The default client factory returns an unauthenticated [HTTPClient]
+// (see [NewHTTPClient]) — suitable for local or already-authenticated
+// endpoints. Consumers whose ADK sublauncher requires auth supply a
+// custom factory via [WithClientFactory] that constructs the client with
+// their own [WithTransport].
 func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 	p := &Provider{
 		agent: agent,
-		newClient: func(ctx context.Context, baseURL, pathPrefix string) (Client, error) {
-			c, err := NewHTTPClient(ctx, baseURL)
-			if err != nil {
-				return nil, err
-			}
-			return c.WithPathPrefix(pathPrefix), nil
+		newClient: func(_ context.Context, baseURL, pathPrefix string) (Client, error) {
+			return NewHTTPClient(baseURL, WithPathPrefix(pathPrefix)), nil
 		},
 	}
 	for _, opt := range opts {

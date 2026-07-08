@@ -18,7 +18,20 @@ suites.
 
 - `adk.Agent` — configuration struct: `BaseURL`, `PathPrefix`,
   `AppName`, `DefaultMetrics`, `MetricOverrides`, `IncludeEvalSet`.
-- `adk.NewProvider(agent Agent) *Provider` — constructor.
+- `adk.NewProvider(agent Agent, opts ...ProviderOption) *Provider` —
+  provider constructor.
+- `adk.WithClientFactory(fn)` — override the default HTTP client
+  factory (typically to install authentication on the client).
+- `adk.NewHTTPClient(baseURL string, opts ...HTTPClientOption) *HTTPClient`
+  — transport-agnostic HTTP client for the sublauncher.
+- `adk.WithTransport(rt http.RoundTripper)` — install any auth
+  transport (bearer, oauth2, Cloud Run ID token, mTLS, etc.).
+- `adk.WithTimeout(d time.Duration)` — override the default
+  10-minute request timeout.
+- `adk.WithPathPrefix(prefix string)` — override the default `/api`
+  path prefix.
+- `adk.AudienceFromBaseURL(baseURL string)` — URL helper for callers
+  minting Cloud Run ID tokens.
 - `adk.ResponseMatchScore(threshold float64)` — helper that produces
   a common ADK metric.
 
@@ -28,10 +41,10 @@ suites.
 | ---- | ------- |
 | `agent.go` | `Agent` struct — configuration surface. |
 | `provider.go` | `Provider` — implements `registry.AgentEvalProvider`. |
-| `client.go` | HTTP client for `/api/list_eval_sets` and `/api/run_eval`. |
+| `client.go` | Transport-agnostic HTTP client for `/api/list_eval_sets` and `/api/run_eval`. |
 | `adapter.go` | Converts ADK responses into `execution` cases. |
 | `filter.go` | Filters eval sets by `case_ids` and `IncludeEvalSet`. |
-| `auth.go` | Sets `X-Serverless-Authorization`, `X-Alis-Identity`, `X-Alis-Forwarded-Authorization`. |
+| `url.go` | URL parsing helpers (`AudienceFromBaseURL`). |
 | `errors.go` | Typed errors for missing agent, HTTP failures. |
 | `doc.go` | Package documentation. |
 | `*_test.go` | Tests. |

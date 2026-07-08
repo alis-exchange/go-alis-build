@@ -6,9 +6,8 @@
 // The framework is split into a small authoring package (this one) and a
 // set of runtime subpackages that consumers rarely import directly:
 // [suite], [registry], [runner], [mapper], [report], [execution],
-// [loadgen], and the case-adjacent helpers in [env], [auth], and [adk].
-// See the top-level README for a wiring diagram and the end-to-end
-// lifecycle.
+// [loadgen], and the case-adjacent helpers in [env] and [adk]. See the
+// top-level README for a wiring diagram and the end-to-end lifecycle.
 //
 // # Suites and cases
 //
@@ -67,7 +66,6 @@
 //
 //	s := evals.MustNewAgentEvalSuite("example-agent-v1",
 //	    evals.WithEnv("agent-runtime"),
-//	    evals.WithIdentity(iam.SystemIdentity),
 //	)
 //	s.MustCase("golden-summary", func(ctx context.Context, t *evals.T) {
 //	    r := evals.Call(ctx, func(ctx context.Context) (*agentpb.Reply, error) {
@@ -123,9 +121,11 @@
 //   - [WithSetup](hook) / [WithTeardown](hook) — run before/after the
 //     suite's cases. Setup failure fails every case with a setup-error
 //     marker and skips teardown.
-//   - [WithIdentity](identity) — simulate a specific caller for every RPC
-//     issued by the suite's cases. Uses [auth.Outgoing] to attach identity
-//     headers on outgoing gRPC calls.
+//   - [WithContext](fn) — install a [ContextDecorator] that transforms
+//     the outgoing context handed to setup, teardown, and every case in
+//     the suite. This is the framework's only auth-adjacent surface;
+//     callers stamp caller identity, auth headers, tracing state, or any
+//     other request-scoped values here.
 //   - [StopOnFailure]() — mark the suite so a failing case causes the
 //     remaining cases to be recorded NOT_EVALUATED. Use for stateful
 //     flows where later cases have no meaning after a preceding step
@@ -153,18 +153,22 @@
 // per suite. This lets several suites share expensive setup (seeding a
 // database, warming a cache) without paying the cost repeatedly.
 //
-// # Authentication
+// # Context and authentication
 //
-// Identity is propagated to the SUT via three headers set by the [auth]
-// subpackage:
+// The framework never attaches auth to outgoing calls itself. Callers
+// wire whatever auth they use — bearer tokens, oauth2, IAM identity
+// headers, mTLS, etc. — by supplying a [ContextDecorator] via
+// [WithContext] at the suite level, or via runner-level context
+// decoration for a cross-suite default. The decorator receives the
+// caller-supplied ctx and returns a derived ctx used for every hook and
+// case body in the suite. Whatever the decorator attaches (metadata,
+// tokens, values) propagates through Go's normal context inheritance to
+// every outbound call the case body makes.
 //
-//   - `x-alis-identity`     — marshaled iam.Identity
-//   - `x-alis-forwarded-authorization` — the identity's unsigned JWT
-//   - Cloud Run invoker auth is added separately by go.alis.build/client/v2
-//
-// [WithIdentity] on a suite is the usual entry point. If no identity is
-// set on the suite or the runner, RPCs go out with the caller's identity
-// as-received.
+// Case authors always retain the escape hatch of further decorating the
+// ctx they receive inside the case body. The ctx handed to a case is
+// always a descendant of the ctx passed to the LRO, so deadlines,
+// cancellation, and existing values are preserved.
 //
 // # Assertion primitives
 //

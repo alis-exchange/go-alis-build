@@ -8,12 +8,10 @@ import (
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
-	"go.alis.build/evals/auth"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
-	iam "go.alis.build/iam/v3"
 )
 
 // Runner executes registered suites against a target and reports outcomes.
@@ -30,7 +28,7 @@ import (
 // expressed via [loadgen.Profile.Concurrency].
 type Runner struct {
 	progress func(completed, total int)
-	identity *iam.Identity
+	decorate suite.ContextDecorator
 }
 
 // Option configures a [Runner] at construction time.
@@ -55,26 +53,47 @@ func WithProgress(fn func(completed, total int)) Option {
 	}
 }
 
-// WithIdentity sets a fallback caller identity for suites that don't
-// declare one via [suite.TestSuiteRun.Identity] or [suite.EvalSuiteRun.Identity].
-// The identity is attached to the outgoing context via [auth.Outgoing]
-// for every case in the suite.
-func WithIdentity(identity *iam.Identity) Option {
+// WithContext installs a runner-wide [suite.ContextDecorator]. The
+// decorator is applied to the ctx handed to environment hooks and to
+// every suite that does not declare its own decorator via
+// [suite.TestSuiteRun.Decorate] / [suite.EvalSuiteRun.Decorate]. Suite-level
+// decorators fully replace the runner-level one for that suite; there is
+// no chaining.
+//
+// The runner never inspects the values a decorator attaches; it only
+// propagates them. Callers use this seam to stamp caller identity, auth
+// headers, tracing state, or any other request-scoped data.
+//
+// The decorator may be invoked multiple times per LRO — once for
+// environment setup/teardown and once per suite that inherits the
+// runner-level default — so it should be cheap and free of observable
+// side effects. Callers that need to perform expensive per-LRO work
+// (minting a token, opening a connection) should do it once at
+// construction time and let the decorator only attach the pre-built
+// value to the context.
+func WithContext(fn suite.ContextDecorator) Option {
 	return func(r *Runner) {
-		r.identity = identity
+		r.decorate = fn
 	}
 }
 
-func (r *Runner) outgoingContext(ctx context.Context, suiteIdentity *iam.Identity) context.Context {
-	if r == nil {
+// baseCtx applies the runner-level decorator, if any. It is used for env
+// hooks and as the fallback for suites without their own decorator.
+func (r *Runner) baseCtx(ctx context.Context) context.Context {
+	if r == nil || r.decorate == nil {
 		return ctx
 	}
+	return r.decorate(ctx)
+}
 
-	id := suiteIdentity
-	if id == nil {
-		id = r.identity
+// outgoingContext returns the ctx passed to a suite's setup, cases, and
+// teardown. Suite-level decorator overrides runner-level; both nil means
+// ctx is returned unchanged.
+func (r *Runner) outgoingContext(ctx context.Context, suiteDecorate suite.ContextDecorator) context.Context {
+	if suiteDecorate != nil {
+		return suiteDecorate(ctx)
 	}
-	return auth.Outgoing(ctx, id)
+	return r.baseCtx(ctx)
 }
 
 // RunTestSuites executes test suite runs sequentially and returns one SuiteResult per suite.
@@ -86,7 +105,7 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 		return nil, err
 	}
 
-	envTeardown, err := setupEnvironments(ctx, collectTestEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectTestEnvironmentNames(runs))
 	if err != nil {
 		return r.testRunsEnvironmentSetupFailed(runs, err, progress), nil
 	}
@@ -108,7 +127,7 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 			return nil, err
 		}
 		suiteStart := time.Now()
-		runCtx := r.outgoingContext(ctx, run.Identity)
+		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.CaseResult, 0, len(run.Cases))
 
 		setupOK := true
@@ -176,7 +195,7 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 		return nil, err
 	}
 
-	envTeardown, err := setupEnvironments(ctx, collectEvalEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectEvalEnvironmentNames(runs))
 	if err != nil {
 		return r.evalRunsEnvironmentSetupFailed(runs, err, progress), nil
 	}
@@ -198,7 +217,7 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 			return nil, err
 		}
 		suiteStart := time.Now()
-		runCtx := r.outgoingContext(ctx, run.Identity)
+		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.CaseResult, 0, len(run.Cases))
 
 		setupOK := true
@@ -283,7 +302,7 @@ func (r *Runner) RunLoadSuites(
 		return nil, fmt.Errorf("runner: nil load profile resolver")
 	}
 
-	envTeardown, err := setupEnvironments(ctx, collectLoadEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectLoadEnvironmentNames(runs))
 	if err != nil {
 		return r.loadRunsEnvironmentSetupFailed(runs, err, progress), nil
 	}

@@ -11,8 +11,8 @@ import (
 	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
+	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
-	iam "go.alis.build/iam/v3"
 )
 
 type stubTestCase struct {
@@ -306,60 +306,234 @@ func TestRunner_RunEvalSuites_oneError(t *testing.T) {
 	}
 }
 
-type identityCapturingCase struct {
+type ctxKey struct{}
+
+type ctxValueCapturingCase struct {
 	name string
-	seen **iam.Identity
+	seen *string
 }
 
-func (c identityCapturingCase) Name() string { return c.name }
+func (c ctxValueCapturingCase) Name() string { return c.name }
 
-func (c identityCapturingCase) Run(ctx context.Context) *execution.CaseResult {
-	id, err := iam.FromContext(ctx)
-	if err != nil {
-		return result.SetupErrorResult(c.name, err)
+func (c ctxValueCapturingCase) Run(ctx context.Context) *execution.CaseResult {
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.seen = v
+	} else {
+		*c.seen = ""
 	}
-	*c.seen = id
 	return passedCase(c.name)
 }
 
-func TestRunner_appliesIdentityToCases(t *testing.T) {
-	t.Parallel()
-
-	custom := &iam.Identity{Type: iam.User, ID: "runner-user", Email: "runner@example.com"}
-	var seen *iam.Identity
-
-	runner := New(WithIdentity(custom))
-	_, err := runner.RunTestSuites(context.Background(), []suite.TestSuiteRun{{
-		Cases: []suite.TestCase{identityCapturingCase{name: "capture", seen: &seen}},
-	}}, nil)
-	if err != nil {
-		t.Fatalf("RunTestSuites() error = %v", err)
-	}
-	if seen == nil {
-		t.Fatal("case did not observe identity")
-	}
-	if seen.ID != custom.ID || seen.Email != custom.Email {
-		t.Fatalf("seen identity = %+v, want %+v", seen, custom)
+func stampDecorator(value string) suite.ContextDecorator {
+	return func(ctx context.Context) context.Context {
+		return context.WithValue(ctx, ctxKey{}, value)
 	}
 }
 
-func TestRunner_suiteIdentityOverridesRunner(t *testing.T) {
+func TestRunner_appliesDecoratorToCases(t *testing.T) {
 	t.Parallel()
 
-	runnerIdentity := &iam.Identity{Type: iam.User, ID: "runner", Email: "runner@example.com"}
-	suiteIdentity := &iam.Identity{Type: iam.User, ID: "suite", Email: "suite@example.com"}
-	var seen *iam.Identity
-
-	runner := New(WithIdentity(runnerIdentity))
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
 	_, err := runner.RunTestSuites(context.Background(), []suite.TestSuiteRun{{
-		Identity: suiteIdentity,
-		Cases:    []suite.TestCase{identityCapturingCase{name: "capture", seen: &seen}},
+		Cases: []suite.TestCase{ctxValueCapturingCase{name: "capture", seen: &seen}},
 	}}, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
-	if seen == nil || seen.ID != suiteIdentity.ID {
-		t.Fatalf("seen identity = %+v, want suite identity %+v", seen, suiteIdentity)
+	if seen != "runner-value" {
+		t.Fatalf("seen = %q, want %q", seen, "runner-value")
+	}
+}
+
+func TestRunner_suiteDecoratorOverridesRunner(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	_, err := runner.RunTestSuites(context.Background(), []suite.TestSuiteRun{{
+		Decorate: stampDecorator("suite-value"),
+		Cases:    []suite.TestCase{ctxValueCapturingCase{name: "capture", seen: &seen}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if seen != "suite-value" {
+		t.Fatalf("seen = %q, want %q", seen, "suite-value")
+	}
+}
+
+// callerCtxKey and callerValueCase together assert the propagation
+// contract: whatever the caller attached to the ctx handed to the runner
+// must still be visible inside the case body after decoration.
+type callerCtxKey struct{}
+
+type callerValueCase struct {
+	name       string
+	seenCaller *string
+	seenStamp  *string
+}
+
+func (c callerValueCase) Name() string { return c.name }
+
+func (c callerValueCase) Run(ctx context.Context) *execution.CaseResult {
+	if v, ok := ctx.Value(callerCtxKey{}).(string); ok {
+		*c.seenCaller = v
+	}
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.seenStamp = v
+	}
+	return passedCase(c.name)
+}
+
+func TestRunner_decoratorPreservesCallerCtxValues(t *testing.T) {
+	t.Parallel()
+
+	var seenCaller, seenStamp string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	ctx := context.WithValue(context.Background(), callerCtxKey{}, "caller-value")
+	_, err := runner.RunTestSuites(ctx, []suite.TestSuiteRun{{
+		Cases: []suite.TestCase{callerValueCase{name: "capture", seenCaller: &seenCaller, seenStamp: &seenStamp}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if seenCaller != "caller-value" {
+		t.Fatalf("caller value dropped by runner: seenCaller = %q, want %q", seenCaller, "caller-value")
+	}
+	if seenStamp != "runner-value" {
+		t.Fatalf("runner decorator not applied: seenStamp = %q, want %q", seenStamp, "runner-value")
+	}
+}
+
+type ctxValueCapturingEvalCase struct {
+	name string
+	seen *string
+}
+
+func (c ctxValueCapturingEvalCase) Name() string { return c.name }
+
+func (c ctxValueCapturingEvalCase) Run(ctx context.Context) *execution.CaseResult {
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.seen = v
+	} else {
+		*c.seen = ""
+	}
+	return passedCase(c.name)
+}
+
+func TestRunner_appliesDecoratorToEvalCases(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	_, err := runner.RunEvalSuites(context.Background(), []suite.EvalSuiteRun{{
+		Cases: []suite.EvalCase{ctxValueCapturingEvalCase{name: "capture", seen: &seen}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("RunEvalSuites() error = %v", err)
+	}
+	if seen != "runner-value" {
+		t.Fatalf("seen = %q, want %q", seen, "runner-value")
+	}
+}
+
+func TestRunner_evalSuiteDecoratorOverridesRunner(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	_, err := runner.RunEvalSuites(context.Background(), []suite.EvalSuiteRun{{
+		Decorate: stampDecorator("suite-value"),
+		Cases:    []suite.EvalCase{ctxValueCapturingEvalCase{name: "capture", seen: &seen}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("RunEvalSuites() error = %v", err)
+	}
+	if seen != "suite-value" {
+		t.Fatalf("seen = %q, want %q", seen, "suite-value")
+	}
+}
+
+type ctxValueCapturingLoadCase struct {
+	name string
+	seen *string
+}
+
+func (c ctxValueCapturingLoadCase) Name() string { return c.name }
+
+func (c ctxValueCapturingLoadCase) Run(ctx context.Context, _ evalspb.RunLoadTestRequest_Mode, _ loadgen.Profile) *execution.LoadCaseResult {
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.seen = v
+	} else {
+		*c.seen = ""
+	}
+	return passedLoad(c.name)
+}
+
+func TestRunner_appliesDecoratorToLoadCases(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	runs := []suite.LoadSuiteRun{{
+		Cases: []suite.LoadCase{ctxValueCapturingLoadCase{name: "capture", seen: &seen}},
+	}}
+	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil); err != nil {
+		t.Fatalf("RunLoadSuites() error = %v", err)
+	}
+	if seen != "runner-value" {
+		t.Fatalf("seen = %q, want %q", seen, "runner-value")
+	}
+}
+
+func TestRunner_environmentHooksReceiveDecorator(t *testing.T) {
+	t.Parallel()
+
+	envName := "runner-decorate-env-" + t.Name()
+	var setupSeen, teardownSeen atomic.Value
+	setupSeen.Store("")
+	teardownSeen.Store("")
+
+	if err := env.Register(envName,
+		env.WithSetup(func(ctx context.Context) error {
+			if v, ok := ctx.Value(ctxKey{}).(string); ok {
+				setupSeen.Store(v)
+			}
+			return nil
+		}),
+		env.WithTeardown(func(ctx context.Context) error {
+			if v, ok := ctx.Value(ctxKey{}).(string); ok {
+				teardownSeen.Store(v)
+			}
+			return nil
+		}),
+	); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
+
+	s, err := suite.NewTestSuite("env-decorate", suite.WithEnvironment(envName))
+	if err != nil {
+		t.Fatalf("NewTestSuite: %v", err)
+	}
+	if err := s.AddCase(stubTestCase{name: "one", result: passedCase("env-decorate.one")}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+
+	runner := New(WithContext(stampDecorator("runner-value")))
+	runs := []suite.TestSuiteRun{{
+		Name:         s.Name(),
+		Environments: s.Environments(),
+		Cases:        s.Cases(),
+	}}
+	if _, err := runner.RunTestSuites(context.Background(), runs, nil); err != nil {
+		t.Fatalf("RunTestSuites: %v", err)
+	}
+	if got := setupSeen.Load().(string); got != "runner-value" {
+		t.Fatalf("env setup ctx value = %q, want %q", got, "runner-value")
+	}
+	if got := teardownSeen.Load().(string); got != "runner-value" {
+		t.Fatalf("env teardown ctx value = %q, want %q", got, "runner-value")
 	}
 }
 

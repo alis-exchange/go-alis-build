@@ -104,7 +104,7 @@ func (r *Registry) SelectTestRuns(runType evalspb.Run_Type, filters []string) ([
 			Setup:         s.SetupHook(),
 			Teardown:      s.TeardownHook(),
 			Cases:         cases,
-			Identity:      s.SuiteIdentity(),
+			Decorate:      s.Decorator(),
 			StopOnFailure: s.StopOnFailure(),
 		})
 	}
@@ -189,7 +189,7 @@ func (r *Registry) SelectEvalRuns(filters []string) ([]suite.EvalSuiteRun, error
 			Setup:         s.SetupHook(),
 			Teardown:      s.TeardownHook(),
 			Cases:         cases,
-			Identity:      s.SuiteIdentity(),
+			Decorate:      s.Decorator(),
 			StopOnFailure: s.StopOnFailure(),
 		})
 	}

@@ -18,13 +18,14 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Why load has its own option set
 
-`StopOnFailure` and `WithIdentity` do not apply to load suites:
+`StopOnFailure` and `WithContext` do not apply to load suites:
 
 - **No `StopOnFailure`**: load cases run sequentially and a failed
   case does not invalidate the next case's measurement.
-- **No per-suite identity**: load suites always run under system
-  identity — the goal is to measure the SUT under the same identity
-  production traffic uses.
+- **No per-suite `ContextDecorator`**: load suites always run under
+  whatever context the runner-level decorator installs — the goal is
+  to measure the SUT under the same context production traffic uses.
+  Use runner-level context decoration for cross-suite defaults.
 
 # Override semantics
 

@@ -25,7 +25,7 @@ directly. It exposes:
 | File | Purpose |
 | ---- | ------- |
 | `doc.go` | Package-level documentation covering everything below. |
-| `suite.go` | `Suite`, `NewIntegrationSuite`, `NewAgentEvalSuite`, `Case`, `SuiteOption`, `StopOnFailure`, `WithEnv`, `WithIdentity`, `WithSetup`, `WithTeardown`. |
+| `suite.go` | `Suite`, `NewIntegrationSuite`, `NewAgentEvalSuite`, `Case`, `SuiteOption`, `StopOnFailure`, `WithEnv`, `WithContext`, `WithSetup`, `WithTeardown`, and the `ContextDecorator` type alias. |
 | `load.go` | `LoadSuite`, `NewLoadSuite`, `LoadCase`, `LoadSuiteOption`, `WithLoadEnv`, `WithLoadProfile`. |
 | `load_profile.go` | `Profile` (re-export), `DefaultLoadProfile`, `ResolveLoadProfile`. |
 | `slo.go` | `SLO` type and `SLOLatencyP50/P95/P99`, `SLOErrorRate`, `SLOMinQPS`. |

@@ -28,7 +28,7 @@ func TestHTTPClient_ListEvalSets(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := adk.NewHTTPClientWithTokenSource(srv.URL, "/api", stubTokenSource{})
+	client := adk.NewHTTPClient(srv.URL)
 
 	got, err := client.ListEvalSets(context.Background(), "test.agent.v1")
 	if err != nil {
@@ -64,17 +64,13 @@ func TestProvider_Run_discoversSets(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	factory := func(_ context.Context, baseURL, pathPrefix string) (adk.Client, error) {
-		return adk.NewHTTPClientWithTokenSource(baseURL, pathPrefix, stubTokenSource{}), nil
-	}
-
 	p := adk.NewProvider(adk.Agent{
 		BaseURL: srv.URL,
 		AppName: "test.agent.v1",
 		DefaultMetrics: []models.EvalMetric{
 			adk.ResponseMatchScore(0.3),
 		},
-	}, adk.WithClientFactory(factory))
+	})
 
 	results, err := p.Run(context.Background(), nil)
 	if err != nil {
@@ -111,10 +107,6 @@ func TestProvider_Run_respectsIncludeEvalSet(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	factory := func(_ context.Context, baseURL, pathPrefix string) (adk.Client, error) {
-		return adk.NewHTTPClientWithTokenSource(baseURL, pathPrefix, stubTokenSource{}), nil
-	}
-
 	p := adk.NewProvider(adk.Agent{
 		BaseURL: srv.URL,
 		AppName: "test.agent.v1",
@@ -122,7 +114,7 @@ func TestProvider_Run_respectsIncludeEvalSet(t *testing.T) {
 			adk.ResponseMatchScore(0.3),
 		},
 		IncludeEvalSet: func(id string) bool { return id == "eval_set_1" },
-	}, adk.WithClientFactory(factory))
+	})
 
 	results, err := p.Run(context.Background(), nil)
 	if err != nil {

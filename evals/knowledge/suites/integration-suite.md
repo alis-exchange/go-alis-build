@@ -23,7 +23,6 @@ import (
 
     "go.alis.build/evals"
     "go.alis.build/evals/env"
-    iam "go.alis.build/iam/v3"
 
     "example.com/internal/clients"
     examplepb "example.com/pb/example/v1"
@@ -40,7 +39,6 @@ func Register() {
     s := evals.MustNewIntegrationSuite("example-v1",
         evals.WithEnv(exampleEnv),
         evals.WithSetup(sanityCheck),
-        evals.WithIdentity(iam.SystemIdentity),
     )
 
     s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
@@ -94,12 +92,14 @@ meaning after an earlier failure, add `evals.StopOnFailure()` to the
 suite. Subsequent cases are recorded `NOT_EVALUATED` with a
 "preceding case … failed" reason.
 
-## Simulated caller
+## Context decoration
 
-`WithIdentity(iam.SystemIdentity)` (or any custom identity) attaches
-`x-alis-identity` and `x-alis-forwarded-authorization` headers to
-every RPC in the suite. Different suites can simulate different
-callers; see [Authentication](/operations/authentication.md).
+`evals.WithContext(fn)` installs a `func(ctx) ctx` applied to the
+suite's setup, teardown, and every case body. This is the framework's
+only auth-adjacent surface — callers stamp caller identity, auth
+headers, tokens, tracing, or any request-scoped values here. The
+framework itself never attaches auth. Different suites can install
+different decorators; see [Context decoration in the README](https://github.com/alis-exchange/go-alis-build/blob/main/evals/README.md#context-and-authentication).
 
 # Wire shape
 

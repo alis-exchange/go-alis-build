@@ -44,11 +44,22 @@
 // All HTTP calls from this package are plain net/http; JSON payloads
 // mirror the sublauncher's public API.
 //
-// # Auth on every request
+// # Context and authentication
 //
-//   - `X-Serverless-Authorization` — Cloud Run ID token for the target
-//   - `X-Alis-Identity`            — the marshaled iam.Identity
-//   - `X-Alis-Forwarded-Authorization` — identity.UnsignedJWT
+// This package is transport-agnostic. [NewHTTPClient] accepts any
+// [http.RoundTripper] via [WithTransport]; callers install whatever auth
+// their ADK sublauncher requires — bearer tokens, oauth2, Cloud Run ID
+// tokens, mTLS, or nothing at all for unauthenticated local endpoints:
 //
-// See [auth.Outgoing] for the analogous gRPC-side flow.
+//	client := adk.NewHTTPClient(baseURL,
+//	    adk.WithTransport(myAuthTransport),
+//	    adk.WithTimeout(30*time.Minute),
+//	)
+//
+// [Provider] uses an unauthenticated client by default. Wire a custom
+// factory via [WithClientFactory] when the sublauncher requires auth.
+//
+// [AudienceFromBaseURL] is a URL helper for consumers minting Cloud Run
+// ID tokens against a Cloud Run-hosted sublauncher; the client itself
+// does not use it.
 package adk

@@ -34,9 +34,11 @@ exist, one per RPC on the deployed `TestService`:
   Setup failure fails every case with a `setup` marker and skips
   teardown. Teardown errors are logged but do not affect case
   outcomes.
-- **Identity.** `WithIdentity(id)` attaches `x-alis-identity` and
-  `x-alis-forwarded-authorization` headers to every RPC issued by the
-  suite's cases. See [Authentication](/operations/authentication.md).
+- **Context decoration.** `WithContext(fn)` installs a
+  `func(ctx) ctx` applied to the suite's setup, teardown, and every
+  case body. The framework's only auth-adjacent surface: use it to
+  stamp caller identity, auth headers, tokens, tracing state, or any
+  request-scoped values. The framework itself never attaches auth.
 - **Failure propagation.** `StopOnFailure()` on the suite marks all
   subsequent cases `NOT_EVALUATED` once any case fails. Only for
   test/eval suites; load suites do not support it. See

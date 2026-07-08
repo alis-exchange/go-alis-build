@@ -8,8 +8,7 @@ One page per Go subpackage in `go.alis.build/evals`.
 
 # Runtime subpackages
 
-* [`evals/adk`](/packages/adk.md) - ADK evaluation-launcher client and lazy `AgentEvalProvider`.
-* [`evals/auth`](/packages/auth.md) - outgoing gRPC identity headers.
+* [`evals/adk`](/packages/adk.md) - transport-agnostic ADK evaluation-launcher client and lazy `AgentEvalProvider`.
 * [`evals/env`](/packages/env.md) - shared environment registration and activation.
 * [`evals/errors`](/packages/errors.md) - `EvalError` interface and gRPC translation helpers.
 * [`evals/execution`](/packages/execution.md) - proto-free in-process result types.

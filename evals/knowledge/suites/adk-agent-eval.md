@@ -66,15 +66,25 @@ import when it *also* serves ADK agent evals of its own.
 | `MetricOverrides` | Per-eval-set metric list. Fully replaces `DefaultMetrics` for that set. |
 | `IncludeEvalSet` | Predicate that filters eval sets before they are exposed to the runner. |
 
-# Authentication
+# Context and authentication
 
-Every HTTP call carries three headers:
+The provider's default HTTP client is unauthenticated — suitable for
+local or already-authenticated endpoints. When the target sublauncher
+requires auth, plug in a custom factory that constructs the client
+with your own transport:
 
-- `X-Serverless-Authorization` — Cloud Run ID token.
-- `X-Alis-Identity` — marshaled `iam.Identity`.
-- `X-Alis-Forwarded-Authorization` — `identity.UnsignedJWT`.
+```go
+factory := func(_ context.Context, baseURL, pathPrefix string) (adk.Client, error) {
+    return adk.NewHTTPClient(baseURL,
+        adk.WithTransport(myAuthTransport),
+        adk.WithPathPrefix(pathPrefix),
+    ), nil
+}
 
-See [Authentication](/operations/authentication.md).
+provider := adk.NewProvider(agent, adk.WithClientFactory(factory))
+```
+
+See [`adk` package](/packages/adk.md) for the full client surface.
 
 # Related
 

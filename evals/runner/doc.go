@@ -6,8 +6,11 @@
 //   - Environment activation via [env.Register]ed hooks. Setup runs once
 //     per RunXxxSuites call across all selected suites; teardown runs
 //     even when the operation is cancelled.
-//   - Outgoing identity — suite or runner [WithIdentity] is applied via
-//     [auth.Outgoing] to the context handed to each case.
+//   - Context decoration — suite-level [suite.TestSuiteRun.Decorate] /
+//     [suite.EvalSuiteRun.Decorate] or the runner-wide [WithContext]
+//     transforms the outgoing context handed to hooks and case bodies.
+//     Suite-level fully overrides runner-level; both nil means the
+//     caller's context is used as-is.
 //   - Progress callbacks — the RPC layer wires these into LRO metadata
 //     so clients can poll `completed_case_count` / `completed_suite_count`.
 //   - Panic recovery — a panic in one case is turned into a FAILED case
