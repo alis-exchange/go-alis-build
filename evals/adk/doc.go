@@ -22,7 +22,9 @@
 //	        adk.ResponseMatchScore(0.7),
 //	    },
 //	})
-//	evals.RegisterAgent(provider)
+//	if err := evals.RegisterAgent(provider); err != nil {
+//	    panic(err)
+//	}
 //
 // Case_ids follow the standard filter grammar. `agent-set` selects an
 // entire eval set; `agent-set.case-id` selects one entry inside it.

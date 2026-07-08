@@ -1,9 +1,8 @@
 package evals
 
 import (
-	"fmt"
-
 	"go.alis.build/evals/registry"
+	"go.alis.build/evals/suite"
 )
 
 // defaultRegistry is the process-wide registry the deployed TestService
@@ -19,44 +18,51 @@ func DefaultRegistry() *registry.Registry {
 	return defaultRegistry
 }
 
-// RegisterIntegration publishes an integration-test suite to DefaultRegistry.
-// Panics on invalid arguments.
-func RegisterIntegration(s *Suite) {
+// RegisterIntegration publishes an integration-test suite to
+// DefaultRegistry. Returns [suite.ErrNilSuite] for a nil suite or
+// [ErrWrongSuiteKind] when the suite is not KindTest.
+func RegisterIntegration(s *Suite) error {
 	if s == nil {
-		panic("evals.RegisterIntegration: nil suite")
+		return suite.ErrNilSuite{}
 	}
 	if s.kind != KindTest {
-		panic(fmt.Errorf("evals.RegisterIntegration: suite %q is not KindTest", s.Name()))
+		return ErrWrongSuiteKind{Suite: s.Name(), Want: KindTest, Got: s.kind}
 	}
 	defaultRegistry.RegisterIntegrationSuite(s.test)
+	return nil
 }
 
-// RegisterEval publishes an agent-eval suite to DefaultRegistry. Panics on
-// invalid arguments.
-func RegisterEval(s *Suite) {
+// RegisterEval publishes an agent-eval suite to DefaultRegistry. Returns
+// [suite.ErrNilSuite] for a nil suite or [ErrWrongSuiteKind] when the
+// suite is not KindEval.
+func RegisterEval(s *Suite) error {
 	if s == nil {
-		panic("evals.RegisterEval: nil suite")
+		return suite.ErrNilSuite{}
 	}
 	if s.kind != KindEval {
-		panic(fmt.Errorf("evals.RegisterEval: suite %q is not KindEval", s.Name()))
+		return ErrWrongSuiteKind{Suite: s.Name(), Want: KindEval, Got: s.kind}
 	}
 	defaultRegistry.RegisterAgentEvalSuite(s.eval)
+	return nil
 }
 
-// RegisterAgent publishes a lazy agent-eval provider (for example one that
-// discovers eval sets from a deployed ADK agent) to DefaultRegistry.
-func RegisterAgent(p registry.AgentEvalProvider) {
+// RegisterAgent publishes a lazy agent-eval provider (for example one
+// that discovers eval sets from a deployed ADK agent) to DefaultRegistry.
+// Returns [ErrNilProvider] for a nil provider.
+func RegisterAgent(p registry.AgentEvalProvider) error {
 	if p == nil {
-		panic("evals.RegisterAgent: nil provider")
+		return ErrNilProvider{}
 	}
 	defaultRegistry.RegisterAgentEvalProvider(p)
+	return nil
 }
 
-// RegisterLoad publishes a load-test suite to DefaultRegistry. Panics on
-// invalid arguments.
-func RegisterLoad(s *LoadSuite) {
+// RegisterLoad publishes a load-test suite to DefaultRegistry. Returns
+// [suite.ErrNilSuite] for a nil suite.
+func RegisterLoad(s *LoadSuite) error {
 	if s == nil {
-		panic("evals.RegisterLoad: nil suite")
+		return suite.ErrNilSuite{}
 	}
 	defaultRegistry.RegisterLoadSuite(s.inner)
+	return nil
 }

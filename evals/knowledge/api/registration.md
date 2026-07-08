@@ -11,16 +11,17 @@ timestamp: 2026-07-08T00:00:00Z
 
 | Function | Effect |
 | -------- | ------ |
-| `evals.RegisterIntegration(s *Suite)` | Publish an integration suite. Panics if `s == nil` or `s.Kind() != KindTest`. |
-| `evals.RegisterEval(s *Suite)` | Publish an eval suite. Panics if `s == nil` or `s.Kind() != KindEval`. |
-| `evals.RegisterLoad(s *LoadSuite)` | Publish a load suite. Panics if `s == nil`. |
-| `evals.RegisterAgent(p registry.AgentEvalProvider)` | Publish a lazy agent-eval provider (for example an ADK-backed one). Panics if `p == nil`. |
+| `evals.RegisterIntegration(s *Suite) error` | Publish an integration suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindTest`. |
+| `evals.RegisterEval(s *Suite) error` | Publish an eval suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindEval`. |
+| `evals.RegisterLoad(s *LoadSuite) error` | Publish a load suite. Returns `suite.ErrNilSuite` if `s == nil`. |
+| `evals.RegisterAgent(p registry.AgentEvalProvider) error` | Publish a lazy agent-eval provider (for example an ADK-backed one). Returns `evals.ErrNilProvider` if `p == nil`. |
 | `evals.DefaultRegistry() *registry.Registry` | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests. |
 
 # When to call
 
 Register at `init()` time. All four registration functions target
-`evals.DefaultRegistry()`.
+`evals.DefaultRegistry()`. Callers must handle the returned error (or
+`log.Fatal`); the framework does not panic on registration errors.
 
 # The lazy-provider path
 

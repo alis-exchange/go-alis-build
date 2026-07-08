@@ -20,17 +20,18 @@ is recorded `NOT_EVALUATED` with a "preceding case … failed" reason.
 # Example
 
 ```go
-s := evals.NewSuite("orders-lifecycle-v1",
+s := evals.MustNewIntegrationSuite("orders-lifecycle-v1",
     evals.WithEnv("example-v1"),
     evals.StopOnFailure(),
-)
+).
+    MustCase("create", createOrder).
+    MustCase("get",    getOrder).
+    MustCase("update", updateOrder).
+    MustCase("delete", deleteOrder)
 
-s.Case("create", createOrder)
-s.Case("get",    getOrder)
-s.Case("update", updateOrder)
-s.Case("delete", deleteOrder)
-
-evals.RegisterIntegration(s)
+if err := evals.RegisterIntegration(s); err != nil {
+    panic(err)
+}
 ```
 
 If `get` fails, both `update` and `delete` skip. Their `Case` messages

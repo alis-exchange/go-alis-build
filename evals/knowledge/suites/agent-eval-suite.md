@@ -30,12 +30,12 @@ import (
 )
 
 func Register() {
-    s := evals.NewEvalSuite("example-agent-v1",
+    s := evals.MustNewAgentEvalSuite("example-agent-v1",
         evals.WithEnv("agent-runtime"),
         evals.WithIdentity(iam.SystemIdentity),
     )
 
-    s.Case("golden-short-summary", func(ctx context.Context, t *evals.T) {
+    s.MustCase("golden-short-summary", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*agentpb.Reply, error) {
             return clients.Agent.Chat(ctx, prompt)
         })
@@ -58,7 +58,9 @@ func Register() {
         t.Check("no-refusal", !grade.Refused)
     })
 
-    evals.RegisterEval(s)
+    if err := evals.RegisterEval(s); err != nil {
+        panic(err)
+    }
 }
 ```
 

@@ -126,6 +126,24 @@ func (e ErrInvalidFilterPath) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// ErrLoadProfileUnspecifiedMode is returned when WithLoadProfileOverride
+// is called with RunLoadTestRequest_MODE_UNSPECIFIED. Overrides must
+// target a concrete mode.
+type ErrLoadProfileUnspecifiedMode struct{}
+
+func (e ErrLoadProfileUnspecifiedMode) Error() string {
+	return "load profile override: mode is UNSPECIFIED"
+}
+
+func (e ErrLoadProfileUnspecifiedMode) Is(target error) bool {
+	var err ErrLoadProfileUnspecifiedMode
+	return errors.As(target, &err)
+}
+
+func (e ErrLoadProfileUnspecifiedMode) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // ErrNilCaseResult is returned when a case Run method returns nil.
 type ErrNilCaseResult struct{}
 

@@ -26,19 +26,28 @@ var (
 	registry = map[string]*Environment{}
 )
 
-// Register adds a named environment. Panics on duplicate names to
-// surface accidental double-registration at startup.
-func Register(name string, opts ...Option) {
+// Register adds a named environment. Returns an error on duplicate names
+// so callers can surface accidental double-registration at startup. Use
+// [MustRegister] when a duplicate registration should halt the process.
+func Register(name string, opts ...Option) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, exists := registry[name]; exists {
-		panic("env: duplicate registration: " + name)
+		return ErrDuplicateRegistration{Name: name}
 	}
 	e := &Environment{name: name}
 	for _, opt := range opts {
 		opt(e)
 	}
 	registry[name] = e
+	return nil
+}
+
+// MustRegister is like [Register] but panics on error.
+func MustRegister(name string, opts ...Option) {
+	if err := Register(name, opts...); err != nil {
+		panic(err)
+	}
 }
 
 // WithSetup registers optional setup for the environment.

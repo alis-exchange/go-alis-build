@@ -11,13 +11,16 @@
 // Register environments during package init:
 //
 //	func init() {
-//	    env.Register("files-v2",
+//	    // MustRegister panics on duplicate names. Use Register if you want
+//	    // to handle the error yourself.
+//	    env.MustRegister("files-v2",
 //	        env.WithSetup(initialiseFiles),
 //	        env.WithTeardown(cleanupFiles),
 //	    )
 //	}
 //
-// Duplicate names panic — environments are process-global.
+// [Register] returns [ErrDuplicateRegistration] for a duplicate name;
+// [MustRegister] panics instead. Environments are process-global.
 //
 // # Activation
 //

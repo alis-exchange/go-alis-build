@@ -27,26 +27,40 @@ func (f *fakeGenerator) Run(_ context.Context, p loadgen.Profile, target loadgen
 	return f.metrics, f.err
 }
 
-func TestNewLoadSuite_PanicsOnBadName(t *testing.T) {
+func TestNewLoadSuite_ErrorsOnBadName(t *testing.T) {
 	t.Parallel()
 
-	assertPanics(t, "empty name", func() { NewLoadSuite("") })
-	assertPanics(t, "dotted name", func() { NewLoadSuite("a.b") })
+	if _, err := NewLoadSuite(""); err == nil {
+		t.Fatal("empty name: expected error")
+	}
+	if _, err := NewLoadSuite("a.b"); err == nil {
+		t.Fatal("dotted name: expected error")
+	}
 }
 
-func TestLoadSuite_LoadCase_PanicsOnBadInput(t *testing.T) {
+func TestLoadSuite_LoadCase_ErrorsOnBadInput(t *testing.T) {
 	t.Parallel()
 
-	s := NewLoadSuite("load-suite")
-	assertPanics(t, "nil target", func() { s.LoadCase("case", nil) })
-	// Register once for duplicate test.
-	s.LoadCase("case", func(context.Context) error { return nil })
-	assertPanics(t, "duplicate", func() {
-		s.LoadCase("case", func(context.Context) error { return nil })
-	})
-	assertPanics(t, "dotted case name", func() {
-		s.LoadCase("a.b", func(context.Context) error { return nil })
-	})
+	s := MustNewLoadSuite("load-suite")
+	if err := s.LoadCase("case", nil); err == nil {
+		t.Fatal("nil target: expected error")
+	}
+	if err := s.LoadCase("case", func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("first LoadCase: %v", err)
+	}
+	if err := s.LoadCase("case", func(context.Context) error { return nil }); err == nil {
+		t.Fatal("duplicate: expected error")
+	}
+	if err := s.LoadCase("a.b", func(context.Context) error { return nil }); err == nil {
+		t.Fatal("dotted case name: expected error")
+	}
+}
+
+func TestLoadSuite_MustLoadCase_PanicsOnNilTarget(t *testing.T) {
+	t.Parallel()
+
+	s := MustNewLoadSuite("must-load-suite")
+	assertPanics(t, "nil target", func() { s.MustLoadCase("case", nil) })
 }
 
 func TestLoadCaseAdapter_PassingRun(t *testing.T) {
@@ -62,9 +76,9 @@ func TestLoadCaseAdapter_PassingRun(t *testing.T) {
 			ErrorsByCode: map[string]int64{},
 		},
 	}
-	s := NewLoadSuite("s")
+	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.LoadCase("c",
+	s.MustLoadCase("c",
 		func(context.Context) error { return nil },
 		SLOLatencyP99(50*time.Millisecond),
 		SLOErrorRate(0.01),
@@ -107,9 +121,9 @@ func TestLoadCaseAdapter_GeneratorErrorSurfacesAsFailed(t *testing.T) {
 		metrics: &loadgen.Metrics{},
 		err:     errors.New("simulated"),
 	}
-	s := NewLoadSuite("s")
+	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.LoadCase("c", func(context.Context) error { return nil })
+	s.MustLoadCase("c", func(context.Context) error { return nil })
 
 	result := s.Inner().Cases()[0].Run(context.Background(),
 		evalspb.RunLoadTestRequest_MINIMAL,
@@ -142,9 +156,9 @@ func TestLoadCaseAdapter_FailingSLOFailsRun(t *testing.T) {
 			Latency:      loadgen.LatencySummary{P99Ms: 999},
 		},
 	}
-	s := NewLoadSuite("s")
+	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.LoadCase("c", func(context.Context) error { return nil }, SLOLatencyP99(100*time.Millisecond))
+	s.MustLoadCase("c", func(context.Context) error { return nil }, SLOLatencyP99(100*time.Millisecond))
 
 	result := s.Inner().Cases()[0].Run(context.Background(),
 		evalspb.RunLoadTestRequest_MODERATE,
@@ -186,16 +200,19 @@ func TestResolveLoadProfile(t *testing.T) {
 func TestWithLoadProfile_RejectsUnspecifiedMode(t *testing.T) {
 	t.Parallel()
 
-	assertPanics(t, "UNSPECIFIED mode override", func() {
-		NewLoadSuite("s", WithLoadProfile(evalspb.RunLoadTestRequest_MODE_UNSPECIFIED, loadgen.Profile{
-			QPS: 1, Concurrency: 1, Duration: time.Second,
-		}))
-	})
+	_, err := NewLoadSuite("s", WithLoadProfile(evalspb.RunLoadTestRequest_MODE_UNSPECIFIED, loadgen.Profile{
+		QPS: 1, Concurrency: 1, Duration: time.Second,
+	}))
+	if err == nil {
+		t.Fatal("UNSPECIFIED mode override: expected error")
+	}
 }
 
-func TestRegisterLoad_PanicsOnNil(t *testing.T) {
+func TestRegisterLoad_ErrorsOnNil(t *testing.T) {
 	t.Parallel()
-	assertPanics(t, "nil suite", func() { RegisterLoad(nil) })
+	if err := RegisterLoad(nil); err == nil {
+		t.Fatal("nil suite: expected error")
+	}
 }
 
 func assertPanics(t *testing.T, name string, fn func()) {

@@ -4,7 +4,7 @@ One page per Go subpackage in `go.alis.build/evals`.
 
 # Public authoring surface
 
-* [`evals`](/packages/evals.md) - the root package. `NewSuite`, `NewEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions.
+* [`evals`](/packages/evals.md) - the root package. `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions.
 
 # Runtime subpackages
 

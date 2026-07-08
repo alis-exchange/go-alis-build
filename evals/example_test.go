@@ -30,8 +30,8 @@ func fetchItem(ctx context.Context, name string) (*fakeItem, error) {
 // per-case recorder T. Call itself records nothing; every assertion is
 // explicit.
 func ExampleCall() {
-	s := evals.NewSuite("example-v1")
-	s.Case("get-item", func(ctx context.Context, t *evals.T) {
+	s := evals.MustNewIntegrationSuite("example-v1")
+	s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
 		r := evals.Call(ctx, func(ctx context.Context) (*fakeItem, error) {
 			return fetchItem(ctx, "items/root")
 		})
@@ -52,8 +52,8 @@ func ExampleCall() {
 // observed value, the pass threshold, and any rationale so consumers see
 // how much headroom each metric had.
 func ExampleT_Score() {
-	s := evals.NewEvalSuite("example-agent-v1")
-	s.Case("golden-summary", func(ctx context.Context, t *evals.T) {
+	s := evals.MustNewAgentEvalSuite("example-agent-v1")
+	s.MustCase("golden-summary", func(ctx context.Context, t *evals.T) {
 		// A real case would call the agent here; the string literals stand
 		// in for the produced response and its golden reference.
 		got := "the quick brown fox"
@@ -70,7 +70,7 @@ func ExampleT_Score() {
 // function and a small set of SLOs. The framework owns pacing, warmup, and
 // error accounting.
 func ExampleNewLoadSuite() {
-	s := evals.NewLoadSuite("example-v1-load",
+	s := evals.MustNewLoadSuite("example-v1-load",
 		// Override the MODERATE preset for this suite specifically. Other
 		// modes keep the framework defaults.
 		evals.WithLoadProfile(evalspb.RunLoadTestRequest_MODERATE, evals.Profile{
@@ -82,7 +82,7 @@ func ExampleNewLoadSuite() {
 		}),
 	)
 
-	s.LoadCase("get-item",
+	s.MustLoadCase("get-item",
 		func(ctx context.Context) error {
 			_, err := fetchItem(ctx, "items/root")
 			return err
@@ -104,8 +104,8 @@ func ExampleNewLoadSuite() {
 func ExampleSLOLatencyP99() {
 	slo := evals.SLOLatencyP99(300 * time.Millisecond)
 
-	s := evals.NewLoadSuite("example-v1-load")
-	s.LoadCase("get-item",
+	s := evals.MustNewLoadSuite("example-v1-load")
+	s.MustLoadCase("get-item",
 		func(ctx context.Context) error {
 			_, err := fetchItem(ctx, "items/root")
 			return err

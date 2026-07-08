@@ -13,8 +13,8 @@ of post-deploy test:
 
 | Kind | Constructor | Registration | Wire result |
 | ---- | ----------- | ------------ | ----------- |
-| Integration | `evals.NewSuite` | `evals.RegisterIntegration` | `IntegrationTestResults` |
-| Agent eval  | `evals.NewEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `AgentEvalResults` |
+| Integration | `evals.NewIntegrationSuite` | `evals.RegisterIntegration` | `IntegrationTestResults` |
+| Agent eval  | `evals.NewAgentEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `AgentEvalResults` |
 | Load        | `evals.NewLoadSuite` | `evals.RegisterLoad` | `LoadTestResults` |
 
 Each suite kind maps to one RPC on the deployed `TestService`:

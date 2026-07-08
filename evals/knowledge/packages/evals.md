@@ -12,7 +12,7 @@ timestamp: 2026-07-08T00:00:00Z
 `evals` is the root package and the only one most consumers import
 directly. It exposes:
 
-- Suite constructors: `NewSuite`, `NewEvalSuite`, `NewLoadSuite`.
+- Suite constructors: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`.
 - The `T` recorder and its methods.
 - SLO constructors for load suites.
 - The `Call`/`Result[T]` RPC wrapper.
@@ -25,7 +25,7 @@ directly. It exposes:
 | File | Purpose |
 | ---- | ------- |
 | `doc.go` | Package-level documentation covering everything below. |
-| `suite.go` | `Suite`, `NewSuite`, `NewEvalSuite`, `Case`, `SuiteOption`, `StopOnFailure`, `WithEnv`, `WithIdentity`, `WithSetup`, `WithTeardown`. |
+| `suite.go` | `Suite`, `NewIntegrationSuite`, `NewAgentEvalSuite`, `Case`, `SuiteOption`, `StopOnFailure`, `WithEnv`, `WithIdentity`, `WithSetup`, `WithTeardown`. |
 | `load.go` | `LoadSuite`, `NewLoadSuite`, `LoadCase`, `LoadSuiteOption`, `WithLoadEnv`, `WithLoadProfile`. |
 | `load_profile.go` | `Profile` (re-export), `DefaultLoadProfile`, `ResolveLoadProfile`. |
 | `slo.go` | `SLO` type and `SLOLatencyP50/P95/P99`, `SLOErrorRate`, `SLOMinQPS`. |

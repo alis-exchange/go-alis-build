@@ -368,12 +368,14 @@ func TestRunner_envRunsOnceForTwoSuites(t *testing.T) {
 
 	envName := "runner-shared-" + t.Name()
 	var setupCalls atomic.Int32
-	env.Register(envName,
+	if err := env.Register(envName,
 		env.WithSetup(func(context.Context) error {
 			setupCalls.Add(1)
 			return nil
 		}),
-	)
+	); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
 
 	s1, err := suite.NewTestSuite("a", suite.WithEnvironment(envName))
 	if err != nil {
@@ -408,7 +410,9 @@ func TestRunner_envSetupFailureMarksAllCases(t *testing.T) {
 
 	envName := "runner-fail-" + t.Name()
 	wantErr := errors.New("env init failed")
-	env.Register(envName, env.WithSetup(func(context.Context) error { return wantErr }))
+	if err := env.Register(envName, env.WithSetup(func(context.Context) error { return wantErr })); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
 
 	s, err := suite.NewTestSuite("files-v2", suite.WithEnvironment(envName))
 	if err != nil {

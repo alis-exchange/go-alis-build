@@ -25,6 +25,18 @@ const (
 	KindEval
 )
 
+// String returns a human-readable name for the suite kind.
+func (k SuiteKind) String() string {
+	switch k {
+	case KindTest:
+		return "KindTest"
+	case KindEval:
+		return "KindEval"
+	default:
+		return fmt.Sprintf("SuiteKind(%d)", int(k))
+	}
+}
+
 // Suite is the author-facing suite handle. It wraps the internal grouping
 // primitives in [suite] and adapts CaseFunc values to the erased case
 // interfaces the runner consumes.
@@ -108,55 +120,87 @@ func StopOnFailure() SuiteOption {
 	}
 }
 
-// NewSuite constructs an integration-test suite. Panics on invalid config
-// (empty or dotted name, unknown environment).
-func NewSuite(name string, opts ...SuiteOption) *Suite {
+// NewIntegrationSuite constructs an integration-test suite. Returns a
+// typed error on invalid config (empty or dotted name, unknown
+// environment, or a failing option). See the [suite] package for the
+// typed error values.
+func NewIntegrationSuite(name string, opts ...SuiteOption) (*Suite, error) {
 	s, err := suite.NewTestSuite(name)
 	if err != nil {
-		panic(fmt.Errorf("evals.NewSuite: %w", err))
+		return nil, err
 	}
 	for _, opt := range opts {
 		if err := opt.applyTest(s); err != nil {
-			panic(fmt.Errorf("evals.NewSuite %q: %w", name, err))
+			return nil, err
 		}
 	}
-	return &Suite{kind: KindTest, test: s}
+	return &Suite{kind: KindTest, test: s}, nil
 }
 
-// NewEvalSuite constructs an agent-eval suite. Panics on invalid config.
-func NewEvalSuite(name string, opts ...SuiteOption) *Suite {
+// MustNewIntegrationSuite is like [NewIntegrationSuite] but panics on
+// error. Use only in package-init style code where a config error should
+// halt the process.
+func MustNewIntegrationSuite(name string, opts ...SuiteOption) *Suite {
+	s, err := NewIntegrationSuite(name, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// NewAgentEvalSuite constructs an agent-eval suite. Returns a typed
+// error on invalid config. See the [suite] package for the typed error
+// values.
+func NewAgentEvalSuite(name string, opts ...SuiteOption) (*Suite, error) {
 	s, err := suite.NewEvalSuite(name)
 	if err != nil {
-		panic(fmt.Errorf("evals.NewEvalSuite: %w", err))
+		return nil, err
 	}
 	for _, opt := range opts {
 		if err := opt.applyEval(s); err != nil {
-			panic(fmt.Errorf("evals.NewEvalSuite %q: %w", name, err))
+			return nil, err
 		}
 	}
-	return &Suite{kind: KindEval, eval: s}
+	return &Suite{kind: KindEval, eval: s}, nil
 }
 
-// Case registers a case under the suite. Panics on invalid case names or
-// duplicates within the suite.
-func (s *Suite) Case(name string, fn CaseFunc) *Suite {
+// MustNewAgentEvalSuite is like [NewAgentEvalSuite] but panics on error.
+func MustNewAgentEvalSuite(name string, opts ...SuiteOption) *Suite {
+	s, err := NewAgentEvalSuite(name, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// Case registers a case under the suite. Returns a typed error for a
+// nil suite ([suite.ErrNilSuite]), a nil func ([ErrNilCaseFunc]), an
+// invalid case name ([suite.ErrInvalidCaseName]), or a duplicate
+// ([suite.ErrDuplicateCase]). Use [Suite.MustCase] for fluent chaining
+// when a registration error should halt the process.
+func (s *Suite) Case(name string, fn CaseFunc) error {
 	if s == nil {
-		panic("evals.Suite.Case: nil suite")
+		return suite.ErrNilSuite{}
 	}
 	if fn == nil {
-		panic(fmt.Errorf("evals.Suite.Case %q: nil func", name))
+		return ErrNilCaseFunc{Case: name}
 	}
 	switch s.kind {
 	case KindTest:
-		if err := s.test.AddCase(&testCaseAdapter{name: name, fn: fn}); err != nil {
-			panic(fmt.Errorf("evals.Suite.Case %q: %w", name, err))
-		}
+		return s.test.AddCase(&testCaseAdapter{name: name, fn: fn})
 	case KindEval:
-		if err := s.eval.AddCase(&evalCaseAdapter{name: name, fn: fn}); err != nil {
-			panic(fmt.Errorf("evals.Suite.Case %q: %w", name, err))
-		}
+		return s.eval.AddCase(&evalCaseAdapter{name: name, fn: fn})
 	default:
-		panic(fmt.Errorf("evals.Suite.Case: unknown kind %d", s.kind))
+		return ErrUnknownSuiteKind{Kind: s.kind}
+	}
+}
+
+// MustCase is like [Suite.Case] but panics on error and returns the suite
+// for fluent chaining. Intended for package-init style registration where
+// a bad case declaration should halt the process.
+func (s *Suite) MustCase(name string, fn CaseFunc) *Suite {
+	if err := s.Case(name, fn); err != nil {
+		panic(err)
 	}
 	return s
 }

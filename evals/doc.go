@@ -16,9 +16,9 @@
 // optional environment setup, lifecycle hooks, and caller identity. Three
 // kinds of suite exist, one per run type on the TestService RPC:
 //
-//   - Integration test suite ([NewSuite] / [RegisterIntegration]) — cases
-//     assert against a live deployment; results surface as `Checks`.
-//   - Agent-eval suite ([NewEvalSuite] / [RegisterEval]) — cases exercise
+//   - Integration test suite ([NewIntegrationSuite] / [RegisterIntegration]) —
+//     cases assert against a live deployment; results surface as `Checks`.
+//   - Agent-eval suite ([NewAgentEvalSuite] / [RegisterEval]) — cases exercise
 //     an agent transcript and grade with rubrics/scores; results surface as
 //     `Metrics`.
 //   - Load-test suite ([NewLoadSuite] / [RegisterLoad]) — the framework
@@ -37,12 +37,12 @@
 // flow control:
 //
 //	func Register() {
-//	    s := evals.NewSuite("example-v1",
+//	    s := evals.MustNewIntegrationSuite("example-v1",
 //	        evals.WithEnv("example-v1"),
 //	        evals.WithSetup(seedExample),
 //	        evals.WithTeardown(cleanupExample),
 //	    )
-//	    s.Case("get-item", func(ctx context.Context, t *evals.T) {
+//	    s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
 //	        r := evals.Call(ctx, func(ctx context.Context) (*examplepb.Item, error) {
 //	            return clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
 //	        })
@@ -52,7 +52,9 @@
 //	        t.Max("latency", r.Latency, 500*time.Millisecond)
 //	        t.Check("has-name", r.Resp.GetName() != "")
 //	    })
-//	    evals.RegisterIntegration(s)
+//	    if err := evals.RegisterIntegration(s); err != nil {
+//	        panic(err)
+//	    }
 //	}
 //
 // # Agent evaluations
@@ -63,11 +65,11 @@
 // [Rouge1F1] and LLM-judges are plain Go calls that feed a score into
 // t.Score.
 //
-//	s := evals.NewEvalSuite("example-agent-v1",
+//	s := evals.MustNewAgentEvalSuite("example-agent-v1",
 //	    evals.WithEnv("agent-runtime"),
 //	    evals.WithIdentity(iam.SystemIdentity),
 //	)
-//	s.Case("golden-summary", func(ctx context.Context, t *evals.T) {
+//	s.MustCase("golden-summary", func(ctx context.Context, t *evals.T) {
 //	    r := evals.Call(ctx, func(ctx context.Context) (*agentpb.Reply, error) {
 //	        return clients.Agent.Chat(ctx, prompt)
 //	    })
@@ -76,7 +78,9 @@
 //	    }
 //	    t.Score("rouge-1", evals.Rouge1F1(r.Resp.GetText(), golden), 0.5, "vs golden")
 //	})
-//	evals.RegisterEval(s)
+//	if err := evals.RegisterEval(s); err != nil {
+//	    panic(err)
+//	}
 //
 // Agent evaluations can also be sourced lazily via [RegisterAgent] +
 // [registry.AgentEvalProvider]; the [adk] subpackage provides a provider
@@ -90,8 +94,8 @@
 // the target. See [SLOLatencyP50], [SLOLatencyP95], [SLOLatencyP99],
 // [SLOErrorRate], and [SLOMinQPS].
 //
-//	s := evals.NewLoadSuite("example-v1-load", evals.WithLoadEnv("example-v1"))
-//	s.LoadCase("list-items",
+//	s := evals.MustNewLoadSuite("example-v1-load", evals.WithLoadEnv("example-v1"))
+//	s.MustLoadCase("list-items",
 //	    func(ctx context.Context) error {
 //	        _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
 //	        return err
@@ -99,7 +103,9 @@
 //	    evals.SLOLatencyP99(500*time.Millisecond),
 //	    evals.SLOErrorRate(0.01),
 //	)
-//	evals.RegisterLoad(s)
+//	if err := evals.RegisterLoad(s); err != nil {
+//	    panic(err)
+//	}
 //
 // The `mode` field on RunLoadTest (MINIMAL … LUDICROUS) picks a preset
 // profile via [DefaultLoadProfile]. Suites can override presets with
@@ -138,7 +144,7 @@
 // with [env.Register] once (typically in package init) and reference by
 // name in every suite that needs the state:
 //
-//	env.Register("example-v1",
+//	env.MustRegister("example-v1",
 //	    env.WithSetup(seedExample),
 //	    env.WithTeardown(cleanupExample),
 //	)

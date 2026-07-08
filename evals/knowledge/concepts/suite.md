@@ -14,8 +14,8 @@ exist, one per RPC on the deployed `TestService`:
 
 | Kind | Constructor | Register with | Case type |
 | ---- | ----------- | ------------- | --------- |
-| Integration test | `evals.NewSuite` | `evals.RegisterIntegration` | `func(ctx, *T)` |
-| Agent eval       | `evals.NewEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `func(ctx, *T)` |
+| Integration test | `evals.NewIntegrationSuite` | `evals.RegisterIntegration` | `func(ctx, *T)` |
+| Agent eval       | `evals.NewAgentEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `func(ctx, *T)` |
 | Load             | `evals.NewLoadSuite` | `evals.RegisterLoad` | `Target` + `SLO...` |
 
 # Properties

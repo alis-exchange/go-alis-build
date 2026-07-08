@@ -41,7 +41,9 @@ func Register() {
         // Optional: skip eval sets you don't want the runner to touch.
         // IncludeEvalSet: func(id string) bool { return id != "experimental" },
     })
-    evals.RegisterAgent(provider)
+    if err := evals.RegisterAgent(provider); err != nil {
+        panic(err)
+    }
 }
 ```
 

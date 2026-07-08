@@ -12,7 +12,8 @@ timestamp: 2026-07-08T00:00:00Z
 ```go
 package env
 
-func Register(name string, opts ...Option)  // panics on duplicate name
+func Register(name string, opts ...Option) error       // returns ErrDuplicateRegistration
+func MustRegister(name string, opts ...Option)         // panics on duplicate
 func WithSetup(hook Hook) Option
 func WithTeardown(hook Hook) Option
 func Get(name string) *Environment
@@ -24,7 +25,8 @@ type Hook func(context.Context) error
 
 | Function | Effect |
 | -------- | ------ |
-| `env.Register(name, opts...)` | Register a globally-named environment. Panics if `name` was already registered. |
+| `env.Register(name, opts...) error` | Register a globally-named environment. Returns `env.ErrDuplicateRegistration` if `name` was already registered. |
+| `env.MustRegister(name, opts...)` | Like `Register` but panics on error. Use at package init when a duplicate should halt the process. |
 | `env.WithSetup(hook)` | Optional setup, invoked once per LRO if any selected suite depends on this env. |
 | `env.WithTeardown(hook)` | Optional teardown, invoked in reverse-registration order after all suites finish. |
 | `env.Get(name)` | Look up a registered environment. Returns nil for unknown names. |

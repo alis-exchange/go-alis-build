@@ -2,7 +2,6 @@ package evals
 
 import (
 	"context"
-	"fmt"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
@@ -69,31 +68,44 @@ func WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile) LoadSuiteO
 	})
 }
 
-// NewLoadSuite constructs a load-test suite. Panics on invalid config
-// (empty or dotted name, unknown environment).
-func NewLoadSuite(name string, opts ...LoadSuiteOption) *LoadSuite {
+// NewLoadSuite constructs a load-test suite. Returns a typed error on
+// invalid config (empty or dotted name, unknown environment, or a failing
+// option). See the [suite] package for the typed error values.
+func NewLoadSuite(name string, opts ...LoadSuiteOption) (*LoadSuite, error) {
 	s, err := suite.NewLoadSuite(name)
 	if err != nil {
-		panic(fmt.Errorf("evals.NewLoadSuite: %w", err))
+		return nil, err
 	}
 	for _, opt := range opts {
 		if err := opt.applyLoad(s); err != nil {
-			panic(fmt.Errorf("evals.NewLoadSuite %q: %w", name, err))
+			return nil, err
 		}
 	}
-	return &LoadSuite{inner: s, generator: loadgen.New()}
+	return &LoadSuite{inner: s, generator: loadgen.New()}, nil
+}
+
+// MustNewLoadSuite is like [NewLoadSuite] but panics on error.
+func MustNewLoadSuite(name string, opts ...LoadSuiteOption) *LoadSuite {
+	s, err := NewLoadSuite(name, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // LoadCase registers a case under the suite. The target is invoked once per
 // scheduled request during the load window. Any SLOs are evaluated against
-// the aggregate metrics after the window closes. Panics on invalid case
-// names, duplicates within the suite, or a nil target.
-func (s *LoadSuite) LoadCase(name string, target Target, slos ...SLO) *LoadSuite {
+// the aggregate metrics after the window closes. Returns a typed error
+// on nil suite ([suite.ErrNilSuite]), nil target ([ErrNilTarget]), an
+// invalid case name ([suite.ErrInvalidCaseName]), or a duplicate
+// ([suite.ErrDuplicateCase]). Use [LoadSuite.MustLoadCase] for fluent
+// chaining.
+func (s *LoadSuite) LoadCase(name string, target Target, slos ...SLO) error {
 	if s == nil {
-		panic("evals.LoadSuite.LoadCase: nil suite")
+		return suite.ErrNilSuite{}
 	}
 	if target == nil {
-		panic(fmt.Errorf("evals.LoadSuite.LoadCase %q: nil target", name))
+		return ErrNilTarget{Case: name}
 	}
 	adapter := &loadCaseAdapter{
 		name:      name,
@@ -101,8 +113,14 @@ func (s *LoadSuite) LoadCase(name string, target Target, slos ...SLO) *LoadSuite
 		slos:      append([]SLO(nil), slos...),
 		generator: s.generator,
 	}
-	if err := s.inner.AddCase(adapter); err != nil {
-		panic(fmt.Errorf("evals.LoadSuite.LoadCase %q: %w", name, err))
+	return s.inner.AddCase(adapter)
+}
+
+// MustLoadCase is like [LoadSuite.LoadCase] but panics on error and
+// returns the suite for fluent chaining.
+func (s *LoadSuite) MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite {
+	if err := s.LoadCase(name, target, slos...); err != nil {
+		panic(err)
 	}
 	return s
 }

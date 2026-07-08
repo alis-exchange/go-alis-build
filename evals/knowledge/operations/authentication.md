@@ -28,7 +28,7 @@ traffic uses.
 # Simulating a caller
 
 ```go
-s := evals.NewSuite("example-v1",
+s := evals.MustNewIntegrationSuite("example-v1",
     evals.WithIdentity(myTestIdentity),
 )
 ```

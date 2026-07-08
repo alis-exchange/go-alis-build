@@ -615,7 +615,7 @@ func WithLoadTeardown(h SuiteHook) LoadSuiteOption {
 func WithLoadProfileOverride(mode evalspb.RunLoadTestRequest_Mode, p loadgen.Profile) LoadSuiteOption {
 	return func(s *LoadSuite) error {
 		if mode == evalspb.RunLoadTestRequest_MODE_UNSPECIFIED {
-			return fmt.Errorf("load profile override: mode is UNSPECIFIED")
+			return ErrLoadProfileUnspecifiedMode{}
 		}
 		if s.profileOverrides == nil {
 			s.profileOverrides = make(map[evalspb.RunLoadTestRequest_Mode]loadgen.Profile)

@@ -8,6 +8,25 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// ErrDuplicateRegistration is returned when Register is called with a
+// name that is already registered.
+type ErrDuplicateRegistration struct {
+	Name string
+}
+
+func (e ErrDuplicateRegistration) Error() string {
+	return fmt.Sprintf("environment %q already registered", e.Name)
+}
+
+func (e ErrDuplicateRegistration) Is(target error) bool {
+	var err ErrDuplicateRegistration
+	return errors.As(target, &err)
+}
+
+func (e ErrDuplicateRegistration) GRPCStatus() *status.Status {
+	return status.New(codes.AlreadyExists, e.Error())
+}
+
 // ErrNotRegistered is returned when a named environment has not been registered.
 type ErrNotRegistered struct {
 	Name string

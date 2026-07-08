@@ -14,11 +14,14 @@ one or more suites can depend on. Environments are registered once
 `WithEnv` / `WithLoadEnv` on suites.
 
 ```go
-env.Register("example-v1",
+env.MustRegister("example-v1",
     env.WithSetup(seedExample),
     env.WithTeardown(cleanupExample),
 )
 ```
+
+`MustRegister` panics on duplicate names; call `env.Register` if you
+want to propagate the error.
 
 # Activation semantics
 

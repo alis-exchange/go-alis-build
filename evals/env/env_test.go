@@ -8,9 +8,11 @@ import (
 func TestRegister_andGet(t *testing.T) {
 	t.Parallel()
 
-	Register("test-env-"+t.Name(),
+	if err := Register("test-env-"+t.Name(),
 		WithSetup(func(context.Context) error { return nil }),
-	)
+	); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
 
 	e := Get("test-env-" + t.Name())
 	if e == nil {
@@ -24,17 +26,29 @@ func TestRegister_andGet(t *testing.T) {
 	}
 }
 
-func TestRegister_duplicatePanics(t *testing.T) {
+func TestRegister_duplicateReturnsError(t *testing.T) {
 	t.Parallel()
 
 	name := "dup-" + t.Name()
-	Register(name)
+	if err := Register(name); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	if err := Register(name); err == nil {
+		t.Fatal("expected error on duplicate registration")
+	}
+}
+
+func TestMustRegister_duplicatePanics(t *testing.T) {
+	t.Parallel()
+
+	name := "must-dup-" + t.Name()
+	MustRegister(name)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic on duplicate registration")
 		}
 	}()
-	Register(name)
+	MustRegister(name)
 }
 
 func TestGet_unknownReturnsNil(t *testing.T) {

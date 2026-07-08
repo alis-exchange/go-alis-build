@@ -1,7 +1,7 @@
 ---
 type: Suite Kind
 title: Integration suite
-description: Behavioural contract testing against a live gRPC surface. Uses `NewSuite` and `RegisterIntegration`.
+description: Behavioural contract testing against a live gRPC surface. Uses `NewIntegrationSuite` and `RegisterIntegration`.
 tags: [integration, test, grpc]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -32,18 +32,18 @@ import (
 const exampleEnv = "example-v1"
 
 func Register() {
-    env.Register(exampleEnv,
+    env.MustRegister(exampleEnv,
         env.WithSetup(seedExample),
         env.WithTeardown(cleanupExample),
     )
 
-    s := evals.NewSuite("example-v1",
+    s := evals.MustNewIntegrationSuite("example-v1",
         evals.WithEnv(exampleEnv),
         evals.WithSetup(sanityCheck),
         evals.WithIdentity(iam.SystemIdentity),
     )
 
-    s.Case("get-item", func(ctx context.Context, t *evals.T) {
+    s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.Item, error) {
             return clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
         })
@@ -55,9 +55,7 @@ func Register() {
         }
         t.Check("has-name", r.Resp.GetName() != "")
         t.Checkf("size-positive", r.Resp.GetSize() > 0, "got size=%d, want > 0", r.Resp.GetSize())
-    })
-
-    s.Case("list-empty-parent", func(ctx context.Context, t *evals.T) {
+    }).MustCase("list-empty-parent", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.ListItemsResponse, error) {
             return clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{Parent: emptyParent})
         })
@@ -67,7 +65,9 @@ func Register() {
         t.Check("empty", len(r.Resp.GetItems()) == 0)
     })
 
-    evals.RegisterIntegration(s)
+    if err := evals.RegisterIntegration(s); err != nil {
+        panic(err)
+    }
 }
 ```
 

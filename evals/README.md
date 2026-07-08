@@ -56,26 +56,33 @@ import (
 
 // 1. Register any shared environment in package init.
 func init() {
-    env.Register("example-v1",
+    // MustRegister panics on duplicate names; use env.Register when you'd
+    // rather propagate the error.
+    env.MustRegister("example-v1",
         env.WithSetup(seedExample),
         env.WithTeardown(cleanupExample),
     )
 }
 
 // 2. Author a suite and publish it once.
-func Register() {
-    s := evals.NewSuite("example-v1",
+func Register() error {
+    s, err := evals.NewIntegrationSuite("example-v1",
         evals.WithEnv("example-v1"),
     )
-    s.Case("get-item", func(ctx context.Context, t *evals.T) {
+    if err != nil {
+        return err
+    }
+    if err := s.Case("get-item", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.Item, error) {
             return clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
         })
         if !t.NoErr("grpc", r.Err) { return }
         t.Max("latency", r.Latency, 300*time.Millisecond)
         t.Check("has-name", r.Resp.GetName() != "")
-    })
-    evals.RegisterIntegration(s)
+    }); err != nil {
+        return err
+    }
+    return evals.RegisterIntegration(s)
 }
 
 // 3. Wire the service and (optionally) fan out to your own reporters.
@@ -275,19 +282,22 @@ import (
 
 const exampleEnv = "example-v1"
 
+// This example uses the panicking Must* variants for brevity. Prefer the
+// error-returning constructors (NewIntegrationSuite, Case, Register*, env.Register)
+// when you want to propagate configuration failures explicitly.
 func Register() {
-    env.Register(exampleEnv,
+    env.MustRegister(exampleEnv,
         env.WithSetup(seedExample),
         env.WithTeardown(cleanupExample),
     )
 
-    s := evals.NewSuite("example-v1",
+    s := evals.MustNewIntegrationSuite("example-v1",
         evals.WithEnv(exampleEnv),
         evals.WithSetup(sanityCheck),
         evals.WithIdentity(iam.SystemIdentity),
     )
 
-    s.Case("get-item", func(ctx context.Context, t *evals.T) {
+    s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.Item, error) {
             return clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
         })
@@ -301,9 +311,7 @@ func Register() {
         }
         t.Check("has-name", r.Resp.GetName() != "")
         t.Checkf("size-positive", r.Resp.GetSize() > 0, "got size=%d, want > 0", r.Resp.GetSize())
-    })
-
-    s.Case("list-empty-parent", func(ctx context.Context, t *evals.T) {
+    }).MustCase("list-empty-parent", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.ListItemsResponse, error) {
             return clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{Parent: emptyParent})
         })
@@ -313,7 +321,9 @@ func Register() {
         t.Check("empty", len(r.Resp.GetItems()) == 0)
     })
 
-    evals.RegisterIntegration(s)
+    if err := evals.RegisterIntegration(s); err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -358,12 +368,12 @@ import (
 )
 
 func Register() {
-    s := evals.NewEvalSuite("example-agent-v1",
+    s := evals.MustNewAgentEvalSuite("example-agent-v1",
         evals.WithEnv("agent-runtime"),
         evals.WithIdentity(iam.SystemIdentity),
     )
 
-    s.Case("golden-short-summary", func(ctx context.Context, t *evals.T) {
+    s.MustCase("golden-short-summary", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*agentpb.Reply, error) {
             return clients.Agent.Chat(ctx, prompt)
         })
@@ -387,7 +397,9 @@ func Register() {
         t.Check("no-refusal", !grade.Refused)
     })
 
-    evals.RegisterEval(s)
+    if err := evals.RegisterEval(s); err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -421,7 +433,9 @@ func Register() {
         // Optional: skip eval sets you don't want the runner to touch.
         // IncludeEvalSet: func(id string) bool { return id != "experimental" },
     })
-    evals.RegisterAgent(provider)
+    if err := evals.RegisterAgent(provider); err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -451,7 +465,7 @@ import (
 )
 
 func Register() {
-    s := evals.NewLoadSuite("example-v1-load",
+    s := evals.MustNewLoadSuite("example-v1-load",
         evals.WithLoadEnv(exampleEnv),
         // Override MODERATE for this suite: heavier than the framework default.
         evals.WithLoadProfile(evalspb.RunLoadTestRequest_MODERATE, evals.Profile{
@@ -463,7 +477,7 @@ func Register() {
         }),
     )
 
-    s.LoadCase("list-items",
+    s.MustLoadCase("list-items",
         func(ctx context.Context) error {
             _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
             return err
@@ -472,9 +486,7 @@ func Register() {
         evals.SLOLatencyP50(50*time.Millisecond),
         evals.SLOErrorRate(0.01),
         evals.SLOMinQPS(20),
-    )
-
-    s.LoadCase("get-item",
+    ).MustLoadCase("get-item",
         func(ctx context.Context) error {
             _, err := clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
             return err
@@ -483,7 +495,9 @@ func Register() {
         evals.SLOErrorRate(0.005),
     )
 
-    evals.RegisterLoad(s)
+    if err := evals.RegisterLoad(s); err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -527,18 +541,19 @@ Everything in the public API of the framework, in one place.
 
 ### Suite constructors
 
-| Function                                                   | Returns      | Notes                                                                                  |
-| ---------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------- |
-| `evals.NewSuite(name string, opts ...SuiteOption)`         | `*Suite`     | Integration suite. Panics on invalid name (empty or containing `.`) or invalid option. |
-| `evals.NewEvalSuite(name string, opts ...SuiteOption)`     | `*Suite`     | Agent-eval suite. Same panic rules.                                                    |
-| `evals.NewLoadSuite(name string, opts ...LoadSuiteOption)` | `*LoadSuite` | Load suite. Same panic rules.                                                          |
+| Function                                                                     | Returns              | Notes                                                                                                            |
+| ---------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `evals.NewIntegrationSuite(name string, opts ...SuiteOption)`                | `(*Suite, error)`    | Integration suite. Returns a typed error on invalid name (empty or containing `.`) or invalid option.            |
+| `evals.NewAgentEvalSuite(name string, opts ...SuiteOption)`                  | `(*Suite, error)`    | Agent-eval suite. Same error rules.                                                                              |
+| `evals.NewLoadSuite(name string, opts ...LoadSuiteOption)`                   | `(*LoadSuite, error)`| Load suite. Same error rules.                                                                                    |
+| `evals.MustNewIntegrationSuite` / `MustNewAgentEvalSuite` / `MustNewLoadSuite` | `*Suite` / `*LoadSuite` | Panicking variants for init-time code that would `log.Fatal` on a config error.                              |
 
 `Suite.Kind()` reports `KindTest` or `KindEval`. Kinds cannot be mixed — passing a `KindEval` suite
-to `RegisterIntegration` panics.
+to `RegisterIntegration` returns `evals.ErrWrongSuiteKind`.
 
 ### Shared suite options (test + eval)
 
-All apply to both `NewSuite` and `NewEvalSuite`.
+All apply to both `NewIntegrationSuite` and `NewAgentEvalSuite`.
 
 | Option                                     | Effect                                                                                                                                                                           |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -558,14 +573,16 @@ Applied to `NewLoadSuite`. Kept separate from `SuiteOption` because several test
 | `evals.WithLoadEnv(names ...string)`                                     | Declare shared environments. Same semantics as `WithEnv` on test/eval suites.                                                                                          |
 | `evals.WithLoadSetup(hook suite.SuiteHook)`                              | Suite-level pre-cases hook. Failure fails every case with a `setup` marker.                                                                                            |
 | `evals.WithLoadTeardown(hook suite.SuiteHook)`                           | Suite-level post-cases hook. Errors logged, ignored.                                                                                                                   |
-| `evals.WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile)` | Override the framework default profile for that specific mode. The override fully replaces the default; other modes keep theirs. Panics if `mode == MODE_UNSPECIFIED`. |
+| `evals.WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile)` | Override the framework default profile for that specific mode. The override fully replaces the default; other modes keep theirs. Returns `suite.ErrLoadProfileUnspecifiedMode` if `mode == MODE_UNSPECIFIED`. |
 
 ### Case registration
 
-| Method                                                                      | Effect                                                                                                                          |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `(*Suite).Case(name string, fn CaseFunc) *Suite`                            | Register a test or eval case. Name must not contain `.` and must be unique inside the suite. Returns the receiver for chaining. |
-| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Register a load case. `target` is `func(ctx context.Context) error`.                                                            |
+| Method                                                                          | Effect                                                                                                                        |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `(*Suite).Case(name string, fn CaseFunc) error`                                 | Register a test or eval case. Returns a typed error (`evals.ErrNilCaseFunc`, `suite.ErrInvalidCaseName`, `suite.ErrDuplicateCase`). |
+| `(*Suite).MustCase(name string, fn CaseFunc) *Suite`                            | Panicking variant returning the receiver for fluent chaining.                                                                 |
+| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) error`          | Register a load case. `target` is `func(ctx context.Context) error`. Returns a typed error (`evals.ErrNilTarget`, etc.).      |
+| `(*LoadSuite).MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Panicking variant returning the receiver for fluent chaining.                                                                 |
 
 Types:
 
@@ -626,7 +643,8 @@ failed).
 ```go
 package env
 
-func Register(name string, opts ...Option)  // panics on duplicate name
+func Register(name string, opts ...Option) error       // returns env.ErrDuplicateRegistration
+func MustRegister(name string, opts ...Option)         // panics on duplicate
 func WithSetup(hook Hook) Option
 func WithTeardown(hook Hook) Option
 func Get(name string) *Environment
@@ -634,27 +652,29 @@ func Get(name string) *Environment
 type Hook func(context.Context) error
 ```
 
-| Function                      | Effect                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| `env.Register(name, opts...)` | Register a globally-named environment. Panics if `name` was already registered.   |
-| `env.WithSetup(hook)`         | Optional setup, invoked once per LRO if any selected suite depends on this env.   |
-| `env.WithTeardown(hook)`      | Optional teardown, invoked in reverse-registration order after all suites finish. |
-| `env.Get(name)`               | Look up a registered environment. Returns nil for unknown names.                  |
+| Function                              | Effect                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `env.Register(name, opts...) error`   | Register a globally-named environment. Returns `env.ErrDuplicateRegistration` on duplicate.             |
+| `env.MustRegister(name, opts...)`     | Panicking variant. Use at package init when a duplicate should halt the process.                        |
+| `env.WithSetup(hook)`                 | Optional setup, invoked once per LRO if any selected suite depends on this env.                         |
+| `env.WithTeardown(hook)`              | Optional teardown, invoked in reverse-registration order after all suites finish.                       |
+| `env.Get(name)`                       | Look up a registered environment. Returns nil for unknown names.                                        |
 
 Environments are process-global. If you're building a library that wants to be re-entrant, avoid
 re-registering the same name — call `env.Get(name)` first, or gate registration behind `sync.Once`.
 
 ### Registration functions
 
-| Function                                            | Effect                                                                                    |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `evals.RegisterIntegration(s *Suite)`               | Publish an integration suite. Panics if `s == nil` or `s.Kind() != KindTest`.             |
-| `evals.RegisterEval(s *Suite)`                      | Publish an eval suite. Panics if `s == nil` or `s.Kind() != KindEval`.                    |
-| `evals.RegisterLoad(s *LoadSuite)`                  | Publish a load suite. Panics if `s == nil`.                                               |
-| `evals.RegisterAgent(p registry.AgentEvalProvider)` | Publish a lazy agent-eval provider (for example an ADK-backed one). Panics if `p == nil`. |
-| `evals.DefaultRegistry() *registry.Registry`        | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests.     |
+| Function                                                    | Effect                                                                                                                              |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `evals.RegisterIntegration(s *Suite) error`                 | Publish an integration suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindTest`.     |
+| `evals.RegisterEval(s *Suite) error`                        | Publish an eval suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindEval`.            |
+| `evals.RegisterLoad(s *LoadSuite) error`                    | Publish a load suite. Returns `suite.ErrNilSuite` if `s == nil`.                                                                    |
+| `evals.RegisterAgent(p registry.AgentEvalProvider) error`   | Publish a lazy agent-eval provider (for example an ADK-backed one). Returns `evals.ErrNilProvider` if `p == nil`.                   |
+| `evals.DefaultRegistry() *registry.Registry`                | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests.                                               |
 
-Call these once at `init()` time. All four go to `evals.DefaultRegistry()`.
+Call these once at `init()` time. All four target `evals.DefaultRegistry()`. Callers must handle
+the returned error (or `log.Fatal`); the framework does not panic on registration errors.
 
 ### Reporters
 
@@ -743,20 +763,31 @@ Concrete error types worth knowing about (all implement `EvalError`):
 
 | Error                                                              | Package          | Triggered by                                                                                          |
 | ------------------------------------------------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------- |
+| `evals.ErrNilCaseFunc`                                             | `evals`          | `Suite.Case` called with a nil case function.                                                          |
+| `evals.ErrNilTarget`                                               | `evals`          | `LoadSuite.LoadCase` called with a nil target.                                                         |
+| `evals.ErrNilProvider`                                             | `evals`          | `RegisterAgent` called with a nil provider.                                                            |
+| `evals.ErrWrongSuiteKind`                                          | `evals`          | Suite passed to the wrong `Register*` (e.g. eval suite to `RegisterIntegration`).                      |
+| `evals.ErrUnknownSuiteKind`                                        | `evals`          | Internal invariant: `Suite.Case` invoked on a suite whose `kind` is neither `KindTest` nor `KindEval`. |
+| `suite.ErrNilSuite`                                                | `evals/suite`    | Registration or case-add on a nil suite.                                                              |
 | `suite.ErrInvalidSuiteName`                                        | `evals/suite`    | Empty name, name containing `.`.                                                                      |
 | `suite.ErrDuplicateCase`                                           | `evals/suite`    | Two cases with the same short name inside one suite.                                                  |
 | `suite.ErrInvalidCaseName`                                         | `evals/suite`    | Case name containing `.`.                                                                             |
 | `suite.ErrUnknownEnvironment`                                      | `evals/suite`    | `WithEnv` naming an env that hasn't been registered.                                                  |
 | `suite.ErrInvalidFilterPath`                                       | `evals/suite`    | `case_ids` entry that is not `suite` or `suite.case`.                                                 |
+| `suite.ErrLoadProfileUnspecifiedMode`                              | `evals/suite`    | `WithLoadProfile` targeting `MODE_UNSPECIFIED`.                                                        |
+| `env.ErrDuplicateRegistration`                                     | `evals/env`      | `env.Register` called twice for the same name.                                                         |
 | `env.ErrNotRegistered`                                             | `evals/env`      | Runner asked for an env that wasn't `env.Register`ed.                                                 |
 | `env.ErrSetupFailed`                                               | `evals/env`      | Env setup hook returned an error; every case in dependent suites is marked with a setup-error result. |
 | `registry.ErrNoTestSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` | `evals/registry` | Filter matches nothing.                                                                               |
 
-Construction-time errors (name violations, duplicate cases, unknown envs) surface at
-`evals.NewSuite` / `evals.NewEvalSuite` / `evals.NewLoadSuite` as **panics** wrapping the typed
-error — the intent is to fail loudly at process init so misconfigured neurons never start.
-Everything discovered by the runtime (unknown filter path, env setup failure) surfaces via
-`EvalError` and is translated to a gRPC status by the RPC handlers.
+Construction-time errors (name violations, duplicate cases, unknown envs, wrong-kind
+registration) are returned as typed `EvalError` values from `evals.NewIntegrationSuite` /
+`evals.NewAgentEvalSuite` / `evals.NewLoadSuite`, from `Suite.Case` / `LoadSuite.LoadCase`, and
+from the `Register*` functions. Callers decide whether to `log.Fatal`, propagate, or ignore.
+The `MustNew*` / `MustCase` / `MustLoadCase` / `env.MustRegister` variants panic wrapping the
+same typed error for init-time code that would otherwise `log.Fatal`. Everything discovered by
+the runtime (unknown filter path, env setup failure) surfaces via `EvalError` and is translated
+to a gRPC status by the RPC handlers.
 
 ### Helpers
 
@@ -816,7 +847,7 @@ For ADK-backed agent evals the equivalent HTTP headers are set on every request:
 
 | Path              | Role                                                                                                                                     |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals`           | Public authoring surface: `NewSuite`, `NewEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
+| `evals`           | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
 | `evals/adk`       | ADK evaluation-launcher client and lazy `AgentEvalProvider`.                                                                             |
 | `evals/auth`      | Outgoing gRPC identity headers (`Outgoing`, `SystemOutgoing`).                                                                           |
 | `evals/env`       | Shared environment registration and activation.                                                                                          |

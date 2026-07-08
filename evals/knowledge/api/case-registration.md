@@ -11,8 +11,10 @@ timestamp: 2026-07-08T00:00:00Z
 
 | Method | Effect |
 | ------ | ------ |
-| `(*Suite).Case(name string, fn CaseFunc) *Suite` | Register a test or eval case. Name must not contain `.` and must be unique inside the suite. Returns the receiver for chaining. |
-| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Register a load case. `target` is `func(ctx context.Context) error`. |
+| `(*Suite).Case(name string, fn CaseFunc) error` | Register a test or eval case. Name must not contain `.` and must be unique inside the suite. Returns a typed error on failure. |
+| `(*Suite).MustCase(name string, fn CaseFunc) *Suite` | Panicking variant that returns the receiver for fluent chaining. |
+| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) error` | Register a load case. `target` is `func(ctx context.Context) error`. Returns a typed error on failure. |
+| `(*LoadSuite).MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Panicking variant that returns the receiver for fluent chaining. |
 
 # Types
 
@@ -25,19 +27,33 @@ type SLO      struct { … opaque … }
 
 # Validation
 
-- Empty case name → panic (`suite.ErrInvalidCaseName`).
-- Name containing `.` → panic (`suite.ErrInvalidCaseName`).
-- Duplicate case name within the same suite → panic
-  (`suite.ErrDuplicateCase`).
+- Nil suite receiver → `suite.ErrNilSuite`.
+- Nil case function → `evals.ErrNilCaseFunc`.
+- Nil load target → `evals.ErrNilTarget`.
+- Empty case name → `suite.ErrInvalidCaseName`.
+- Name containing `.` → `suite.ErrInvalidCaseName`.
+- Duplicate case name within the same suite → `suite.ErrDuplicateCase`.
+
+The `Must*` variants wrap these into a panic when a registration failure
+should halt the process.
 
 # Chaining
 
-Both methods return the suite receiver so chains like this compile:
+The `Must*` methods return the suite receiver so chains like this compile:
 
 ```go
-evals.NewSuite("s").
-    Case("a", handleA).
-    Case("b", handleB)
+evals.MustNewIntegrationSuite("s").
+    MustCase("a", handleA).
+    MustCase("b", handleB)
+```
+
+For error-returning registration:
+
+```go
+s, err := evals.NewIntegrationSuite("s")
+if err != nil { return err }
+if err := s.Case("a", handleA); err != nil { return err }
+if err := s.Case("b", handleB); err != nil { return err }
 ```
 
 # Related

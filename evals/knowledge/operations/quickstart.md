@@ -21,7 +21,7 @@ timestamp: 2026-07-08T00:00:00Z
 import "go.alis.build/evals/env"
 
 func init() {
-    env.Register("example-v1",
+    env.MustRegister("example-v1",
         env.WithSetup(seedExample),
         env.WithTeardown(cleanupExample),
     )
@@ -29,7 +29,8 @@ func init() {
 ```
 
 Environments activate **once per LRO**, so multiple suites can share
-expensive setup.
+expensive setup. `MustRegister` panics on duplicate names; use
+`env.Register` when you want to propagate the error.
 
 ## 2. Author a suite and publish it once
 
@@ -40,10 +41,10 @@ import (
 )
 
 func Register() {
-    s := evals.NewSuite("example-v1",
+    s := evals.MustNewIntegrationSuite("example-v1",
         evals.WithEnv("example-v1"),
     )
-    s.Case("get-item", func(ctx context.Context, t *evals.T) {
+    s.MustCase("get-item", func(ctx context.Context, t *evals.T) {
         r := evals.Call(ctx, func(ctx context.Context) (*examplepb.Item, error) {
             return clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
         })
@@ -51,9 +52,15 @@ func Register() {
         t.Max("latency", r.Latency, 300*time.Millisecond)
         t.Check("has-name", r.Resp.GetName() != "")
     })
-    evals.RegisterIntegration(s)
+    if err := evals.RegisterIntegration(s); err != nil {
+        panic(err)
+    }
 }
 ```
+
+The `Must*` constructors and `MustCase` panic on config errors so init-time
+misuse fails loudly. Use the error-returning variants (`NewIntegrationSuite`,
+`Case`, etc.) if you'd rather propagate.
 
 ## 3. Wire the service and (optionally) fan out to reporters
 

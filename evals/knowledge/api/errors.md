@@ -41,11 +41,19 @@ All implement `EvalError`.
 
 | Error | Package | Triggered by |
 | ----- | ------- | ------------ |
+| `evals.ErrNilCaseFunc` | `evals` | `Suite.Case` called with a nil case function. |
+| `evals.ErrNilTarget` | `evals` | `LoadSuite.LoadCase` called with a nil target. |
+| `evals.ErrNilProvider` | `evals` | `RegisterAgent` called with a nil provider. |
+| `evals.ErrWrongSuiteKind` | `evals` | Suite passed to the wrong `Register*` (e.g. eval suite to `RegisterIntegration`). |
+| `evals.ErrUnknownSuiteKind` | `evals` | Internal invariant: `Suite.Case` invoked on a `Suite` whose `kind` field is neither `KindTest` nor `KindEval`. Maps to `codes.Internal`. |
+| `suite.ErrNilSuite` | `evals/suite` | Registration or case-add on a nil suite. |
 | `suite.ErrInvalidSuiteName` | `evals/suite` | Empty name or name containing `.`. |
 | `suite.ErrDuplicateCase` | `evals/suite` | Two cases with the same short name inside one suite. |
 | `suite.ErrInvalidCaseName` | `evals/suite` | Case name containing `.`. |
 | `suite.ErrUnknownEnvironment` | `evals/suite` | `WithEnv` naming an env that hasn't been registered. |
 | `suite.ErrInvalidFilterPath` | `evals/suite` | `case_ids` entry that is not `suite` or `suite.case`. |
+| `suite.ErrLoadProfileUnspecifiedMode` | `evals/suite` | `WithLoadProfile` targeting `MODE_UNSPECIFIED`. |
+| `env.ErrDuplicateRegistration` | `evals/env` | `env.Register` called twice for the same name. |
 | `env.ErrNotRegistered` | `evals/env` | Runner asked for an env that wasn't `env.Register`ed. |
 | `env.ErrSetupFailed` | `evals/env` | Env setup hook returned an error; every case in dependent suites is marked with a setup-error result. |
 | `registry.ErrNoTestSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` | `evals/registry` | Filter matches nothing. |
@@ -53,10 +61,13 @@ All implement `EvalError`.
 # Construction-time vs runtime
 
 - **Construction-time errors** (name violations, duplicate cases,
-  unknown envs) surface at `evals.NewSuite` / `evals.NewEvalSuite` /
-  `evals.NewLoadSuite` as **panics** wrapping the typed error — the
-  intent is to fail loudly at process init so misconfigured neurons
-  never start.
+  unknown envs, wrong-kind registration) are returned by
+  `evals.NewIntegrationSuite` / `evals.NewAgentEvalSuite` /
+  `evals.NewLoadSuite`, `Suite.Case` / `LoadSuite.LoadCase`, and the
+  `Register*` functions. Callers decide whether to `log.Fatal`,
+  propagate, or ignore. The `MustNew*` / `MustCase` / `MustLoadCase`
+  and `env.MustRegister` variants panic for init-time code that would
+  otherwise `log.Fatal` on an error.
 - **Runtime-discovered errors** (unknown filter path, env setup
   failure) surface via `EvalError` and are translated to a gRPC
   status by the RPC handlers.

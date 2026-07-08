@@ -15,8 +15,9 @@ their state across every suite that references them.
 
 # Public surface
 
-- `env.Register(name string, opts ...Option)` — panics on duplicate
-  name.
+- `env.Register(name string, opts ...Option) error` — returns
+  `env.ErrDuplicateRegistration` on duplicate name.
+- `env.MustRegister(name string, opts ...Option)` — panicking variant.
 - `env.WithSetup(hook Hook) Option`.
 - `env.WithTeardown(hook Hook) Option`.
 - `env.Get(name string) *Environment`.

@@ -30,7 +30,7 @@ import (
 )
 
 func Register() {
-    s := evals.NewLoadSuite("example-v1-load",
+    s := evals.MustNewLoadSuite("example-v1-load",
         evals.WithLoadEnv(exampleEnv),
         // Override MODERATE for this suite: heavier than the framework default.
         evals.WithLoadProfile(evalspb.RunLoadTestRequest_MODERATE, evals.Profile{
@@ -42,7 +42,7 @@ func Register() {
         }),
     )
 
-    s.LoadCase("list-items",
+    s.MustLoadCase("list-items",
         func(ctx context.Context) error {
             _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
             return err
@@ -51,9 +51,7 @@ func Register() {
         evals.SLOLatencyP50(50*time.Millisecond),
         evals.SLOErrorRate(0.01),
         evals.SLOMinQPS(20),
-    )
-
-    s.LoadCase("get-item",
+    ).MustLoadCase("get-item",
         func(ctx context.Context) error {
             _, err := clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
             return err
@@ -62,7 +60,9 @@ func Register() {
         evals.SLOErrorRate(0.005),
     )
 
-    evals.RegisterLoad(s)
+    if err := evals.RegisterLoad(s); err != nil {
+        panic(err)
+    }
 }
 ```
 

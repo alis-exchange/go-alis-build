@@ -56,7 +56,9 @@ func TestNewTestSuite_unknownEnvironment(t *testing.T) {
 func TestNewTestSuite_withEnvironment(t *testing.T) {
 	t.Parallel()
 
-	env.Register("suite-test-env-" + t.Name())
+	if err := env.Register("suite-test-env-" + t.Name()); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
 	s, err := NewTestSuite("files-v2", WithEnvironment("suite-test-env-"+t.Name()))
 	if err != nil {
 		t.Fatalf("NewTestSuite: %v", err)
