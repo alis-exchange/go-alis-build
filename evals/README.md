@@ -53,6 +53,7 @@ import (
     "go.alis.build/evals/env"
     "go.alis.build/evals/report"
     logreport "go.alis.build/evals/report/log"
+    pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
 // 1. Register any shared environment in package init.
@@ -86,10 +87,17 @@ func Register() error {
     return evals.RegisterIntegration(s)
 }
 
-// 3. Wire the service and (optionally) fan out to your own reporters.
-services.TestServiceServer.Reporter = report.MultiReporter{
-    logreport.Reporter{},
-    myPubSubReporter{topic: "eval-runs"},
+// 3. Wire the service and (optionally) fan out to more reporters.
+func setupReporters(ctx context.Context) (*pubsubreport.Reporter, error) {
+    ps, err := pubsubreport.New(ctx)
+    if err != nil {
+        return nil, err
+    }
+    services.TestServiceServer.Reporter = report.MultiReporter{
+        logreport.Reporter{},
+        ps, // publishes RunPublishedEvent to Pub/Sub via go.alis.build/events
+    }
+    return ps, nil // Close() at server drain
 }
 ```
 
@@ -696,6 +704,7 @@ Bundled implementations:
 | ---- | ------- | ------- |
 | `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
 | `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table via protobq. See [BigQuery reporter](#bigquery-reporter) below. |
+| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Wraps each Run in a `RunPublishedEvent` envelope and publishes it to Pub/Sub via [go.alis.build/events](https://pkg.go.dev/go.alis.build/events). See [Pub/Sub reporter](#pubsub-reporter) below. |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
 | `report.MultiReporter{…}` | `go.alis.build/evals/report` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
 
@@ -703,19 +712,30 @@ Wiring:
 
 ```go
 import (
+    "context"
+
     "go.alis.build/evals/report"
     logreport "go.alis.build/evals/report/log"
     bqreport "go.alis.build/evals/report/bigquery"
+    pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
-bq, err := bqreport.New(ctx, projectID, "evals", "runs")
-if err != nil { ... }
-defer bq.Close()
-
-services.TestServiceServer.Reporter = report.MultiReporter{
-    logreport.Reporter{},
-    bq,
-    myPubSubReporter{topic: "eval-runs"},
+func setupReporters(ctx context.Context, projectID string) error {
+    bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+    if err != nil {
+        return err
+    }
+    ps, err := pubsubreport.New(ctx)
+    if err != nil {
+        _ = bq.Close()
+        return err
+    }
+    services.TestServiceServer.Reporter = report.MultiReporter{
+        logreport.Reporter{},
+        bq,
+        ps,
+    }
+    return nil // Close bq and ps at server drain
 }
 ```
 
@@ -760,6 +780,42 @@ At construction:
 
 Each row uses `run.name` (`runs/{run_id}`) as the BigQuery insert ID for best-effort deduplication within the streaming insert window (absorbs Cloud Tasks retries). Inserts are bounded by a 10s timeout (override with `bqreport.WithInsertTimeout`). `bqreport.New` owns the underlying BigQuery client and closes it on `Close`; `bqreport.NewWithClient` borrows a client and Close is a no-op.
 
+#### Pub/Sub reporter
+
+The Pub/Sub reporter wraps each completed `Run` in an `alis.evals.v1.RunPublishedEvent` envelope and publishes it via [`go.alis.build/events`](https://pkg.go.dev/go.alis.build/events). The default topic is the event message's proto full name (`alis.evals.v1.RunPublishedEvent`) — the same string the Alis Build platform provisions when defining the message, so no wiring is required beyond `New`.
+
+```go
+import pubsubreport "go.alis.build/evals/report/pubsub"
+
+func setupPubsub(ctx context.Context) (*pubsubreport.Reporter, error) {
+    ps, err := pubsubreport.New(ctx)
+    if err != nil {
+        return nil, err
+    }
+    services.TestServiceServer.Reporter = ps
+    return ps, nil // Close() at server drain
+}
+```
+
+By default every `ReportRun` blocks until the Pub/Sub broker acks the message — the safer choice for short-lived eval processes that may exit right after completing a run. Options:
+
+| Option | Effect |
+| ------ | ------ |
+| `pubsubreport.WithProject(id)` | Override the Google Cloud project (defaults to `ALIS_OS_PROJECT`). Only valid with `New`. |
+| `pubsubreport.WithTopic(name)` | Override the default topic. Accepts a bare topic ID or a fully-qualified `projects/<p>/topics/<t>` resource string. |
+| `pubsubreport.WithOrderingKey(k)` | Apply the Pub/Sub ordering key on every message. |
+| `pubsubreport.WithBackground()` | Fire-and-forget publishing (does not wait for broker ack). Best-effort delivery only. |
+| `pubsubreport.WithPublishTimeout(d)` | Bound each publish via `context.WithTimeout`. Defaults to 10s. |
+
+`pubsubreport.New(ctx, opts...)` owns the underlying `*events.Client` and closes it on `Close`. `pubsubreport.NewWithClient(client, opts...)` borrows a client (Close is a no-op); passing `WithProject` there returns an error since the borrowed client already has a project bound.
+
+**Pub/Sub → BigQuery.** Pub/Sub can attach a BigQuery subscription that writes messages directly into a table, but note two constraints of the direct-subscription proto path:
+
+1. Pub/Sub → BigQuery marks proto `oneof` fields as **unmappable**. `Run` has `oneof data { integration_test, load_test, agent_eval }`, so a "Use topic schema" subscription against this topic fails schema compatibility.
+2. Pub/Sub → BigQuery does not unwrap well-known types the way the in-process BigQuery reporter does — Timestamps land as `RECORD<seconds, nanos>` rather than `TIMESTAMP`, etc.
+
+If you want a queryable BigQuery table fed by Pub/Sub whose shape matches the in-process reporter's output, run a small subscriber that unmarshals `RunPublishedEvent` and forwards `evt.Run` to `bqreport.Reporter`. If you only need a raw archive of published events, use a "Don't use a schema" subscription with a single `data BYTES` column.
+
 **Contract for custom reporters:**
 
 1. Handle `run == nil` as a no-op.
@@ -767,25 +823,35 @@ Each row uses `run.name` (`runs/{run_id}`) as the BigQuery insert ID for best-ef
 3. Errors are best-effort. Returning one is logged by the caller; subsequent reporters in a
    `MultiReporter` are skipped.
 
-Minimal implementation skeleton:
+Minimal implementation skeleton (webhook example — use the bundled `pubsubreport` / `bqreport` for Pub/Sub and BigQuery):
 
 ```go
-type PubSubReporter struct {
-    Topic *pubsub.Topic
+type WebhookReporter struct {
+    URL    string
+    Client *http.Client
 }
 
-func (r *PubSubReporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
+func (r *WebhookReporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
     if run == nil {
         return nil
     }
-    b, err := proto.Marshal(run)
+    body, err := protojson.Marshal(run)
     if err != nil {
         return err
     }
     ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
     defer cancel()
-    _, err = r.Topic.Publish(ctx, &pubsub.Message{Data: b}).Get(ctx)
-    return err
+    req, _ := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
+    req.Header.Set("Content-Type", "application/json")
+    resp, err := r.Client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode >= 300 {
+        return fmt.Errorf("webhook: %s", resp.Status)
+    }
+    return nil
 }
 ```
 
@@ -912,6 +978,7 @@ For ADK-backed agent evals the equivalent HTTP headers are set on every request:
 | `evals/report`          | `Reporter` interface + `NoOpReporter`, `MultiReporter`.                                                                                  |
 | `evals/report/log`      | Default log reporter (`log.Reporter`).                                                                                                   |
 | `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`) + `InferSchema` helper.                                                                |
+| `evals/report/pubsub`   | Pub/Sub reporter (`pubsub.Reporter`) — publishes `RunPublishedEvent` via `go.alis.build/events`.                                         |
 | `evals/runner`          | Environment activation, suite execution, panic recovery, status rollups.                                                                 |
 | `evals/suite`           | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                               |
 

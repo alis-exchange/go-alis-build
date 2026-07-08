@@ -38,25 +38,35 @@
 //
 // Standalone:
 //
-//	r, err := bqreport.New(ctx, projectID, datasetID, tableID)
-//	if err != nil { ... }
-//	defer r.Close()
-//	services.TestServiceServer.Reporter = r
+//	func setupReporter(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
+//	    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	    if err != nil {
+//	        return nil, err
+//	    }
+//	    services.TestServiceServer.Reporter = r
+//	    return r, nil // Close() at server drain
+//	}
 //
 // Fan out alongside other sinks:
 //
 //	import (
+//	    "context"
+//
 //	    "go.alis.build/evals/report"
 //	    logreport "go.alis.build/evals/report/log"
 //	    bqreport "go.alis.build/evals/report/bigquery"
 //	)
 //
-//	r, err := bqreport.New(ctx, projectID, datasetID, tableID)
-//	if err != nil { ... }
-//	defer r.Close()
-//	services.TestServiceServer.Reporter = report.MultiReporter{
-//	    logreport.Reporter{},
-//	    r,
+//	func setupReporters(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
+//	    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	    if err != nil {
+//	        return nil, err
+//	    }
+//	    services.TestServiceServer.Reporter = report.MultiReporter{
+//	        logreport.Reporter{},
+//	        r,
+//	    }
+//	    return r, nil // Close() at server drain
 //	}
 //
 // # Client ownership

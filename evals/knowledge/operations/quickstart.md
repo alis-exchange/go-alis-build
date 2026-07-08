@@ -66,15 +66,29 @@ misuse fails loudly. Use the error-returning variants (`NewIntegrationSuite`,
 
 ```go
 import (
+    "context"
+
     "go.alis.build/evals/report"
     logreport "go.alis.build/evals/report/log"
+    pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
-services.TestServiceServer.Reporter = report.MultiReporter{
-    logreport.Reporter{},
-    myPubSubReporter{topic: "eval-runs"},
+func setupReporters(ctx context.Context) (*pubsubreport.Reporter, error) {
+    ps, err := pubsubreport.New(ctx)
+    if err != nil {
+        return nil, err
+    }
+    services.TestServiceServer.Reporter = report.MultiReporter{
+        logreport.Reporter{},
+        ps, // publishes RunPublishedEvent to Pub/Sub via go.alis.build/events
+    }
+    return ps, nil // Close() at server drain
 }
 ```
+
+Swap `pubsubreport` for `bqreport` (see
+[`report/bigquery`](/packages/report-bigquery.md)) to stream Runs
+into BigQuery instead, or fan out to both.
 
 ## 4. Import the launcher
 

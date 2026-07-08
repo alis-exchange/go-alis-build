@@ -16,11 +16,20 @@ pre-existing BigQuery table using
 # Usage
 
 ```go
-import bqreport "go.alis.build/evals/report/bigquery"
+import (
+    "context"
 
-r, err := bqreport.New(ctx, projectID, datasetID, tableID)
-if err != nil { ... }
-defer r.Close()
+    bqreport "go.alis.build/evals/report/bigquery"
+)
+
+func setupReporter(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
+    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+    if err != nil {
+        return nil, err
+    }
+    services.TestServiceServer.Reporter = r
+    return r, nil // Close() at server drain
+}
 ```
 
 # Schema provisioning

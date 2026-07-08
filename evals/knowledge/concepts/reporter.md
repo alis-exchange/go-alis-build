@@ -28,6 +28,7 @@ type Reporter interface {
 | ---- | ------- | ------- |
 | `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED`, `Warn` otherwise. Nil-safe on nil runs. |
 | `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table. |
+| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Wraps each Run in a `RunPublishedEvent` and publishes via [go.alis.build/events](https://pkg.go.dev/go.alis.build/events). |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful in local tests. |
 | `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out to multiple reporters, in order. First error aborts. |
 
@@ -35,19 +36,30 @@ type Reporter interface {
 
 ```go
 import (
+    "context"
+
     "go.alis.build/evals/report"
     logreport "go.alis.build/evals/report/log"
     bqreport "go.alis.build/evals/report/bigquery"
+    pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
-bq, err := bqreport.New(ctx, projectID, "evals", "runs")
-if err != nil { ... }
-defer bq.Close()
-
-services.TestServiceServer.Reporter = report.MultiReporter{
-    logreport.Reporter{},
-    bq,
-    myPubSubReporter{topic: "eval-runs"},
+func setupReporters(ctx context.Context, projectID string) error {
+    bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+    if err != nil {
+        return err
+    }
+    ps, err := pubsubreport.New(ctx)
+    if err != nil {
+        _ = bq.Close()
+        return err
+    }
+    services.TestServiceServer.Reporter = report.MultiReporter{
+        logreport.Reporter{},
+        bq,
+        ps,
+    }
+    return nil // Close bq and ps at server drain
 }
 ```
 
@@ -59,25 +71,40 @@ services.TestServiceServer.Reporter = report.MultiReporter{
 3. **Errors are best-effort.** Returning one is logged by the caller;
    subsequent reporters in a `MultiReporter` are skipped for that run.
 
-# Minimal Pub/Sub example
+# Minimal custom-reporter example
+
+For Pub/Sub, use the bundled
+[`evals/report/pubsub`](/packages/report-pubsub.md); for BigQuery,
+use [`evals/report/bigquery`](/packages/report-bigquery.md). This
+webhook sketch is here as a template for wiring up any other sink:
 
 ```go
-type PubSubReporter struct {
-    Topic *pubsub.Topic
+type WebhookReporter struct {
+    URL    string
+    Client *http.Client
 }
 
-func (r *PubSubReporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
+func (r *WebhookReporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
     if run == nil {
         return nil
     }
-    b, err := proto.Marshal(run)
+    body, err := protojson.Marshal(run)
     if err != nil {
         return err
     }
     ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
     defer cancel()
-    _, err = r.Topic.Publish(ctx, &pubsub.Message{Data: b}).Get(ctx)
-    return err
+    req, _ := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
+    req.Header.Set("Content-Type", "application/json")
+    resp, err := r.Client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode >= 300 {
+        return fmt.Errorf("webhook: %s", resp.Status)
+    }
+    return nil
 }
 ```
 
@@ -92,3 +119,4 @@ func (r *PubSubReporter) ReportRun(ctx context.Context, run *evalspb.Run) error 
 [1] [report/report.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/report.go)
 [2] [report/log/log.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/log/log.go)
 [3] [report/bigquery/bigquery.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/bigquery/bigquery.go)
+[4] [report/pubsub/pubsub.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/pubsub/pubsub.go)
