@@ -52,6 +52,7 @@ import (
     "go.alis.build/evals"
     "go.alis.build/evals/env"
     "go.alis.build/evals/report"
+    logreport "go.alis.build/evals/report/log"
 )
 
 // 1. Register any shared environment in package init.
@@ -87,7 +88,7 @@ func Register() error {
 
 // 3. Wire the service and (optionally) fan out to your own reporters.
 services.TestServiceServer.Reporter = report.MultiReporter{
-    report.LogReporter{},
+    logreport.Reporter{},
     myPubSubReporter{topic: "eval-runs"},
 }
 ```
@@ -108,8 +109,8 @@ with plain `if !… { return }`. No panics, no `runtime.Goexit`.
 
 **Environment.** Shared setup/teardown identified by name. Registered once (`env.Register`) and referenced by any suite via `WithEnv` — activated once per LRO, not once per suite.
 
-**Reporter.** A `report.Reporter` sink that receives each completed `Run` proto. Default is `LogReporter` (one alog line per run); use `MultiReporter{…}` to fan out to Pub/Sub, BigQuery,
-Spanner, etc.
+**Reporter.** A `report.Reporter` sink that receives each completed `Run` proto. The default is `log.Reporter` (one alog line per run); use `MultiReporter{…}` to fan out to BigQuery,
+Pub/Sub, Spanner, etc. Concrete sinks live in subpackages — see [Reporters](#reporters).
 
 **Registry.** Process-global (mirrors `http.DefaultServeMux`) — suites publish themselves at `init()` via `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, or `RegisterAgent`.
 The registered suites are what the RPCs can see.
@@ -691,21 +692,73 @@ type Reporter interface {
 
 Bundled implementations:
 
-| Type                      | Purpose                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `report.LogReporter{}`    | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
-| `report.NoOpReporter{}`   | Discard. Useful for local tests where you want the LRO to complete without emitting anything.                            |
-| `report.MultiReporter{…}` | Fan out to multiple reporters, in order. First error aborts the fan-out.                                                 |
+| Type | Package | Purpose |
+| ---- | ------- | ------- |
+| `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
+| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table via protobq. See [BigQuery reporter](#bigquery-reporter) below. |
+| `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
+| `report.MultiReporter{…}` | `go.alis.build/evals/report` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
 
 Wiring:
 
 ```go
+import (
+    "go.alis.build/evals/report"
+    logreport "go.alis.build/evals/report/log"
+    bqreport "go.alis.build/evals/report/bigquery"
+)
+
+bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+if err != nil { ... }
+defer bq.Close()
+
 services.TestServiceServer.Reporter = report.MultiReporter{
-    report.LogReporter{},
+    logreport.Reporter{},
+    bq,
     myPubSubReporter{topic: "eval-runs"},
-    myBigQueryReporter{table: "runs"},
 }
 ```
+
+#### BigQuery reporter
+
+The BigQuery reporter writes each completed `Run` to a pre-existing table whose schema matches `bqreport.InferSchema()`. It uses [go.einride.tech/protobuf-bigquery](https://github.com/einride/protobuf-bigquery-go) to mirror the Run proto as nested BigQuery columns:
+
+- `google.protobuf.Timestamp` → `TIMESTAMP`
+- `google.protobuf.Duration` → `FLOAT` (seconds)
+- `google.rpc.Status` → `RECORD`
+- `oneof data` → sibling nullable `RECORD` columns (`integration_test`, `load_test`, `agent_eval`)
+
+Provision the table at deploy time (the reporter is insert-only by default):
+
+```go
+schemaJSON, err := bqreport.InferSchema().ToJSONFields()
+// write schemaJSON to schema.json, then:
+// bq mk --table PROJECT:evals.runs schema.json
+```
+
+If you construct the reporter with `bqreport.WithSchemaOptions(...)`, provision from `r.Schema().ToJSONFields()` on the constructed reporter instead — that guarantees the table layout matches the rows the reporter writes.
+
+Alternatively, let the reporter manage the table itself with `bqreport.WithAutoCreateTable(...)`:
+
+```go
+r, err := bqreport.New(ctx, projectID, "evals", "runs",
+    bqreport.WithAutoCreateTable(bigquery.TableMetadata{
+        TimePartitioning: &bigquery.TimePartitioning{
+            Field: "start_time",
+            Type:  bigquery.DayPartitioningType,
+        },
+        Clustering: &bigquery.Clustering{Fields: []string{"type", "status"}},
+    }),
+)
+```
+
+At construction:
+
+- The **dataset must exist** — a missing dataset returns an error immediately (create it via Terraform or `bq mk`).
+- If the table is missing it is created with the reporter's schema plus any `TableMetadata` you supplied.
+- If the table exists an additive schema update is applied. BigQuery enforces additive-only server-side: renames, drops, and type changes return an error. Do not hand-edit tables managed by this option; use plain Terraform provisioning instead when you need custom columns.
+
+Each row uses `run.name` (`runs/{run_id}`) as the BigQuery insert ID for best-effort deduplication within the streaming insert window (absorbs Cloud Tasks retries). Inserts are bounded by a 10s timeout (override with `bqreport.WithInsertTimeout`). `bqreport.New` owns the underlying BigQuery client and closes it on `Close`; `bqreport.NewWithClient` borrows a client and Close is a no-op.
 
 **Contract for custom reporters:**
 
@@ -845,20 +898,22 @@ For ADK-backed agent evals the equivalent HTTP headers are set on every request:
 
 ## Package layout
 
-| Path              | Role                                                                                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals`           | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
-| `evals/adk`       | ADK evaluation-launcher client and lazy `AgentEvalProvider`.                                                                             |
-| `evals/auth`      | Outgoing gRPC identity headers (`Outgoing`, `SystemOutgoing`).                                                                           |
-| `evals/env`       | Shared environment registration and activation.                                                                                          |
-| `evals/errors`    | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                               |
-| `evals/execution` | Proto-free in-process result types (boundary between case-facing and wire-facing).                                                       |
-| `evals/loadgen`   | Embedded load generator (`Profile`, `Pacer`, `Generator`, `Metrics`).                                                                    |
-| `evals/mapper`    | `execution` → `evalspb.Run` translation.                                                                                                 |
-| `evals/registry`  | Registered suites, filter grammar, selection validation.                                                                                 |
-| `evals/report`    | `Reporter` interface + `LogReporter`, `NoOpReporter`, `MultiReporter`.                                                                   |
-| `evals/runner`    | Environment activation, suite execution, panic recovery, status rollups.                                                                 |
-| `evals/suite`     | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                               |
+| Path                    | Role                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
+| `evals/adk`             | ADK evaluation-launcher client and lazy `AgentEvalProvider`.                                                                             |
+| `evals/auth`            | Outgoing gRPC identity headers (`Outgoing`, `SystemOutgoing`).                                                                           |
+| `evals/env`             | Shared environment registration and activation.                                                                                          |
+| `evals/errors`          | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                               |
+| `evals/execution`       | Proto-free in-process result types (boundary between case-facing and wire-facing).                                                       |
+| `evals/loadgen`         | Embedded load generator (`Profile`, `Pacer`, `Generator`, `Metrics`).                                                                    |
+| `evals/mapper`          | `execution` → `evalspb.Run` translation.                                                                                                 |
+| `evals/registry`        | Registered suites, filter grammar, selection validation.                                                                                 |
+| `evals/report`          | `Reporter` interface + `NoOpReporter`, `MultiReporter`.                                                                                  |
+| `evals/report/log`      | Default log reporter (`log.Reporter`).                                                                                                   |
+| `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`) + `InferSchema` helper.                                                                |
+| `evals/runner`          | Environment activation, suite execution, panic recovery, status rollups.                                                                 |
+| `evals/suite`           | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                               |
 
 ---
 
@@ -867,7 +922,7 @@ For ADK-backed agent evals the equivalent HTTP headers are set on every request:
 1. **Register.** Each case package calls `env.Register(...)` and one of `RegisterIntegration` /
    `RegisterEval` / `RegisterLoad` / `RegisterAgent` in its `init()` function.
 2. **Wire.** The neuron's `TestServiceServer` is constructed with `evals.DefaultRegistry()`,
-   `runner.New()`, and a reporter (default `report.LogReporter{}`).
+   `runner.New()`, and a reporter (default `logreport.Reporter{}`).
 3. **RPC arrives.** `RunIntegrationTest` / `RunLoadTest` / `RunAgentEval`.
    `Registry.ValidateSelection` rejects unknown `case_ids` synchronously with `InvalidArgument`.
 4. **LRO starts.** A long-running operation is created with initial metadata (`case_count`,

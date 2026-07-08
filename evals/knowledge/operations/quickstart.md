@@ -65,10 +65,13 @@ misuse fails loudly. Use the error-returning variants (`NewIntegrationSuite`,
 ## 3. Wire the service and (optionally) fan out to reporters
 
 ```go
-import "go.alis.build/evals/report"
+import (
+    "go.alis.build/evals/report"
+    logreport "go.alis.build/evals/report/log"
+)
 
 services.TestServiceServer.Reporter = report.MultiReporter{
-    report.LogReporter{},
+    logreport.Reporter{},
     myPubSubReporter{topic: "eval-runs"},
 }
 ```

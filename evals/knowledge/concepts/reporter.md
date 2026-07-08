@@ -24,19 +24,30 @@ type Reporter interface {
 
 # Bundled implementations
 
-| Type | Purpose |
-| ---- | ------- |
-| `report.LogReporter{}` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED`, `Warn` otherwise. Nil-safe on nil runs. |
-| `report.NoOpReporter{}` | Discard. Useful in local tests. |
-| `report.MultiReporter{...}` | Fan-out to multiple reporters, in order. First error aborts. |
+| Type | Package | Purpose |
+| ---- | ------- | ------- |
+| `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED`, `Warn` otherwise. Nil-safe on nil runs. |
+| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table. |
+| `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful in local tests. |
+| `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out to multiple reporters, in order. First error aborts. |
 
 # Wiring
 
 ```go
+import (
+    "go.alis.build/evals/report"
+    logreport "go.alis.build/evals/report/log"
+    bqreport "go.alis.build/evals/report/bigquery"
+)
+
+bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+if err != nil { ... }
+defer bq.Close()
+
 services.TestServiceServer.Reporter = report.MultiReporter{
-    report.LogReporter{},
+    logreport.Reporter{},
+    bq,
     myPubSubReporter{topic: "eval-runs"},
-    myBigQueryReporter{table: "runs"},
 }
 ```
 
@@ -79,4 +90,5 @@ func (r *PubSubReporter) ReportRun(ctx context.Context, run *evalspb.Run) error 
 # Citations
 
 [1] [report/report.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/report.go)
-[2] [report/log.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/log.go)
+[2] [report/log/log.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/log/log.go)
+[3] [report/bigquery/bigquery.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/bigquery/bigquery.go)

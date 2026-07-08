@@ -1,4 +1,4 @@
-package report
+package log
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 )
 
-// LogReporter writes a one-line summary of each completed Run to alog. It is
+// Reporter writes a one-line summary of each completed Run to alog. It is
 // the default reporter for local development and any deployment that has no
 // external sink (Pub/Sub, BigQuery, Spanner, etc.) wired up. Passing runs are
 // logged at Info; failing runs at Warn so they stand out in Cloud Logging.
-type LogReporter struct{}
+type Reporter struct{}
 
-// ReportRun implements Reporter.
-func (LogReporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
+// ReportRun implements report.Reporter.
+func (Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 	if run == nil {
 		return nil
 	}

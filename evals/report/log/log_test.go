@@ -1,4 +1,4 @@
-package report
+package log
 
 import (
 	"context"
@@ -10,14 +10,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func TestLogReporter_ReportRun_nilSafe(t *testing.T) {
+func TestReporter_ReportRun_nilSafe(t *testing.T) {
 	t.Parallel()
-	if err := (LogReporter{}).ReportRun(context.Background(), nil); err != nil {
+	if err := (Reporter{}).ReportRun(context.Background(), nil); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestLogReporter_ReportRun_alwaysNilError(t *testing.T) {
+func TestReporter_ReportRun_alwaysNilError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -31,7 +31,7 @@ func TestLogReporter_ReportRun_alwaysNilError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			run := &evalspb.Run{Name: "runs/" + tt.name, Status: tt.status}
-			if err := (LogReporter{}).ReportRun(context.Background(), run); err != nil {
+			if err := (Reporter{}).ReportRun(context.Background(), run); err != nil {
 				t.Fatalf("err = %v", err)
 			}
 		})

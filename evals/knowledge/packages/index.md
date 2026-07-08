@@ -16,6 +16,8 @@ One page per Go subpackage in `go.alis.build/evals`.
 * [`evals/loadgen`](/packages/loadgen.md) - embedded load generator.
 * [`evals/mapper`](/packages/mapper.md) - `execution` → `evalspb.Run` translation.
 * [`evals/registry`](/packages/registry.md) - registered suites, filter grammar, selection validation.
-* [`evals/report`](/packages/report.md) - `Reporter` interface + `LogReporter`, `NoOpReporter`, `MultiReporter`.
+* [`evals/report`](/packages/report.md) - `Reporter` interface + `NoOpReporter`, `MultiReporter`.
+* [`evals/report/log`](/packages/report-log.md) - default log reporter (`log.Reporter`).
+* [`evals/report/bigquery`](/packages/report-bigquery.md) - BigQuery streaming reporter + `InferSchema`.
 * [`evals/runner`](/packages/runner.md) - environment activation, suite execution, panic recovery.
 * [`evals/suite`](/packages/suite.md) - internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.

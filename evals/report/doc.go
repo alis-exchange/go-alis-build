@@ -1,24 +1,35 @@
 // Package report defines the [Reporter] interface for emitting completed
-// `evalspb.Run` values to external sinks (Pub/Sub topics, BigQuery,
-// Spanner, dashboards) and ships two implementations for common cases.
+// evalspb.Run values to external sinks, plus generic combinators for wiring
+// multiple sinks together.
+//
+// Concrete reporters live in subpackages so heavyweight dependencies (alog,
+// BigQuery SDK, einride, Pub/Sub clients, etc.) are not pulled in by callers
+// that only need the interface:
+//
+//   - [go.alis.build/evals/report/log] — default one-line alog summary
+//   - [go.alis.build/evals/report/bigquery] — streaming insert to BigQuery
 //
 // # Wiring
 //
 // TestServiceServer holds a single [Reporter]. It is called once per
 // completed Run — one call per suite executed during a RunTest, RunEval,
-// or RunLoad LRO. The default is [LogReporter], which writes a one-line
-// summary via alog (Info for passing runs, Warn for failing ones). Set
-// `TestServiceServer.Reporter` to nil to silence emission entirely, or
-// wrap several sinks with [MultiReporter] to fan out.
+// or RunLoad LRO. Set `TestServiceServer.Reporter` to nil to silence
+// emission entirely, or wrap several sinks with [MultiReporter] to fan out.
 //
-// Concrete sinks — Pub/Sub, BigQuery, Spanner, custom dashboards — live
-// outside this package. Product neurons implement [Reporter] and assign
-// it once during setup:
+//	import (
+//	    "go.alis.build/evals/report"
+//	    logreport "go.alis.build/evals/report/log"
+//	    bqreport "go.alis.build/evals/report/bigquery"
+//	)
+//
+//	bq, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	if err != nil { ... }
+//	defer bq.Close()
 //
 //	services.TestServiceServer.Reporter = report.MultiReporter{
-//	    report.LogReporter{},
+//	    logreport.Reporter{},
+//	    bq,
 //	    myPubSubReporter{topic: "eval-runs"},
-//	    myBigQueryReporter{table: "runs"},
 //	}
 //
 // # Contract
@@ -32,6 +43,6 @@
 //     continues. A failing reporter must not prevent the LRO from
 //     completing.
 //
-// LogReporter satisfies all three; use it as a reference when writing
+// The log reporter satisfies all three; use it as a reference when writing
 // your own.
 package report

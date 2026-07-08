@@ -23,21 +23,45 @@ disables reporting entirely.
 
 # Bundled implementations
 
-| Type | Purpose |
-| ---- | ------- |
-| `report.LogReporter{}` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
-| `report.NoOpReporter{}` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
-| `report.MultiReporter{…}` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
+| Type | Package | Purpose |
+| ---- | ------- | ------- |
+| `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
+| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table via protobq. |
+| `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
+| `report.MultiReporter{…}` | `go.alis.build/evals/report` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
 
 # Wiring
 
 ```go
+import (
+    "go.alis.build/evals/report"
+    logreport "go.alis.build/evals/report/log"
+    bqreport "go.alis.build/evals/report/bigquery"
+)
+
+bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+if err != nil { ... }
+defer bq.Close()
+
 services.TestServiceServer.Reporter = report.MultiReporter{
-    report.LogReporter{},
+    logreport.Reporter{},
+    bq,
     myPubSubReporter{topic: "eval-runs"},
-    myBigQueryReporter{table: "runs"},
 }
 ```
+
+# BigQuery reporter
+
+The BigQuery reporter writes each completed `Run` to a pre-existing table whose schema matches `bqreport.InferSchema()`. Provision the table at deploy time:
+
+```go
+schemaJSON, err := bqreport.InferSchema().ToJSONFields()
+// write schemaJSON to schema.json, then: bq mk --table PROJECT:evals.runs schema.json
+```
+
+Or opt into framework-managed provisioning with `bqreport.WithAutoCreateTable(...)`: on construction the reporter creates the table if it is missing (with any `bigquery.TableMetadata` you supply for partitioning / clustering / expiration), or applies an additive schema update if the table already exists. The dataset must exist in either case.
+
+Each row uses `run.name` as the BigQuery insert ID for best-effort deduplication. Inserts are bounded by a 10s timeout (`bqreport.WithInsertTimeout`).
 
 # Contract for custom reporters
 
@@ -78,4 +102,5 @@ func (r *PubSubReporter) ReportRun(ctx context.Context, run *evalspb.Run) error 
 # Citations
 
 [1] [report/report.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/report.go)
-[2] [report/log.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/log.go)
+[2] [report/log/log.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/log/log.go)
+[3] [report/bigquery/bigquery.go](https://github.com/alis-exchange/go-alis-build/blob/main/evals/report/bigquery/bigquery.go)
