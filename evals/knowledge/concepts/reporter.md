@@ -28,7 +28,7 @@ type Reporter interface {
 | ---- | ------- | ------- |
 | `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED`, `Warn` otherwise. Nil-safe on nil runs. |
 | `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table. |
-| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Wraps each Run in a `RunPublishedEvent` and publishes via [go.alis.build/events](https://pkg.go.dev/go.alis.build/events). |
+| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` on top of `cloud.google.com/go/pubsub/v2` (default topic `alis.evals.v1.Run`, not auto-provisioned). |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful in local tests. |
 | `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out to multiple reporters, in order. First error aborts. |
 

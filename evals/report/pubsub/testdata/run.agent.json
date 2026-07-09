@@ -1,0 +1,23 @@
+{
+    "name": "runs/agent",
+    "type": "AGENT_EVAL",
+    "status": "PASSED",
+    "agent_eval": {
+        "cases": [
+            {
+                "id": "agent-1",
+                "status": "PASSED",
+                "duration": null,
+                "session_id": "",
+                "metrics": []
+            }
+        ],
+        "judge": null
+    },
+    "start_time": "2023-11-14T22:13:20Z",
+    "end_time": "2023-11-14T22:13:25Z",
+    "operation": "",
+    "error": null,
+    "create_time": null,
+    "google_project_id": ""
+}

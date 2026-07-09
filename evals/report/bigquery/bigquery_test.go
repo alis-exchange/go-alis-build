@@ -2,14 +2,18 @@ package bigquery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/bigquery"
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/report/bqschema"
 	"go.einride.tech/protobuf-bigquery/encoding/protobq"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func TestReporter_ReportRun_nilSafe(t *testing.T) {
@@ -40,16 +44,125 @@ func TestReporter_ReportRun_populatesInsertID(t *testing.T) {
 	if len(ins.rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(ins.rows))
 	}
-	saver, ok := ins.rows[0].(*protobq.MessageSaver)
+	saver, ok := ins.rows[0].(interface {
+		Save() (map[string]bigquery.Value, string, error)
+	})
 	if !ok {
-		t.Fatalf("row type = %T, want *protobq.MessageSaver", ins.rows[0])
+		t.Fatalf("row type = %T, want ValueSaver", ins.rows[0])
 	}
-	if saver.InsertID != "runs/abc" {
-		t.Fatalf("InsertID = %q, want runs/abc", saver.InsertID)
+	_, insertID, err := saver.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	if saver.Message != run {
-		t.Fatal("Message not preserved")
+	if insertID != "runs/abc" {
+		t.Fatalf("InsertID = %q, want runs/abc", insertID)
 	}
+}
+
+// TestReporter_writesDurationAsProtojsonString locks in the protojson-native
+// wire form ("1.500s", not "seconds:1 nanos:500000000") so bqreport rows join
+// cleanly against the JSON payloads produced by evals/report/pubsub. The
+// literal expectations here are the wire contract — do not replace them with
+// runtime calls to d.String() or protojson.Marshal, which would turn this
+// test into a tautology and hide the protobq → protojson mismatch that
+// motivated the durationStringSaver in the first place.
+func TestReporter_writesDurationAsProtojsonString(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		d    *durationpb.Duration
+		want string
+	}{
+		{"one_and_a_half_seconds", durationpb.New(1500 * time.Millisecond), "1.500s"},
+		{"whole_seconds", durationpb.New(3 * time.Second), "3s"},
+		{"sub_millisecond", durationpb.New(500 * time.Nanosecond), "0.000000500s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ins := &recordingInserter{}
+			r := newReporterWithInserter(ins)
+			run := &evalspb.Run{
+				Name: "runs/dur",
+				Data: &evalspb.Run_IntegrationTest{
+					IntegrationTest: &evalspb.IntegrationTestResults{
+						Cases: []*evalspb.IntegrationTestResults_Case{
+							{Id: "case-1", Duration: tc.d},
+						},
+					},
+				},
+			}
+			if err := r.ReportRun(context.Background(), run); err != nil {
+				t.Fatalf("ReportRun: %v", err)
+			}
+			saver := ins.rows[0].(interface {
+				Save() (map[string]bigquery.Value, string, error)
+			})
+			row, _, err := saver.Save()
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			it, ok := row["integration_test"].(map[string]bigquery.Value)
+			if !ok {
+				t.Fatalf("integration_test = %T, want map", row["integration_test"])
+			}
+			list, ok := it["cases"].([]bigquery.Value)
+			if !ok || len(list) == 0 {
+				t.Fatalf("cases = %T len=%d, want non-empty slice", it["cases"], len(list))
+			}
+			case0, ok := list[0].(map[string]bigquery.Value)
+			if !ok {
+				t.Fatalf("case[0] = %T, want map", list[0])
+			}
+			got, ok := case0["duration"].(string)
+			if !ok {
+				t.Fatalf("duration = %T (%v), want string", case0["duration"], case0["duration"])
+			}
+			if got != tc.want {
+				t.Errorf("duration = %q, want %q (protojson-native form)", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInferSchema_durationIsString(t *testing.T) {
+	t.Parallel()
+	paths := [][]string{
+		{"integration_test", "cases", "duration"},
+		{"load_test", "cases", "summary", "duration"},
+		{"agent_eval", "cases", "duration"},
+	}
+	for _, path := range paths {
+		t.Run(joinPath(path), func(t *testing.T) {
+			t.Parallel()
+			f := lookupSchemaField(InferSchema(), path)
+			if f == nil {
+				t.Fatalf("field %v not found", path)
+			}
+			if f.Type != bigquery.StringFieldType {
+				t.Errorf("type = %v, want STRING", f.Type)
+			}
+		})
+	}
+}
+
+func lookupSchemaField(s bigquery.Schema, path []string) *bigquery.FieldSchema {
+	if len(path) == 0 {
+		return nil
+	}
+	for _, f := range s {
+		if f.Name == path[0] {
+			if len(path) == 1 {
+				return f
+			}
+			return lookupSchemaField(f.Schema, path[1:])
+		}
+	}
+	return nil
+}
+
+func joinPath(p []string) string {
+	return strings.Join(p, ".")
 }
 
 func TestReporter_ReportRun_forwardsSchemaOptions(t *testing.T) {
@@ -60,8 +173,8 @@ func TestReporter_ReportRun_forwardsSchemaOptions(t *testing.T) {
 	if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/x"}); err != nil {
 		t.Fatalf("ReportRun: %v", err)
 	}
-	saver := ins.rows[0].(*protobq.MessageSaver)
-	if !saver.Options.Schema.UseOneofFields {
+	ds := ins.rows[0].(*durationStringSaver)
+	if !ds.inner.Options.Schema.UseOneofFields {
 		t.Fatal("UseOneofFields did not flow through to MessageSaver")
 	}
 }
@@ -162,20 +275,51 @@ func TestReporter_Close_propagatesError(t *testing.T) {
 	}
 }
 
-func TestReporter_Schema_matchesConfiguredOptions(t *testing.T) {
-	t.Parallel()
-	def := newReporterWithInserter(&recordingInserter{}).Schema()
-	custom := newReporterWithInserter(
-		&recordingInserter{},
-		WithSchemaOptions(protobq.SchemaOptions{UseOneofFields: true}),
-	).Schema()
-	if len(custom) <= len(def) {
-		t.Fatalf("UseOneofFields did not add fields: default=%d custom=%d", len(def), len(custom))
+func TestNewFromClient_delegatesAutoCreateToBqschema(t *testing.T) {
+	var calls int
+	var gotDataset, gotTable string
+	orig := ensureTable
+	ensureTable = func(_ context.Context, _ *bigquery.Client, datasetID, tableID string, _ ...bigquery.TableMetadata) error {
+		calls++
+		gotDataset = datasetID
+		gotTable = tableID
+		return nil
 	}
-	// Nil receiver falls back to package-level defaults.
+	t.Cleanup(func() { ensureTable = orig })
+
+	r, err := newFromClientWithSeams(
+		context.Background(),
+		&recordingInserter{},
+		"my-dataset",
+		"my-table",
+		WithAutoCreateTable(),
+	)
+	if err != nil {
+		t.Fatalf("newFromClientWithSeams: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("ensureTable calls = %d, want 1", calls)
+	}
+	if gotDataset != "my-dataset" || gotTable != "my-table" {
+		t.Fatalf("ensureTable dataset/table = %q.%q, want my-dataset.my-table", gotDataset, gotTable)
+	}
+	if r == nil {
+		t.Fatal("reporter is nil")
+	}
+}
+
+func TestReporter_Schema_matchesBqschema(t *testing.T) {
+	t.Parallel()
+	got := newReporterWithInserter(&recordingInserter{}).Schema()
+	want := bqschema.Schema()
+	gotJSON, _ := json.Marshal(got)
+	wantJSON, _ := json.Marshal(want)
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatal("Reporter.Schema() diverged from bqschema.Schema()")
+	}
 	var nilR *Reporter
-	if got, want := len(nilR.Schema()), len(def); got != want {
-		t.Fatalf("nil.Schema() len = %d, default = %d", got, want)
+	if len(nilR.Schema()) != len(want) {
+		t.Fatalf("nil.Schema() len = %d, want %d", len(nilR.Schema()), len(want))
 	}
 }
 
@@ -236,77 +380,69 @@ func TestNewWithClient_nilClient(t *testing.T) {
 	}
 }
 
-func TestReporter_AutoCreate_notSetSkipsProvisioner(t *testing.T) {
-	t.Parallel()
-	prov := &recordingProvisioner{}
-	if _, err := newReporterWithSeams(context.Background(), &recordingInserter{}, prov); err != nil {
+func TestReporter_AutoCreate_notSetSkipsEnsureTable(t *testing.T) {
+	calls := 0
+	orig := ensureTable
+	ensureTable = func(context.Context, *bigquery.Client, string, string, ...bigquery.TableMetadata) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { ensureTable = orig })
+
+	if _, err := newFromClientWithSeams(context.Background(), &recordingInserter{}, "ds", "tbl"); err != nil {
 		t.Fatalf("unexpected err = %v", err)
 	}
-	if prov.calls != 0 {
-		t.Fatalf("provisioner called %d times, want 0 when WithAutoCreateTable is not set", prov.calls)
-	}
-}
-
-func TestReporter_AutoCreate_invokesProvisioner(t *testing.T) {
-	t.Parallel()
-	prov := &recordingProvisioner{}
-	r, err := newReporterWithSeams(
-		context.Background(),
-		&recordingInserter{},
-		prov,
-		WithAutoCreateTable(),
-	)
-	if err != nil {
-		t.Fatalf("newReporterWithSeams: %v", err)
-	}
-	if prov.calls != 1 {
-		t.Fatalf("provisioner calls = %d, want 1", prov.calls)
-	}
-	if prov.lastSchema == nil {
-		t.Fatal("provisioner received nil schema")
-	}
-	if len(prov.lastSchema) != len(r.Schema()) {
-		t.Fatalf("provisioner schema len = %d, want %d", len(prov.lastSchema), len(r.Schema()))
-	}
-	if prov.lastMD != nil {
-		t.Fatalf("provisioner metadata = %+v, want nil (none supplied)", prov.lastMD)
+	if calls != 0 {
+		t.Fatalf("ensureTable called %d times, want 0 when WithAutoCreateTable is not set", calls)
 	}
 }
 
 func TestReporter_AutoCreate_forwardsTableMetadata(t *testing.T) {
-	t.Parallel()
-	prov := &recordingProvisioner{}
+	var gotMD []bigquery.TableMetadata
+	orig := ensureTable
+	ensureTable = func(_ context.Context, _ *bigquery.Client, _, _ string, md ...bigquery.TableMetadata) error {
+		gotMD = md
+		return nil
+	}
+	t.Cleanup(func() { ensureTable = orig })
+
 	md := bigquery.TableMetadata{
 		TimePartitioning: &bigquery.TimePartitioning{Field: "start_time", Type: bigquery.DayPartitioningType},
 		Clustering:       &bigquery.Clustering{Fields: []string{"type", "status"}},
 	}
-	if _, err := newReporterWithSeams(
+	if _, err := newFromClientWithSeams(
 		context.Background(),
 		&recordingInserter{},
-		prov,
+		"ds",
+		"tbl",
 		WithAutoCreateTable(md),
 	); err != nil {
-		t.Fatalf("newReporterWithSeams: %v", err)
+		t.Fatalf("newFromClientWithSeams: %v", err)
 	}
-	if prov.lastMD == nil {
-		t.Fatal("provisioner metadata was nil, want forwarded")
+	if len(gotMD) != 1 {
+		t.Fatalf("metadata count = %d, want 1", len(gotMD))
 	}
-	if prov.lastMD.TimePartitioning == nil || prov.lastMD.TimePartitioning.Field != "start_time" {
-		t.Fatalf("time partitioning not forwarded: %+v", prov.lastMD.TimePartitioning)
+	if gotMD[0].TimePartitioning == nil || gotMD[0].TimePartitioning.Field != "start_time" {
+		t.Fatalf("time partitioning not forwarded: %+v", gotMD[0].TimePartitioning)
 	}
-	if prov.lastMD.Clustering == nil || len(prov.lastMD.Clustering.Fields) != 2 {
-		t.Fatalf("clustering not forwarded: %+v", prov.lastMD.Clustering)
+	if gotMD[0].Clustering == nil || len(gotMD[0].Clustering.Fields) != 2 {
+		t.Fatalf("clustering not forwarded: %+v", gotMD[0].Clustering)
 	}
 }
 
-func TestReporter_AutoCreate_propagatesProvisionError(t *testing.T) {
-	t.Parallel()
+func TestReporter_AutoCreate_propagatesEnsureError(t *testing.T) {
 	sentinel := errors.New("dataset missing")
-	prov := &recordingProvisioner{returnErr: sentinel}
-	_, err := newReporterWithSeams(
+	orig := ensureTable
+	ensureTable = func(context.Context, *bigquery.Client, string, string, ...bigquery.TableMetadata) error {
+		return sentinel
+	}
+	t.Cleanup(func() { ensureTable = orig })
+
+	_, err := newFromClientWithSeams(
 		context.Background(),
 		&recordingInserter{},
-		prov,
+		"ds",
+		"tbl",
 		WithAutoCreateTable(),
 	)
 	if err == nil {
@@ -317,29 +453,141 @@ func TestReporter_AutoCreate_propagatesProvisionError(t *testing.T) {
 	}
 }
 
-func TestReporter_AutoCreate_usesReporterSchema(t *testing.T) {
+// TestBqreportRow_matchesBqschema is the real unification proof: it runs a
+// populated evalspb.Run through the reporter's saver and checks that every
+// value in the resulting row respects the type declared for that column in
+// bqschema.Schema. This is the test that catches the "Duration written as
+// FLOAT64 seconds" and "Duration written in protobuf text-proto form"
+// regressions — the trivial schema-equality test in bqschema/unification_test.go
+// cannot see the written values, only the schema.
+func TestBqreportRow_matchesBqschema(t *testing.T) {
 	t.Parallel()
-	prov := &recordingProvisioner{}
-	_, err := newReporterWithSeams(
-		context.Background(),
-		&recordingInserter{},
-		prov,
-		WithAutoCreateTable(),
-		WithSchemaOptions(protobq.SchemaOptions{UseOneofFields: true}),
-	)
+	run := &evalspb.Run{
+		Name:   "runs/unify",
+		Type:   evalspb.Run_INTEGRATION_TEST,
+		Status: evalspb.Status_PASSED,
+		Data: &evalspb.Run_IntegrationTest{
+			IntegrationTest: &evalspb.IntegrationTestResults{
+				Cases: []*evalspb.IntegrationTestResults_Case{
+					{Id: "case-1", Status: evalspb.Status_PASSED, Duration: durationpb.New(1500 * time.Millisecond)},
+					{Id: "case-2", Status: evalspb.Status_PASSED, Duration: durationpb.New(2 * time.Second)},
+				},
+			},
+		},
+	}
+	ins := &recordingInserter{}
+	r := newReporterWithInserter(ins)
+	if err := r.ReportRun(context.Background(), run); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	saver := ins.rows[0].(interface {
+		Save() (map[string]bigquery.Value, string, error)
+	})
+	row, _, err := saver.Save()
 	if err != nil {
-		t.Fatalf("newReporterWithSeams: %v", err)
+		t.Fatalf("Save: %v", err)
 	}
-	got := make(map[string]struct{}, len(prov.lastSchema))
-	for _, f := range prov.lastSchema {
-		got[f.Name] = struct{}{}
+	if diffs := diffRowAgainstSchema(row, bqschema.Schema(), ""); len(diffs) > 0 {
+		for _, d := range diffs {
+			t.Errorf("row/schema mismatch: %s", d)
+		}
 	}
-	if _, ok := got["data"]; !ok {
-		// protobq emits an extra STRING field named after the oneof (here "data")
-		// when UseOneofFields is on. Its absence means the option didn't reach
-		// InferSchema.
-		t.Fatalf("provisioner schema missing 'data' oneof field; got fields = %v", got)
+}
+
+// diffRowAgainstSchema walks a saver row alongside a bqschema.Schema and
+// returns a list of type mismatches. It flags:
+//   - a scalar value whose Go kind cannot fit into the declared BigQuery type
+//     (e.g. float64 in a STRING column — the exact shape of the pre-fix
+//     Duration bug);
+//   - a scalar in a slot the schema declares as RECORD;
+//   - unexpected keys not present in the schema.
+//
+// Absent keys are fine: bqschema declares every field NULLABLE and protobq
+// only emits set fields, so partial rows are expected.
+func diffRowAgainstSchema(row map[string]bigquery.Value, schema bigquery.Schema, path string) []string {
+	byName := make(map[string]*bigquery.FieldSchema, len(schema))
+	for _, f := range schema {
+		byName[f.Name] = f
 	}
+	var out []string
+	for name, value := range row {
+		fieldPath := appendPath(path, name)
+		field, ok := byName[name]
+		if !ok {
+			out = append(out, fieldPath+": key not in bqschema.Schema")
+			continue
+		}
+		out = append(out, diffFieldValue(value, field, fieldPath)...)
+	}
+	return out
+}
+
+func diffFieldValue(value bigquery.Value, field *bigquery.FieldSchema, path string) []string {
+	if value == nil {
+		return nil
+	}
+	if field.Repeated {
+		return diffRepeatedValue(value, field, path)
+	}
+	return diffScalarValue(value, field, path)
+}
+
+func diffRepeatedValue(value bigquery.Value, field *bigquery.FieldSchema, path string) []string {
+	switch elems := value.(type) {
+	case []bigquery.Value:
+		var out []string
+		for i, e := range elems {
+			out = append(out, diffScalarValue(e, field, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+		return out
+	case []map[string]bigquery.Value:
+		var out []string
+		for i, sub := range elems {
+			out = append(out, diffRowAgainstSchema(sub, field.Schema, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+		return out
+	default:
+		return []string{fmt.Sprintf("%s: repeated field has non-slice value %T", path, value)}
+	}
+}
+
+func diffScalarValue(value bigquery.Value, field *bigquery.FieldSchema, path string) []string {
+	switch field.Type {
+	case bigquery.StringFieldType:
+		if _, ok := value.(string); !ok {
+			return []string{fmt.Sprintf("%s: schema STRING but row value is %T (=%v)", path, value, value)}
+		}
+	case bigquery.IntegerFieldType:
+		switch value.(type) {
+		case int, int32, int64:
+		default:
+			return []string{fmt.Sprintf("%s: schema INTEGER but row value is %T (=%v)", path, value, value)}
+		}
+	case bigquery.FloatFieldType:
+		switch value.(type) {
+		case float32, float64:
+		default:
+			return []string{fmt.Sprintf("%s: schema FLOAT but row value is %T (=%v)", path, value, value)}
+		}
+	case bigquery.BooleanFieldType:
+		if _, ok := value.(bool); !ok {
+			return []string{fmt.Sprintf("%s: schema BOOLEAN but row value is %T (=%v)", path, value, value)}
+		}
+	case bigquery.RecordFieldType:
+		sub, ok := value.(map[string]bigquery.Value)
+		if !ok {
+			return []string{fmt.Sprintf("%s: schema RECORD but row value is %T (=%v)", path, value, value)}
+		}
+		return diffRowAgainstSchema(sub, field.Schema, path)
+	}
+	return nil
+}
+
+func appendPath(base, name string) string {
+	if base == "" {
+		return name
+	}
+	return base + "." + name
 }
 
 type recordingInserter struct {
@@ -368,19 +616,3 @@ func (b *blockingInserter) Put(ctx context.Context, _ any) error {
 // Ensure the test type actually implements the seam.
 var _ rowInserter = (*recordingInserter)(nil)
 var _ rowInserter = (*blockingInserter)(nil)
-
-type recordingProvisioner struct {
-	calls      int
-	lastSchema bigquery.Schema
-	lastMD     *bigquery.TableMetadata
-	returnErr  error
-}
-
-func (p *recordingProvisioner) Ensure(_ context.Context, schema bigquery.Schema, md *bigquery.TableMetadata) error {
-	p.calls++
-	p.lastSchema = schema
-	p.lastMD = md
-	return p.returnErr
-}
-
-var _ tableProvisioner = (*recordingProvisioner)(nil)

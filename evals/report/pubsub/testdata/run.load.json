@@ -1,0 +1,21 @@
+{
+    "name": "runs/load",
+    "type": "LOAD_TEST",
+    "status": "PASSED",
+    "load_test": {
+        "cases": [
+            {
+                "id": "load-1",
+                "status": "PASSED",
+                "summary": null,
+                "checks": []
+            }
+        ]
+    },
+    "start_time": "2023-11-14T22:13:20Z",
+    "end_time": "2023-11-14T22:13:25Z",
+    "operation": "",
+    "error": null,
+    "create_time": null,
+    "google_project_id": ""
+}

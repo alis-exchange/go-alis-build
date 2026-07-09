@@ -3,32 +3,47 @@
 // multiple sinks together.
 //
 // Concrete reporters live in subpackages so heavyweight dependencies (alog,
-// BigQuery SDK, einride, Pub/Sub clients, etc.) are not pulled in by callers
+// BigQuery SDK, einride, Pub/Sub client, etc.) are not pulled in by callers
 // that only need the interface:
 //
-//   - [go.alis.build/evals/report/log] — default one-line alog summary
+//   - [go.alis.build/evals/report/log] — default one-line alog summary; the
+//     reference implementation of the Reporter contract below
+//   - [go.alis.build/evals/report/bqschema] — companion package holding the
+//     canonical BigQuery schema for evalspb.Run and a table-provisioning
+//     helper. Not itself a Reporter — used by the other reporters.
 //   - [go.alis.build/evals/report/bigquery] — streaming insert to BigQuery
-//   - [go.alis.build/evals/report/pubsub] — publish RunPublishedEvent to
-//     Pub/Sub via [go.alis.build/events]
+//     using the shared bqschema layout
+//   - [go.alis.build/evals/report/pubsub] — publish bare Run JSON to Pub/Sub
+//     via protojson (compatible with Pub/Sub → BigQuery "Use table schema"
+//     subscriptions against a table provisioned from bqschema)
 //
 // # Wiring
 //
 // TestServiceServer holds a single [Reporter]. It is called once per
-// completed Run — one call per suite executed during a RunTest, RunEval,
-// or RunLoad LRO. Set `TestServiceServer.Reporter` to nil to silence
-// emission entirely, or wrap several sinks with [MultiReporter] to fan out.
+// completed Run — one call per suite executed during a RunTest, RunEval, or
+// RunLoad LRO. Set TestServiceServer.Reporter to nil to silence emission
+// entirely, or wrap several sinks with [MultiReporter] to fan out.
+//
+// Bootstrap the BigQuery table once, then fan out to log, BigQuery, and
+// Pub/Sub:
 //
 //	import (
 //	    "context"
+//	    "io"
 //
+//	    "cloud.google.com/go/bigquery"
 //	    "go.alis.build/evals/report"
-//	    logreport "go.alis.build/evals/report/log"
+//	    bqschema "go.alis.build/evals/report/bqschema"
 //	    bqreport "go.alis.build/evals/report/bigquery"
+//	    logreport "go.alis.build/evals/report/log"
 //	    pubsubreport "go.alis.build/evals/report/pubsub"
 //	)
 //
-//	func setupReporters(ctx context.Context, projectID, datasetID, tableID string) (io.Closer, error) {
-//	    bq, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	func setupReporters(ctx context.Context, bqClient *bigquery.Client, projectID, datasetID, tableID string) (io.Closer, error) {
+//	    if err := bqschema.EnsureTable(ctx, bqClient, datasetID, tableID); err != nil {
+//	        return nil, err
+//	    }
+//	    bq, err := bqreport.NewWithClient(ctx, bqClient, datasetID, tableID)
 //	    if err != nil {
 //	        return nil, err
 //	    }
@@ -42,7 +57,7 @@
 //	        bq,
 //	        ps,
 //	    }
-//	    return multiCloser{bq, ps}, nil // shut down at server drain
+//	    return multiCloser{bq, ps}, nil
 //	}
 //
 // # Contract
@@ -51,12 +66,14 @@
 //
 //   - Bounded latency. The reporter is called from the LRO goroutine, so a
 //     slow sink stalls the operation. Persist asynchronously or wrap each
-//     call in a short timeout — both bundled non-log reporters default to
-//     a 10s per-call timeout and expose knobs to tune it.
-//   - Nil-safe. `run == nil` should be treated as a no-op.
+//     call in a short timeout — both bundled non-log reporters default to a
+//     10s per-call timeout and expose knobs to tune it.
+//   - Nil-safe. `run == nil` should be treated as a no-op that returns nil.
+//     A nil receiver should also be a no-op — this keeps caller code free of
+//     `if r != nil` guards when a reporter slot is optional.
 //   - Best-effort. Returning an error is fine — the caller logs it and
-//     continues. A failing reporter must not prevent the LRO from
-//     completing.
+//     continues. A failing reporter must not prevent the LRO from completing
+//     or block other reporters wired into the same [MultiReporter].
 //
 // The log reporter satisfies all three; use it as a reference when writing
 // your own.

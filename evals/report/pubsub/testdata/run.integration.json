@@ -1,0 +1,21 @@
+{
+    "name": "runs/abc",
+    "type": "INTEGRATION_TEST",
+    "status": "PASSED",
+    "integration_test": {
+        "cases": [
+            {
+                "id": "case-1",
+                "status": "PASSED",
+                "checks": [],
+                "duration": "1.500s"
+            }
+        ]
+    },
+    "start_time": "2023-11-14T22:13:20Z",
+    "end_time": "2023-11-14T22:13:25Z",
+    "operation": "",
+    "error": null,
+    "create_time": null,
+    "google_project_id": ""
+}

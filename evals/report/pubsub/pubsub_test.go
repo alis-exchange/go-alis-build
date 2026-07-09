@@ -3,23 +3,20 @@ package pubsub
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/pubsub/v2"
 	evalspb "go.alis.build/common/alis/evals/v1"
-	"go.alis.build/events"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-// setEmulator points the underlying pubsub client at a non-routable
-// emulator address so real events.NewClient calls skip Application
-// Default Credentials and the GCE metadata server. No emulator needs to
-// be running; nothing here publishes.
-func setEmulator(t *testing.T) {
-	t.Helper()
-	t.Setenv("PUBSUB_EMULATOR_HOST", "127.0.0.1:0")
-}
 
 func TestReporter_ReportRun_nilSafe(t *testing.T) {
 	t.Run("nil receiver", func(t *testing.T) {
@@ -28,7 +25,6 @@ func TestReporter_ReportRun_nilSafe(t *testing.T) {
 			t.Errorf("ReportRun on nil reporter err = %v, want nil", err)
 		}
 	})
-
 	t.Run("nil run", func(t *testing.T) {
 		fake := &recordingPublisher{}
 		r := newReporterWithPublisher(fake)
@@ -36,14 +32,10 @@ func TestReporter_ReportRun_nilSafe(t *testing.T) {
 			t.Errorf("ReportRun with nil run err = %v, want nil", err)
 		}
 		if fake.publishCount() != 0 {
-			t.Errorf("Publish call count = %d, want 0 (nil run should short-circuit)", fake.publishCount())
+			t.Errorf("Publish call count = %d, want 0", fake.publishCount())
 		}
 	})
-
-	t.Run("zero-value receiver (nil publisher)", func(t *testing.T) {
-		// `&Reporter{}` compiles because the type is exported. Guarding
-		// against a nil publisher keeps ReportRun from panicking in
-		// production if a misuse ever slips through.
+	t.Run("zero-value receiver", func(t *testing.T) {
 		r := &Reporter{}
 		if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/1"}); err != nil {
 			t.Errorf("ReportRun on zero-value reporter err = %v, want nil", err)
@@ -51,314 +43,200 @@ func TestReporter_ReportRun_nilSafe(t *testing.T) {
 	})
 }
 
-func TestReporter_ReportRun_wrapsInRunPublishedEvent(t *testing.T) {
-	fake := &recordingPublisher{}
-	r := newReporterWithPublisher(fake)
-
-	run := &evalspb.Run{Name: "runs/wrap-me"}
-	if err := r.ReportRun(context.Background(), run); err != nil {
-		t.Fatalf("ReportRun err = %v, want nil", err)
-	}
-
-	evt, ok := fake.lastMessage().(*evalspb.RunPublishedEvent)
-	if !ok {
-		t.Fatalf("published message type = %T, want *evalspb.RunPublishedEvent", fake.lastMessage())
-	}
-	if evt.GetRun() != run {
-		t.Errorf("event.Run pointer = %p, want %p", evt.GetRun(), run)
-	}
-}
-
-func TestReporter_ReportRun_forwardsPublishOptions(t *testing.T) {
-	fake := &recordingPublisher{}
-	r := newReporterWithPublisher(
-		fake,
-		WithTopic("custom.topic"),
-		WithOrderingKey("shard-42"),
-		WithBackground(),
-	)
-
-	// Construction assertion: the reporter should have built a
-	// PublishOption for each non-empty setting.
-	if got, want := len(r.publishOpts), 3; got != want {
-		t.Fatalf("built publishOpts count = %d, want %d", got, want)
-	}
-
-	if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/opts"}); err != nil {
-		t.Fatalf("ReportRun err = %v, want nil", err)
-	}
-
-	// Forwarding assertion: whatever the reporter built should be
-	// forwarded verbatim to Publish. We can't inspect the closure
-	// contents (events.PublishOptions has unexported fields), so we
-	// assert the count matches. Combined with per-option construction
-	// tests below, this proves the plumbing is complete.
-	if got, want := len(fake.lastOpts()), len(r.publishOpts); got != want {
-		t.Errorf("forwarded option count = %d, want %d", got, want)
-	}
-}
-
-func TestReporter_construction_publishOpts(t *testing.T) {
+func TestReporter_ReportRun_marshalsJSONMatchesGolden(t *testing.T) {
+	start := timestamppb.New(time.Unix(1700000000, 0))
+	end := timestamppb.New(time.Unix(1700000005, 0))
 	tests := []struct {
-		name string
-		opts []Option
-		want int
+		name    string
+		fixture string
+		run     *evalspb.Run
 	}{
-		{"no options → no publish opts", nil, 0},
-		{"WithTopic adds one", []Option{WithTopic("t")}, 1},
-		{"WithOrderingKey adds one", []Option{WithOrderingKey("k")}, 1},
-		{"WithBackground adds one", []Option{WithBackground()}, 1},
-		{"empty WithTopic drops the option", []Option{WithTopic("")}, 0},
-		{"empty WithOrderingKey drops the option", []Option{WithOrderingKey("")}, 0},
-		{"all three combine", []Option{WithTopic("t"), WithOrderingKey("k"), WithBackground()}, 3},
+		{
+			name:    "integration_test",
+			fixture: "run.integration.json",
+			run: &evalspb.Run{
+				Name: "runs/abc", Type: evalspb.Run_INTEGRATION_TEST, Status: evalspb.Status_PASSED,
+				StartTime: start, EndTime: end,
+				Data: &evalspb.Run_IntegrationTest{
+					IntegrationTest: &evalspb.IntegrationTestResults{
+						Cases: []*evalspb.IntegrationTestResults_Case{
+							{Id: "case-1", Status: evalspb.Status_PASSED, Duration: durationpb.New(1500 * time.Millisecond)},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "load_test",
+			fixture: "run.load.json",
+			run: &evalspb.Run{
+				Name: "runs/load", Type: evalspb.Run_LOAD_TEST, Status: evalspb.Status_PASSED,
+				StartTime: start, EndTime: end,
+				Data: &evalspb.Run_LoadTest{
+					LoadTest: &evalspb.LoadTestResults{
+						Cases: []*evalspb.LoadTestResults_Case{
+							{Id: "load-1", Status: evalspb.Status_PASSED},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "agent_eval",
+			fixture: "run.agent.json",
+			run: &evalspb.Run{
+				Name: "runs/agent", Type: evalspb.Run_AGENT_EVAL, Status: evalspb.Status_PASSED,
+				StartTime: start, EndTime: end,
+				Data: &evalspb.Run_AgentEval{
+					AgentEval: &evalspb.AgentEvalResults{
+						Cases: []*evalspb.AgentEvalResults_Case{
+							{Id: "agent-1", Status: evalspb.Status_PASSED},
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newReporterWithPublisher(&recordingPublisher{}, tt.opts...)
-			if got := len(r.publishOpts); got != tt.want {
-				t.Errorf("publishOpts count = %d, want %d", got, tt.want)
+			fake := &recordingPublisher{}
+			r := newReporterWithPublisher(fake)
+			if err := r.ReportRun(context.Background(), tt.run); err != nil {
+				t.Fatalf("ReportRun: %v", err)
+			}
+			got := fake.lastData()
+			want, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if !jsonPayloadEqual(got, want) {
+				t.Fatalf("payload mismatch\n got: %s\nwant: %s", got, want)
 			}
 		})
 	}
 }
 
-func TestReporter_ReportRun_wrapsPublishError(t *testing.T) {
-	sentinel := errors.New("boom")
-	fake := &recordingPublisher{err: sentinel}
+func TestReporter_ReportRun_syncBlocksOnAck(t *testing.T) {
+	delay := 50 * time.Millisecond
+	fake := &blockingPublisher{delay: delay}
 	r := newReporterWithPublisher(fake)
-
-	err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/boom"})
-	if err == nil {
-		t.Fatal("ReportRun err = nil, want wrapped error")
-	}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("errors.Is(err, sentinel) = false, want true; err = %v", err)
-	}
-}
-
-func TestReporter_ReportRun_timeoutHonored(t *testing.T) {
-	fake := &blockingPublisher{released: make(chan struct{})}
-	defer close(fake.released)
-
-	r := newReporterWithPublisher(fake, WithPublishTimeout(10*time.Millisecond))
-
 	start := time.Now()
-	err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/slow"})
-	elapsed := time.Since(start)
+	if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/sync"}); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < delay {
+		t.Fatalf("ReportRun returned in %v, want at least %v", elapsed, delay)
+	}
+}
 
+func TestReporter_ReportRun_background_returnsImmediately(t *testing.T) {
+	fake := &blockingPublisher{delay: time.Hour}
+	r := newReporterWithPublisher(fake, WithBackground())
+	start := time.Now()
+	if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/bg"}); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("background ReportRun took %v, want immediate return", elapsed)
+	}
+}
+
+func TestReporter_ReportRun_publishTimeoutHonored(t *testing.T) {
+	fake := &blockingPublisher{delay: time.Hour}
+	r := newReporterWithPublisher(fake, WithPublishTimeout(30*time.Millisecond))
+	err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/timeout"})
 	if err == nil {
-		t.Fatal("ReportRun err = nil, want deadline error")
+		t.Fatal("expected timeout error")
 	}
-	if elapsed > 500*time.Millisecond {
-		t.Errorf("ReportRun took %v, want <500ms (timeout should short-circuit)", elapsed)
-	}
-	ctxErr := fake.observedCtxErr()
-	if !errors.Is(ctxErr, context.DeadlineExceeded) {
-		t.Errorf("observed ctx err = %v, want context.DeadlineExceeded", ctxErr)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded in chain", err)
 	}
 }
 
-func TestReporter_ReportRun_parentContextCancels(t *testing.T) {
-	fake := &blockingPublisher{released: make(chan struct{})}
-	defer close(fake.released)
+func TestReporter_ReportRun_forwardsOrderingKey(t *testing.T) {
+	fake := &recordingPublisher{}
+	r := newReporterWithPublisher(fake, WithOrderingKey("suite-42"))
+	if err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/k"}); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	if got := fake.lastMsg().OrderingKey; got != "suite-42" {
+		t.Errorf("OrderingKey = %q, want suite-42", got)
+	}
+}
 
-	r := newReporterWithPublisher(fake, WithPublishTimeout(time.Hour))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := r.ReportRun(ctx, &evalspb.Run{Name: "runs/parent-cancel"})
+func TestReporter_ReportRun_topicInErrors(t *testing.T) {
+	fake := &recordingPublisher{err: errors.New("broker down")}
+	r := newReporterWithPublisher(fake, WithTopic("custom.topic"))
+	err := r.ReportRun(context.Background(), &evalspb.Run{Name: "runs/err"})
 	if err == nil {
-		t.Fatal("ReportRun err = nil, want cancellation error")
+		t.Fatal("expected error")
 	}
-	ctxErr := fake.observedCtxErr()
-	if !errors.Is(ctxErr, context.Canceled) {
-		t.Errorf("observed ctx err = %v, want context.Canceled", ctxErr)
-	}
-}
-
-func TestReporter_Close_borrowedClient(t *testing.T) {
-	fake := &recordingPublisher{}
-	r := newReporterWithPublisher(fake)
-
-	if err := r.Close(); err != nil {
-		t.Errorf("Close on borrowed reporter err = %v, want nil", err)
-	}
-	if fake.closeCount() != 0 {
-		t.Errorf("Close forwarded to publisher %d times, want 0 (borrowed client is caller's responsibility)", fake.closeCount())
+	if !strings.Contains(err.Error(), "custom.topic") {
+		t.Errorf("err = %q, want topic name", err.Error())
 	}
 }
 
-func TestReporter_Close_ownedClient(t *testing.T) {
-	fake := &recordingPublisher{}
-	r := newReporterWithPublisher(fake)
-	r.closer = fake.Close
-
-	if err := r.Close(); err != nil {
-		t.Errorf("Close on owned reporter err = %v, want nil", err)
-	}
-	if got := fake.closeCount(); got != 1 {
-		t.Errorf("publisher.Close call count = %d, want 1", got)
-	}
-}
-
-func TestReporter_Close_idempotent(t *testing.T) {
-	fake := &recordingPublisher{}
-	r := newReporterWithPublisher(fake)
-	r.closer = fake.Close
-
-	if err := r.Close(); err != nil {
-		t.Fatalf("first Close err = %v, want nil", err)
-	}
-	if err := r.Close(); err != nil {
-		t.Errorf("second Close err = %v, want nil", err)
-	}
-	if got := fake.closeCount(); got != 1 {
-		t.Errorf("publisher.Close call count = %d, want 1 (Close must be idempotent)", got)
-	}
-}
-
-func TestReporter_Close_propagatesError(t *testing.T) {
-	sentinel := errors.New("close-failed")
-	fake := &recordingPublisher{closeErr: sentinel}
-	r := newReporterWithPublisher(fake)
-	r.closer = fake.Close
-
-	if err := r.Close(); !errors.Is(err, sentinel) {
-		t.Errorf("Close err = %v, want %v", err, sentinel)
-	}
-}
-
-func TestReporter_Close_nilReceiver(t *testing.T) {
-	var r *Reporter
-	if err := r.Close(); err != nil {
-		t.Errorf("Close on nil reporter err = %v, want nil", err)
-	}
-}
-
-func TestNewWithClient_validation(t *testing.T) {
-	t.Run("nil client errors", func(t *testing.T) {
-		got, err := NewWithClient(nil)
-		if err == nil {
-			t.Fatal("NewWithClient(nil) err = nil, want error")
-		}
-		if got != nil {
-			t.Errorf("NewWithClient(nil) reporter = %v, want nil", got)
-		}
-	})
-
-	t.Run("WithProject rejected", func(t *testing.T) {
-		setEmulator(t)
-		t.Setenv("ALIS_OS_PROJECT", "test-project")
-		client, err := events.NewClient(context.Background())
-		if err != nil {
-			t.Fatalf("events.NewClient err = %v, want nil", err)
-		}
-		t.Cleanup(func() { _ = client.Close() })
-
-		got, err := NewWithClient(client, WithProject("other"))
-		if err == nil {
-			t.Fatal("NewWithClient with WithProject err = nil, want error")
-		}
-		if got != nil {
-			t.Errorf("NewWithClient with WithProject reporter = %v, want nil", got)
-		}
-	})
-
-	t.Run("succeeds with valid client", func(t *testing.T) {
-		setEmulator(t)
-		t.Setenv("ALIS_OS_PROJECT", "test-project")
-		client, err := events.NewClient(context.Background())
-		if err != nil {
-			t.Fatalf("events.NewClient err = %v, want nil", err)
-		}
-		t.Cleanup(func() { _ = client.Close() })
-
-		r, err := NewWithClient(client)
-		if err != nil {
-			t.Fatalf("NewWithClient err = %v, want nil", err)
-		}
-		if r == nil {
-			t.Fatal("NewWithClient reporter = nil, want non-nil")
-		}
-		if r.closer != nil {
-			t.Error("NewWithClient should not set closer (client is borrowed)")
-		}
-	})
-}
-
-func TestNew_requiresProject(t *testing.T) {
-	setEmulator(t)
-	t.Setenv("ALIS_OS_PROJECT", "")
-
-	got, err := New(context.Background())
+func TestNewWithClient_rejectsWithProject(t *testing.T) {
+	client := &pubsub.Client{}
+	_, err := NewWithClient(client, WithProject("other"))
 	if err == nil {
-		t.Fatal("New() err = nil, want error when no project is available")
-	}
-	if got != nil {
-		t.Errorf("New() reporter = %v, want nil", got)
+		t.Fatal("expected error")
 	}
 }
 
-func TestNew_ownsClient(t *testing.T) {
-	setEmulator(t)
-	t.Setenv("ALIS_OS_PROJECT", "test-project")
+func TestNew_fallsBackToAlisOsProject(t *testing.T) {
+	t.Setenv(projectEnvVar, "from-env")
+	var gotProject string
+	orig := newPubsubClient
+	newPubsubClient = func(_ context.Context, projectID string) (*pubsub.Client, error) {
+		gotProject = projectID
+		return &pubsub.Client{}, nil
+	}
+	t.Cleanup(func() { newPubsubClient = orig })
 
 	r, err := New(context.Background())
 	if err != nil {
-		t.Fatalf("New() err = %v, want nil", err)
+		t.Fatalf("New: %v", err)
 	}
-	if r.closer == nil {
-		t.Error("New() should set closer (client is owned)")
+	if gotProject != "from-env" {
+		t.Errorf("project = %q, want from-env", gotProject)
 	}
-	if err := r.Close(); err != nil {
-		t.Errorf("Close on owned reporter err = %v, want nil", err)
+	if r.clientCloser == nil {
+		t.Error("New should own the client (clientCloser must be non-nil)")
 	}
+	r.clientCloser = func() error { return nil }
+	_ = r.Close()
 }
 
-func TestLoadConfig_publishTimeoutDefault(t *testing.T) {
-	tests := []struct {
-		name string
-		opts []Option
-		want time.Duration
-	}{
-		{"default", nil, defaultPublishTimeout},
-		{"explicit positive", []Option{WithPublishTimeout(3 * time.Second)}, 3 * time.Second},
-		{"zero snaps to default", []Option{WithPublishTimeout(0)}, defaultPublishTimeout},
-		{"negative snaps to default", []Option{WithPublishTimeout(-1)}, defaultPublishTimeout},
+func jsonPayloadEqual(got, want []byte) bool {
+	var g, w evalspb.Run
+	if err := protojson.Unmarshal(got, &g); err != nil {
+		return false
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := loadConfig(tt.opts)
-			if cfg.publishTimeout != tt.want {
-				t.Errorf("publishTimeout = %v, want %v", cfg.publishTimeout, tt.want)
-			}
-		})
+	if err := protojson.Unmarshal(want, &w); err != nil {
+		return false
 	}
+	return proto.Equal(&g, &w)
 }
 
-// recordingPublisher captures Publish and Close calls without doing I/O.
 type recordingPublisher struct {
-	mu        sync.Mutex
-	msgs      []proto.Message
-	optsCalls [][]events.PublishOption
-	err       error
-	closes    int
-	closeErr  error
+	mu    sync.Mutex
+	msgs  []*pubsub.Message
+	err   error
+	stopN int
 }
 
-func (p *recordingPublisher) Publish(ctx context.Context, event proto.Message, opts ...events.PublishOption) error {
+func (p *recordingPublisher) Publish(_ context.Context, msg *pubsub.Message) publishResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.msgs = append(p.msgs, event)
-	p.optsCalls = append(p.optsCalls, opts)
-	return p.err
+	p.msgs = append(p.msgs, msg)
+	return &immediateResult{err: p.err}
 }
 
-func (p *recordingPublisher) Close() error {
+func (p *recordingPublisher) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.closes++
-	return p.closeErr
+	p.stopN++
 }
 
 func (p *recordingPublisher) publishCount() int {
@@ -367,7 +245,16 @@ func (p *recordingPublisher) publishCount() int {
 	return len(p.msgs)
 }
 
-func (p *recordingPublisher) lastMessage() proto.Message {
+func (p *recordingPublisher) lastData() []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.msgs) == 0 {
+		return nil
+	}
+	return append([]byte(nil), p.msgs[len(p.msgs)-1].Data...)
+}
+
+func (p *recordingPublisher) lastMsg() *pubsub.Message {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.msgs) == 0 {
@@ -376,46 +263,37 @@ func (p *recordingPublisher) lastMessage() proto.Message {
 	return p.msgs[len(p.msgs)-1]
 }
 
-func (p *recordingPublisher) lastOpts() []events.PublishOption {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.optsCalls) == 0 {
-		return nil
-	}
-	return p.optsCalls[len(p.optsCalls)-1]
+type immediateResult struct {
+	err error
 }
 
-func (p *recordingPublisher) closeCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.closes
+func (r *immediateResult) Get(context.Context) (string, error) {
+	return "msg-id", r.err
 }
 
-// blockingPublisher blocks Publish until released is closed or the ctx
-// fires. It records the ctx.Err() observed at unblock so tests can assert
-// timeouts and cancellations propagated correctly.
 type blockingPublisher struct {
-	mu       sync.Mutex
-	ctxErr   error
-	released chan struct{}
+	delay time.Duration
 }
 
-func (p *blockingPublisher) Publish(ctx context.Context, event proto.Message, opts ...events.PublishOption) error {
+func (p *blockingPublisher) Publish(ctx context.Context, msg *pubsub.Message) publishResult {
+	return &blockingResult{ctx: ctx, delay: p.delay, data: msg.Data}
+}
+
+func (p *blockingPublisher) Stop() {}
+
+type blockingResult struct {
+	ctx   context.Context
+	delay time.Duration
+	data  []byte
+}
+
+func (r *blockingResult) Get(ctx context.Context) (string, error) {
+	timer := time.NewTimer(r.delay)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		p.mu.Lock()
-		p.ctxErr = ctx.Err()
-		p.mu.Unlock()
-		return ctx.Err()
-	case <-p.released:
-		return nil
+		return "", ctx.Err()
+	case <-timer.C:
+		return "msg-id", nil
 	}
-}
-
-func (p *blockingPublisher) Close() error { return nil }
-
-func (p *blockingPublisher) observedCtxErr() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.ctxErr
 }

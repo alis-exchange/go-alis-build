@@ -17,7 +17,8 @@ One page per Go subpackage in `go.alis.build/evals`.
 * [`evals/registry`](/packages/registry.md) - registered suites, filter grammar, selection validation.
 * [`evals/report`](/packages/report.md) - `Reporter` interface + `NoOpReporter`, `MultiReporter`.
 * [`evals/report/log`](/packages/report-log.md) - default log reporter (`log.Reporter`).
-* [`evals/report/bigquery`](/packages/report-bigquery.md) - BigQuery streaming reporter + `InferSchema`.
-* [`evals/report/pubsub`](/packages/report-pubsub.md) - Pub/Sub reporter — publishes `RunPublishedEvent` via `go.alis.build/events`.
+* [`evals/report/bqschema`](/packages/report-bqschema.md) - shared BigQuery schema + `EnsureTable` provisioning.
+* [`evals/report/bigquery`](/packages/report-bigquery.md) - BigQuery streaming reporter.
+* [`evals/report/pubsub`](/packages/report-pubsub.md) - JSON Pub/Sub reporter for bare `evalspb.Run`.
 * [`evals/runner`](/packages/runner.md) - environment activation, suite execution, panic recovery.
 * [`evals/suite`](/packages/suite.md) - internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.

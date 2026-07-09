@@ -4,61 +4,34 @@ title: package evals/report/bigquery
 description: BigQuery streaming reporter for completed Run protos.
 resource: https://github.com/alis-exchange/go-alis-build/tree/main/evals/report/bigquery
 tags: [package, report, bigquery, reporter]
-timestamp: 2026-07-08T00:00:00Z
+timestamp: 2026-07-09T00:00:00Z
 ---
 
 # Role
 
-`evals/report/bigquery` streams each completed `evalspb.Run` to a
-pre-existing BigQuery table using
-[go.einride.tech/protobuf-bigquery](https://github.com/einride/protobuf-bigquery-go).
+`evals/report/bigquery` streams each completed `evalspb.Run` to BigQuery
+using [go.einride.tech/protobuf-bigquery](https://github.com/einride/protobuf-bigquery-go)
+with Duration values written as protojson-native strings.
+
+Schema inference and table provisioning are delegated to
+[`report/bqschema`](/packages/report-bqschema.md).
 
 # Usage
 
 ```go
-import (
-    "context"
+import bqreport "go.alis.build/evals/report/bigquery"
 
-    bqreport "go.alis.build/evals/report/bigquery"
-)
-
-func setupReporter(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
-    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
-    if err != nil {
-        return nil, err
-    }
-    services.TestServiceServer.Reporter = r
-    return r, nil // Close() at server drain
-}
+r, err := bqreport.New(ctx, projectID, datasetID, tableID)
 ```
 
-# Schema provisioning
+`WithAutoCreateTable` delegates to `bqschema.EnsureTable`.
 
-Two options:
-
-**External (default).** Provision the table with Terraform / `bq mk` at deploy time:
-
-```go
-schemaJSON, err := bqreport.InferSchema().ToJSONFields()
-// bq mk --table PROJECT:dataset.table schema.json
-```
-
-**Framework-managed.** Let the reporter create and additively update the table on construction:
-
-```go
-r, err := bqreport.New(ctx, projectID, "evals", "runs",
-    bqreport.WithAutoCreateTable(bigquery.TableMetadata{
-        TimePartitioning: &bigquery.TimePartitioning{
-            Field: "start_time",
-            Type:  bigquery.DayPartitioningType,
-        },
-    }),
-)
-```
-
-The dataset must exist either way. BigQuery enforces additive-only schema updates server-side, so renames, drops, and type changes on an existing table fail loudly at construction.
+`WithSchemaOptions` still exists but controls **row marshaling only**, not
+schema inference — the schema is always sourced from `bqschema.Schema()` so
+`bqreport` and Pub/Sub → BigQuery subscriptions stay aligned.
 
 # Related
 
-* [`report` package](/packages/report.md)
+* [`report-bqschema`](/packages/report-bqschema.md)
+* [`report-pubsub`](/packages/report-pubsub.md)
 * [Reporters API](/api/reporters.md)

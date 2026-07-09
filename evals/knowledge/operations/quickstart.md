@@ -68,27 +68,38 @@ misuse fails loudly. Use the error-returning variants (`NewIntegrationSuite`,
 import (
     "context"
 
+    "cloud.google.com/go/bigquery"
     "go.alis.build/evals/report"
+    bqschema "go.alis.build/evals/report/bqschema"
+    bqreport "go.alis.build/evals/report/bigquery"
     logreport "go.alis.build/evals/report/log"
     pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
-func setupReporters(ctx context.Context) (*pubsubreport.Reporter, error) {
+func setupReporters(ctx context.Context, bqClient *bigquery.Client, datasetID, tableID string) error {
+    if err := bqschema.EnsureTable(ctx, bqClient, datasetID, tableID); err != nil {
+        return err
+    }
+    bq, err := bqreport.NewWithClient(ctx, bqClient, datasetID, tableID)
+    if err != nil {
+        return err
+    }
     ps, err := pubsubreport.New(ctx)
     if err != nil {
-        return nil, err
+        _ = bq.Close()
+        return err
     }
     services.TestServiceServer.Reporter = report.MultiReporter{
         logreport.Reporter{},
-        ps, // publishes RunPublishedEvent to Pub/Sub via go.alis.build/events
+        bq,
+        ps, // publishes bare Run JSON for Pub/Sub → BigQuery table-schema mode
     }
-    return ps, nil // Close() at server drain
+    return nil
 }
 ```
 
-Swap `pubsubreport` for `bqreport` (see
-[`report/bigquery`](/packages/report-bigquery.md)) to stream Runs
-into BigQuery instead, or fan out to both.
+See [`report/bqschema`](/packages/report-bqschema.md) for schema export and
+[`report/pubsub`](/packages/report-pubsub.md) for the JSON payload contract.
 
 ## 4. Import the launcher
 

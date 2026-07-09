@@ -95,7 +95,7 @@ func setupReporters(ctx context.Context) (*pubsubreport.Reporter, error) {
     }
     services.TestServiceServer.Reporter = report.MultiReporter{
         logreport.Reporter{},
-        ps, // publishes RunPublishedEvent to Pub/Sub via go.alis.build/events
+        ps, // publishes bare evalspb.Run JSON to alis.evals.v1.Run via pubsub/v2
     }
     return ps, nil // Close() at server drain
 }
@@ -695,15 +695,21 @@ type Reporter interface {
 }
 ```
 
-Bundled implementations:
+Bundled reporter implementations:
 
 | Type | Package | Purpose |
 | ---- | ------- | ------- |
 | `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
-| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table via protobq. See [BigQuery reporter](#bigquery-reporter) below. |
-| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Wraps each Run in a `RunPublishedEvent` envelope and publishes it to Pub/Sub via [go.alis.build/events](https://pkg.go.dev/go.alis.build/events). See [Pub/Sub reporter](#pubsub-reporter) below. |
+| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to BigQuery via protobq (Duration as STRING). |
+| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` + `pubsub/v2`. |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
 | `report.MultiReporter{…}` | `go.alis.build/evals/report` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
+
+Companion packages (not themselves Reporters):
+
+| Symbol | Package | Purpose |
+| ------ | ------- | ------- |
+| `bqschema.Schema()` / `bqschema.SchemaJSON()` / `bqschema.EnsureTable()` | `go.alis.build/evals/report/bqschema` | Canonical BigQuery schema for `evalspb.Run` rows and a table-provisioning helper. Both `bigquery.Reporter` and Pub/Sub → BigQuery subscriptions target this schema. |
 
 Wiring:
 
@@ -738,24 +744,24 @@ func setupReporters(ctx context.Context, projectID string) error {
 
 #### BigQuery reporter
 
-The BigQuery reporter writes each completed `Run` to a pre-existing table whose schema matches `bqreport.InferSchema()`. It uses [go.einride.tech/protobuf-bigquery](https://github.com/einride/protobuf-bigquery-go) to mirror the Run proto as nested BigQuery columns:
+The BigQuery reporter writes each completed `Run` to a pre-existing table whose schema matches `bqschema.Schema()` (equivalently `bqreport.InferSchema()`, which delegates to `bqschema`). Schema derivation is now owned by the companion `bqschema` package so that both this reporter and Pub/Sub → BigQuery subscriptions land rows in the same layout. Type mapping:
 
 - `google.protobuf.Timestamp` → `TIMESTAMP`
-- `google.protobuf.Duration` → `FLOAT` (seconds)
-- `google.rpc.Status` → `RECORD`
+- `google.protobuf.Duration` → `STRING` (protojson-native, e.g. `"1.500s"`)
+- `google.rpc.Status` → `RECORD{code, message}` (`details` is intentionally omitted)
 - `oneof data` → sibling nullable `RECORD` columns (`integration_test`, `load_test`, `agent_eval`)
 
 Provision the table at deploy time (the reporter is insert-only by default):
 
 ```go
-schemaJSON, err := bqreport.InferSchema().ToJSONFields()
+schemaJSON, err := bqschema.SchemaJSON()
 // write schemaJSON to schema.json, then:
 // bq mk --table PROJECT:evals.runs schema.json
 ```
 
-If you construct the reporter with `bqreport.WithSchemaOptions(...)`, provision from `r.Schema().ToJSONFields()` on the constructed reporter instead — that guarantees the table layout matches the rows the reporter writes.
+`bqreport.WithSchemaOptions(...)` still exists but now controls **row marshaling only**, not schema inference. Provision from `bqschema.Schema()` regardless of the marshal options you pass to the reporter.
 
-Alternatively, let the reporter manage the table itself with `bqreport.WithAutoCreateTable(...)`:
+Alternatively, let the reporter manage the table itself with `bqreport.WithAutoCreateTable(...)`, which delegates to `bqschema.EnsureTable`:
 
 ```go
 r, err := bqreport.New(ctx, projectID, "evals", "runs",
@@ -779,7 +785,9 @@ Each row uses `run.name` (`runs/{run_id}`) as the BigQuery insert ID for best-ef
 
 #### Pub/Sub reporter
 
-The Pub/Sub reporter wraps each completed `Run` in an `alis.evals.v1.RunPublishedEvent` envelope and publishes it via [`go.alis.build/events`](https://pkg.go.dev/go.alis.build/events). The default topic is the event message's proto full name (`alis.evals.v1.RunPublishedEvent`) — the same string the Alis Build platform provisions when defining the message, so no wiring is required beyond `New`.
+The Pub/Sub reporter publishes each completed `Run` to Pub/Sub as JSON, using `google.golang.org/protobuf/encoding/protojson` on top of `cloud.google.com/go/pubsub/v2`. The payload is a **bare `evalspb.Run`** — no `RunPublishedEvent` envelope. Marshaling is locked to `UseProtoNames=true` and `EmitUnpopulated=true` so downstream consumers see stable snake_case keys and can distinguish unset fields.
+
+The default topic is `"alis.evals.v1.Run"` (the payload's proto full name). Unlike `*Event`-suffixed messages, **this topic is not auto-provisioned by the Alis Build platform's define step** — callers must provision the topic (and any Pub/Sub → BigQuery subscription) via Terraform. Override with `WithTopic(...)` when your platform provisions under a different name.
 
 ```go
 import pubsubreport "go.alis.build/evals/report/pubsub"
@@ -800,18 +808,15 @@ By default every `ReportRun` blocks until the Pub/Sub broker acks the message �
 | ------ | ------ |
 | `pubsubreport.WithProject(id)` | Override the Google Cloud project (defaults to `ALIS_OS_PROJECT`). Only valid with `New`. |
 | `pubsubreport.WithTopic(name)` | Override the default topic. Accepts a bare topic ID or a fully-qualified `projects/<p>/topics/<t>` resource string. |
-| `pubsubreport.WithOrderingKey(k)` | Apply the Pub/Sub ordering key on every message. |
-| `pubsubreport.WithBackground()` | Fire-and-forget publishing (does not wait for broker ack). Best-effort delivery only. |
+| `pubsubreport.WithOrderingKey(k)` | Apply the Pub/Sub ordering key on every message and enable message ordering on the publisher. |
+| `pubsubreport.WithBackground()` | Fire-and-forget publishing (does not wait for broker ack). Best-effort delivery only; call `Close` before process exit to flush pending messages. |
 | `pubsubreport.WithPublishTimeout(d)` | Bound each publish via `context.WithTimeout`. Defaults to 10s. |
 
-`pubsubreport.New(ctx, opts...)` owns the underlying `*events.Client` and closes it on `Close`. `pubsubreport.NewWithClient(client, opts...)` borrows a client (Close is a no-op); passing `WithProject` there returns an error since the borrowed client already has a project bound.
+`pubsubreport.New(ctx, opts...)` owns the underlying `*pubsub.Client` and the `*pubsub.Publisher` for the configured topic; `Close` stops the publisher and closes the client. `pubsubreport.NewWithClient(client, opts...)` borrows a client (Close stops only the publisher); passing `WithProject` there returns an error since the borrowed client already has a project bound.
 
-**Pub/Sub → BigQuery.** Pub/Sub can attach a BigQuery subscription that writes messages directly into a table, but note two constraints of the direct-subscription proto path:
+**Pub/Sub → BigQuery.** Because this reporter emits protojson-formatted JSON, a Pub/Sub "Use table schema" subscription can land each published message directly into a table provisioned from `bqschema.SchemaJSON()` — no glue subscriber required. The two constraints of the older proto-schema path (unmappable `oneof`, no WKT unwrapping) do not apply.
 
-1. Pub/Sub → BigQuery marks proto `oneof` fields as **unmappable**. `Run` has `oneof data { integration_test, load_test, agent_eval }`, so a "Use topic schema" subscription against this topic fails schema compatibility.
-2. Pub/Sub → BigQuery does not unwrap well-known types the way the in-process BigQuery reporter does — Timestamps land as `RECORD<seconds, nanos>` rather than `TIMESTAMP`, etc.
-
-If you want a queryable BigQuery table fed by Pub/Sub whose shape matches the in-process reporter's output, run a small subscriber that unmarshals `RunPublishedEvent` and forwards `evt.Run` to `bqreport.Reporter`. If you only need a raw archive of published events, use a "Don't use a schema" subscription with a single `data BYTES` column.
+If you want a table fed by both the streaming-insert path (`bqreport.Reporter`) and the Pub/Sub → BigQuery path, use `bqschema.Schema()` for both — the two writers produce rows that match the same layout. If you only need a raw archive of published events, attach a "Don't use a schema" subscription with a single `data BYTES` column instead.
 
 **Contract for custom reporters:**
 
@@ -1011,8 +1016,9 @@ callers pass into their own token source when building the transport.
 | `evals/registry`        | Registered suites, filter grammar, selection validation.                                                                                 |
 | `evals/report`          | `Reporter` interface + `NoOpReporter`, `MultiReporter`.                                                                                  |
 | `evals/report/log`      | Default log reporter (`log.Reporter`).                                                                                                   |
-| `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`) + `InferSchema` helper.                                                                |
-| `evals/report/pubsub`   | Pub/Sub reporter (`pubsub.Reporter`) — publishes `RunPublishedEvent` via `go.alis.build/events`.                                         |
+| `evals/report/bqschema` | Shared BigQuery schema + `EnsureTable` for Run rows. |
+| `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`). |
+| `evals/report/pubsub`   | JSON Pub/Sub reporter (`pubsub.Reporter`) on `pubsub/v2`. |
 | `evals/runner`          | Environment activation, suite execution, panic recovery, status rollups.                                                                 |
 | `evals/suite`           | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                               |
 

@@ -4,11 +4,11 @@ go 1.26.1
 
 require (
 	cloud.google.com/go/bigquery v1.77.0
+	cloud.google.com/go/pubsub/v2 v2.6.1
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	go.alis.build/adk/launchers v1.0.1
 	go.alis.build/alog v0.1.0
 	go.alis.build/common v1.1.10
-	go.alis.build/events v1.0.5
 	go.einride.tech/protobuf-bigquery v0.29.0
 	google.golang.org/api v0.287.1
 	google.golang.org/grpc v1.82.0
@@ -22,7 +22,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/longrunning v1.1.0 // indirect
-	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
 	github.com/apache/arrow/go/v15 v15.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
