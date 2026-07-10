@@ -109,6 +109,88 @@ func TestFormatRun_agentEvalIncludesCaseCounts(t *testing.T) {
 	}
 }
 
+func TestJudgeDriftWarning_triggersWhenJudgeMetricsButZeroCount(t *testing.T) {
+	t.Parallel()
+
+	run := &evalspb.Run{
+		Name:   "runs/agent-drift",
+		Type:   evalspb.Run_AGENT_EVAL,
+		Status: evalspb.Status_PASSED,
+		Data: &evalspb.Run_AgentEval{
+			AgentEval: &evalspb.AgentEvalResults{
+				Cases: []*evalspb.AgentEvalResults_Case{{
+					Id:     "eval_set_1.a",
+					Status: evalspb.Status_PASSED,
+					Metrics: []*evalspb.AgentEvalResults_Case_Metric{
+						{Id: "rubric_based_final_response_quality_v1", Status: evalspb.Status_PASSED},
+					},
+				}},
+				Judge: &evalspb.AgentEvalResults_JudgeInfo{Model: "gemini-2.5-pro"}, // count is 0
+			},
+		},
+	}
+	if !judgeDriftDetected(run) {
+		t.Errorf("judgeDriftDetected() = false, want true (judge metric present, count = 0)")
+	}
+}
+
+func TestJudgeDriftWarning_noTriggerWhenCountPositive(t *testing.T) {
+	t.Parallel()
+
+	run := &evalspb.Run{
+		Type: evalspb.Run_AGENT_EVAL,
+		Data: &evalspb.Run_AgentEval{
+			AgentEval: &evalspb.AgentEvalResults{
+				Cases: []*evalspb.AgentEvalResults_Case{{
+					Id:     "a",
+					Status: evalspb.Status_PASSED,
+					Metrics: []*evalspb.AgentEvalResults_Case_Metric{
+						{Id: "rubric_based_final_response_quality_v1", Status: evalspb.Status_PASSED},
+					},
+				}},
+				Judge: &evalspb.AgentEvalResults_JudgeInfo{Model: "gemini-2.5-pro", JudgeCallCount: 1},
+			},
+		},
+	}
+	if judgeDriftDetected(run) {
+		t.Errorf("judgeDriftDetected() = true, want false (count > 0)")
+	}
+}
+
+func TestJudgeDriftWarning_noTriggerWhenNoJudgeMetrics(t *testing.T) {
+	t.Parallel()
+
+	run := &evalspb.Run{
+		Type: evalspb.Run_AGENT_EVAL,
+		Data: &evalspb.Run_AgentEval{
+			AgentEval: &evalspb.AgentEvalResults{
+				Cases: []*evalspb.AgentEvalResults_Case{{
+					Id:     "a",
+					Status: evalspb.Status_PASSED,
+					Metrics: []*evalspb.AgentEvalResults_Case_Metric{
+						{Id: "response_match_score", Status: evalspb.Status_PASSED},
+					},
+				}},
+				// No judge sidecar at all.
+			},
+		},
+	}
+	if judgeDriftDetected(run) {
+		t.Errorf("judgeDriftDetected() = true, want false (no judge metrics)")
+	}
+}
+
+func TestJudgeDriftWarning_notForNonAgentEval(t *testing.T) {
+	t.Parallel()
+
+	run := &evalspb.Run{
+		Type: evalspb.Run_INTEGRATION_TEST,
+	}
+	if judgeDriftDetected(run) {
+		t.Errorf("judgeDriftDetected() = true, want false for non-AGENT_EVAL runs")
+	}
+}
+
 func TestFormatRun_batchIdIncludedWhenSet(t *testing.T) {
 	t.Parallel()
 	bid := "batch-42"

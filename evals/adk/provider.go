@@ -100,10 +100,22 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 
 		each := end.Sub(start) / time.Duration(max(len(results), 1))
 		cases := make([]execution.CaseResult, 0, len(results))
+		var suiteJudgeCalls int64
 		for _, r := range results {
 			cr := CaseFromRunEvalResult(r, each)
 			cr.Name = suite.QualifiedName(setID, r.EvalID)
+			suiteJudgeCalls += cr.JudgeCallCount
 			cases = append(cases, *cr)
+		}
+
+		// Resolve judge provenance for this suite. Agent.JudgeModel is
+		// authoritative; probeJudgeModel is a best-effort fallback that
+		// walks the caller-supplied metric criteria for this set. See
+		// Agent.JudgeModel godoc for the caveats around heterogeneous
+		// metric setups and the adk-python default asymmetry.
+		judgeModel := p.agent.JudgeModel
+		if judgeModel == "" {
+			judgeModel = probeJudgeModel(params.Metrics)
 		}
 
 		out = append(out, execution.SuiteResult{
@@ -111,6 +123,11 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 			Cases:     cases,
 			StartTime: start,
 			EndTime:   end,
+			Judge: execution.JudgeInfo{
+				Model:        judgeModel,
+				ModelVersion: p.agent.JudgeModelVersion,
+			},
+			JudgeCallCount: suiteJudgeCalls,
 		})
 	}
 

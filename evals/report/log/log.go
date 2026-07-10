@@ -26,7 +26,52 @@ func (Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 	} else {
 		alog.Warnf(ctx, "evals run: %s", summary)
 	}
+	if judgeDriftDetected(run) {
+		alog.Warnf(ctx, "evals: judge metrics configured but judge_call_count=0 for run %q — check that Agent.JudgeModel or metric criterion carries judge provenance, or that the ADK launcher is actually invoking judges",
+			run.GetName())
+	}
 	return nil
+}
+
+// judgeMetricNames mirrors go.alis.build/evals/adk.judgeMetricNames.
+// Kept in sync manually to avoid importing the adk package into the
+// report/log package (which would pull ADK http/client machinery into
+// every deployment that only uses the log reporter). If you change this
+// map, update the one in evals/adk/judge.go too.
+var judgeMetricNames = map[string]struct{}{
+	"final_response_match_v2":                       {},
+	"rubric_based_final_response_quality_v1":        {},
+	"rubric_based_tool_use_quality_v1":              {},
+	"rubric_based_multi_turn_trajectory_quality_v1": {},
+	"hallucinations_v1":                             {},
+	"per_turn_user_simulator_quality_v1":            {},
+}
+
+// judgeDriftDetected reports whether the run is an agent eval run that
+// has at least one judge-classified metric result but its JudgeInfo
+// sidecar reports zero judge calls. This signals a wiring bug: either
+// the caller forgot to declare provenance via Agent.JudgeModel /
+// SynthesizeJudgeContextFromMetrics, or the ADK launcher isn't actually
+// invoking judges even though judge metrics are configured.
+func judgeDriftDetected(run *evalspb.Run) bool {
+	if run.GetType() != evalspb.Run_AGENT_EVAL {
+		return false
+	}
+	ae := run.GetAgentEval()
+	if ae == nil {
+		return false
+	}
+	if ae.GetJudge().GetJudgeCallCount() > 0 {
+		return false
+	}
+	for _, c := range ae.GetCases() {
+		for _, m := range c.GetMetrics() {
+			if _, ok := judgeMetricNames[m.GetId()]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func formatRun(run *evalspb.Run) string {

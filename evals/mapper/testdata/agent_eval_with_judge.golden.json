@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "duration": "1s",
+      "id": "core.eval",
+      "metrics": [
+        {
+          "id": "rubric_based_final_response_quality_v1",
+          "score": 0.85,
+          "status": "PASSED",
+          "threshold": 0.7
+        },
+        {
+          "id": "hallucinations_v1",
+          "score": 0.9,
+          "status": "PASSED",
+          "threshold": 0.8
+        }
+      ],
+      "sessionId": "sess-1",
+      "status": "PASSED"
+    }
+  ],
+  "judge": {
+    "judgeCallCount": "2",
+    "model": "gemini-2.5-pro",
+    "modelVersion": "2025-06-05"
+  }
+}

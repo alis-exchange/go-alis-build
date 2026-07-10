@@ -150,10 +150,25 @@ func agentEvalData(sr execution.SuiteResult) *evalspb.AgentEvalResults {
 			Duration:  durationpb.New(c.Duration),
 		})
 	}
-	return &evalspb.AgentEvalResults{
-		Cases: cases,
-		Judge: &evalspb.AgentEvalResults_JudgeInfo{},
+	out := &evalspb.AgentEvalResults{Cases: cases}
+	// Emit the JudgeInfo sidecar only when we have provenance to report
+	// or a non-zero count. A fully zero suite (no judge model declared,
+	// no judge calls counted) is a non-judge run and gets no sidecar.
+	// This replaces the always-empty `Judge{}` emission that shipped in
+	// evals v0.1.4, which was indistinguishable from an unpopulated
+	// judge run on the wire.
+	if !sr.Judge.IsZero() || sr.JudgeCallCount != 0 {
+		out.Judge = &evalspb.AgentEvalResults_JudgeInfo{
+			Model:          sr.Judge.Model,
+			ModelVersion:   sr.Judge.ModelVersion,
+			JudgeCallCount: sr.JudgeCallCount,
+			// JudgeErrorCount is not derived here; see adk.JudgeContext
+			// godoc for why NOT_EVALUATED is not classified as an
+			// error. Callers with an out-of-band signal can populate
+			// the field by post-processing the returned proto.
+		}
 	}
+	return out
 }
 
 func mapChecks(checks []execution.Check) []*evalspb.IntegrationTestResults_Case_Check {

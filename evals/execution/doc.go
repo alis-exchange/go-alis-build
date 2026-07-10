@@ -14,8 +14,16 @@
 //
 //   - [CaseResult]      — one integration or eval case. Carries Checks
 //     for tests, Metrics for evals, both are optional so the same struct
-//     serves both kinds.
+//     serves both kinds. [CaseResult.JudgeCallCount] on eval cases
+//     records LLM-as-judge metric result entries for this case.
 //   - [SuiteResult]     — a list of CaseResults with wall-clock times.
+//     [SuiteResult.Judge] and [SuiteResult.JudgeCallCount] carry
+//     LLM-as-judge provenance and the per-suite call count roll-up; the
+//     mapper conditionally emits these onto
+//     [alis.evals.v1.AgentEvalResults.JudgeInfo].
+//   - [JudgeInfo]       — provenance struct ([Model], [ModelVersion])
+//     embedded in SuiteResult. Zero value signals "no judge context"
+//     and suppresses the wire sidecar.
 //   - [LoadCaseResult]  — a load case. Carries a [LoadCaseSummary] with
 //     aggregate metrics plus a list of [SloCheckResult]s.
 //   - [LoadSuiteResult] — a list of LoadCaseResults.

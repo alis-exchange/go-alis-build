@@ -21,6 +21,10 @@
 //	    DefaultMetrics: []models.EvalMetric{
 //	        adk.ResponseMatchScore(0.7),
 //	    },
+//	    // Optional: declare judge provenance for observability. Populates
+//	    // AgentEvalResults.JudgeInfo{model,model_version} on the wire.
+//	    JudgeModel:        "gemini-2.5-pro",
+//	    JudgeModelVersion: "2025-06-05",
 //	})
 //	if err := evals.RegisterAgent(provider); err != nil {
 //	    panic(err)
@@ -28,6 +32,32 @@
 //
 // Case_ids follow the standard filter grammar. `agent-set` selects an
 // entire eval set; `agent-set.case-id` selects one entry inside it.
+//
+// # Judge provenance
+//
+// When any suite in the run uses LLM-as-judge metrics
+// ([final_response_match_v2], [rubric_based_*_v1], [hallucinations_v1],
+// [per_turn_user_simulator_quality_v1]), the mapper emits a
+// [alis.evals.v1.AgentEvalResults.JudgeInfo] sidecar carrying model
+// provenance and a synthesised judge call count. Two resolution rules:
+//
+//   - [Agent.JudgeModel] is authoritative when non-empty. Set it
+//     explicitly for consistent wire output.
+//   - Otherwise the provider probes the caller-supplied metric criteria
+//     (in slice declaration order across [Agent.DefaultMetrics] or
+//     [Agent.MetricOverrides] for the current set) and uses the first
+//     non-empty `judgeModelOptions.judgeModel` found.
+//
+// Note the asymmetry with adk-python: its `JudgeModelOptions.judge_model`
+// defaults to `"gemini-2.5-flash"` when unset, while the Go helpers here
+// require callers to pass a model explicitly. If you rely on the ADK
+// backend's implicit default and do not set [Agent.JudgeModel], the wire
+// `model` field is empty even when real judge calls happen. Set it
+// explicitly.
+//
+// The per-suite `judge_call_count` counts LLM-as-judge metric result
+// entries in each case, not per-invocation samples — treat it as a
+// lower bound on judge cardinality.
 //
 // # Dependencies
 //

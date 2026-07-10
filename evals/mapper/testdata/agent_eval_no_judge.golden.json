@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {
+      "duration": "1s",
+      "id": "core.eval",
+      "metrics": [
+        {
+          "id": "response_match_score",
+          "status": "PASSED",
+          "threshold": 0.3
+        }
+      ],
+      "sessionId": "sess-1",
+      "status": "PASSED"
+    }
+  ]
+}

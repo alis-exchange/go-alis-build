@@ -433,6 +433,11 @@ func Register() {
         DefaultMetrics: []models.EvalMetric{
             adk.ResponseMatchScore(0.7),
         },
+        // Optional: declare judge provenance so AgentEvalResults.JudgeInfo
+        // is populated on the wire. Authoritative when non-empty; else the
+        // provider probes the metric criteria for a judgeModelOptions.judgeModel.
+        JudgeModel:        "gemini-2.5-pro",
+        JudgeModelVersion: "2025-06-05",
         // Optional: override metrics per eval set.
         // MetricOverrides: map[string][]models.EvalMetric{"regressions": { ... }},
         // Optional: skip eval sets you don't want the runner to touch.
@@ -448,6 +453,8 @@ The provider discovers eval sets over HTTP at run time, filters them against the
 
 The **deployed agent** must itself embed `go.alis.build/adk/launchers/evals` so its `/api/list_eval_sets` and `/api/run_eval` endpoints are reachable — this is where the launcher
 requirement bites; the eval-consuming neuron only needs the launcher import when it _also_ serves ADK agent evals of its own.
+
+**Judge provenance and call counts.** When any suite in the run uses an LLM-as-judge metric (`final_response_match_v2`, `rubric_based_*_v1`, `hallucinations_v1`, `per_turn_user_simulator_quality_v1`), the mapper emits a non-nil `AgentEvalResults.JudgeInfo` sidecar carrying `model`, `model_version`, and a per-suite `judge_call_count` synthesised from the number of judge-classified metric results across cases. `Agent.JudgeModel` is authoritative; if empty, the provider probes `Agent.DefaultMetrics` (or `Agent.MetricOverrides[setID]`) in slice order for the first non-empty `judgeModelOptions.judgeModel`. Non-judge runs emit a nil sidecar. Note the asymmetry with adk-python, whose `JudgeModelOptions.judge_model` defaults to `"gemini-2.5-flash"` when unset: set `Agent.JudgeModel` explicitly here to avoid an empty `model` on the wire even though real judge calls happened. `judge_call_count` counts result entries, not per-invocation samples — treat it as a lower bound. The default `log.Reporter` emits a WARN when judge metrics are configured but the count is zero (see the reporter's godoc for the diagnostic).
 
 ---
 

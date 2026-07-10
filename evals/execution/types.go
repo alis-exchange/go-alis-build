@@ -55,6 +55,34 @@ type CaseResult struct {
 	Metrics   []Metric
 	SessionID string
 	Duration  time.Duration
+	// JudgeCallCount is the per-case count of LLM-as-judge metric result
+	// entries observed for this case. It is a lower bound on the actual
+	// number of judge model invocations: it counts result entries, not
+	// per-invocation samples, so it undercuts JudgeModelOptions.NumSamples
+	// fan-out (default 5 in adk-python), per-turn loops inside a single
+	// metric, and metrics that make multiple internal judge calls (e.g.
+	// hallucinations_v1's segmenter + validator). Set by
+	// [go.alis.build/evals/adk.Provider.Run] for the ADK path; custom
+	// [suite.EvalCase] implementations that invoke judges out-of-band are
+	// responsible for populating this field themselves.
+	JudgeCallCount int64
+}
+
+// JudgeInfo carries per-suite LLM-as-judge provenance. The zero value
+// signals "no judge context" — the mapper treats it as a suppression
+// hint and omits the wire [alis.evals.v1.AgentEvalResults.JudgeInfo]
+// sidecar in that branch. See [go.alis.build/evals/adk.Agent.JudgeModel]
+// for how callers declare provenance.
+type JudgeInfo struct {
+	Model        string
+	ModelVersion string
+}
+
+// IsZero reports whether the JudgeInfo carries no provenance to emit.
+// Callers use this in combination with [SuiteResult.JudgeCallCount] to
+// decide whether to emit the wire JudgeInfo sidecar.
+func (j JudgeInfo) IsZero() bool {
+	return j == JudgeInfo{}
 }
 
 // SuiteResult groups case outcomes for one suite execution.
@@ -63,6 +91,15 @@ type SuiteResult struct {
 	Cases     []CaseResult
 	StartTime time.Time
 	EndTime   time.Time
+	// Judge is the caller-declared judge provenance for this suite. Zero
+	// value means "not a judge suite" and the mapper will omit the wire
+	// JudgeInfo sidecar unless JudgeCallCount is non-zero.
+	Judge JudgeInfo
+	// JudgeCallCount is the sum of [CaseResult.JudgeCallCount] across all
+	// cases in this suite, populated by the runner for convenience so the
+	// mapper does not re-walk the case list. It carries the same
+	// lower-bound caveat documented on [CaseResult.JudgeCallCount].
+	JudgeCallCount int64
 }
 
 // SloCheckResult is one SLO evaluation outcome for a load case (a threshold

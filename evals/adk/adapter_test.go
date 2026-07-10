@@ -108,3 +108,159 @@ func TestAgentEvalResultsFromRunEvalResults(t *testing.T) {
 		t.Fatalf("judge model = %q", proto.GetJudge().GetModel())
 	}
 }
+
+func TestJudgeContext_CallCountRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		[]models.RunEvalResult{{
+			EvalID:          "case-1",
+			FinalEvalStatus: models.EvalStatusPassed,
+		}},
+		[]time.Duration{time.Second},
+		adk.JudgeContext{Model: "m", ModelVersion: "v", CallCount: 3, ErrorCount: 0},
+	)
+	judge := proto.GetJudge()
+	if judge == nil {
+		t.Fatal("Judge is nil, want populated")
+	}
+	if got, want := judge.GetModel(), "m"; got != want {
+		t.Errorf("Model = %q, want %q", got, want)
+	}
+	if got, want := judge.GetModelVersion(), "v"; got != want {
+		t.Errorf("ModelVersion = %q, want %q", got, want)
+	}
+	if got, want := judge.GetJudgeCallCount(), int64(3); got != want {
+		t.Errorf("JudgeCallCount = %d, want %d", got, want)
+	}
+	if got, want := judge.GetJudgeErrorCount(), int64(0); got != want {
+		t.Errorf("JudgeErrorCount = %d, want %d", got, want)
+	}
+}
+
+func TestAgentEvalResults_JudgeNilWhenZeroValued(t *testing.T) {
+	t.Parallel()
+
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		[]models.RunEvalResult{{
+			EvalID:          "case-1",
+			FinalEvalStatus: models.EvalStatusPassed,
+		}},
+		[]time.Duration{time.Second},
+		adk.JudgeContext{},
+	)
+	if proto.GetJudge() != nil {
+		t.Errorf("Judge = %+v, want nil", proto.GetJudge())
+	}
+}
+
+func TestAgentEvalResults_JudgeEmittedWhenOnlyCallCountSet(t *testing.T) {
+	t.Parallel()
+
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		nil,
+		nil,
+		adk.JudgeContext{CallCount: 5},
+	)
+	judge := proto.GetJudge()
+	if judge == nil {
+		t.Fatal("Judge is nil, want populated when CallCount > 0")
+	}
+	if got := judge.GetModel(); got != "" {
+		t.Errorf("Model = %q, want empty", got)
+	}
+	if got, want := judge.GetJudgeCallCount(), int64(5); got != want {
+		t.Errorf("JudgeCallCount = %d, want %d", got, want)
+	}
+}
+
+func TestAgentEvalResults_JudgeEmittedWhenOnlyErrorCountSet(t *testing.T) {
+	t.Parallel()
+
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		nil,
+		nil,
+		adk.JudgeContext{ErrorCount: 2},
+	)
+	if proto.GetJudge() == nil {
+		t.Fatal("Judge is nil, want populated when ErrorCount > 0")
+	}
+	if got, want := proto.GetJudge().GetJudgeErrorCount(), int64(2); got != want {
+		t.Errorf("JudgeErrorCount = %d, want %d", got, want)
+	}
+}
+
+func TestSynthesizeJudgeContext_CountsJudgeMetricsOnly(t *testing.T) {
+	t.Parallel()
+
+	// Build 3 cases, each with 2 judge metrics + 1 non-judge metric.
+	caseWithMetrics := func(id string) models.RunEvalResult {
+		return models.RunEvalResult{
+			EvalID:          id,
+			FinalEvalStatus: models.EvalStatusPassed,
+			OverallEvalMetricResults: []models.EvalMetricResult{
+				{MetricName: models.MetricRubricBasedFinalResponseQualityV1, EvalStatus: models.EvalStatusPassed},
+				{MetricName: models.MetricHallucinationsV1, EvalStatus: models.EvalStatusPassed},
+				{MetricName: models.MetricResponseMatchScore, EvalStatus: models.EvalStatusPassed},
+			},
+		}
+	}
+	results := []models.RunEvalResult{caseWithMetrics("c1"), caseWithMetrics("c2"), caseWithMetrics("c3")}
+
+	got := adk.SynthesizeJudgeContext(results, "gemini-2.5-flash", "")
+	if got.Model != "gemini-2.5-flash" {
+		t.Errorf("Model = %q, want gemini-2.5-flash", got.Model)
+	}
+	if got.CallCount != 6 {
+		t.Errorf("CallCount = %d, want 6 (2 judge metrics * 3 cases)", got.CallCount)
+	}
+	if got.ErrorCount != 0 {
+		t.Errorf("ErrorCount = %d, want 0", got.ErrorCount)
+	}
+}
+
+func TestSynthesizeJudgeContextFromMetrics_FallsBackToProbedModel(t *testing.T) {
+	t.Parallel()
+
+	rubric, err := adk.RubricBasedFinalResponseQualityV1(0.7, nil, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("RubricBasedFinalResponseQualityV1: %v", err)
+	}
+	results := []models.RunEvalResult{{
+		EvalID:          "c1",
+		FinalEvalStatus: models.EvalStatusPassed,
+		OverallEvalMetricResults: []models.EvalMetricResult{
+			{MetricName: models.MetricRubricBasedFinalResponseQualityV1, EvalStatus: models.EvalStatusPassed},
+		},
+	}}
+
+	got := adk.SynthesizeJudgeContextFromMetrics(results, []models.EvalMetric{rubric}, "")
+	if got.Model != "gemini-2.5-flash" {
+		t.Errorf("Model = %q, want gemini-2.5-flash (probed)", got.Model)
+	}
+	if got.CallCount != 1 {
+		t.Errorf("CallCount = %d, want 1", got.CallCount)
+	}
+}
+
+func TestSynthesizeJudgeContextFromMetrics_ModelVersionVerbatim(t *testing.T) {
+	t.Parallel()
+
+	rubric, err := adk.RubricBasedFinalResponseQualityV1(0.7, nil, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("RubricBasedFinalResponseQualityV1: %v", err)
+	}
+
+	// Empty results → CallCount is 0; Model still comes from the probe;
+	// ModelVersion is used verbatim (there is no fallback source for it).
+	got := adk.SynthesizeJudgeContextFromMetrics(nil, []models.EvalMetric{rubric}, "explicit-version")
+	if got.Model != "gemini-2.5-flash" {
+		t.Errorf("Model = %q, want gemini-2.5-flash (probed)", got.Model)
+	}
+	if got.ModelVersion != "explicit-version" {
+		t.Errorf("ModelVersion = %q, want explicit-version", got.ModelVersion)
+	}
+	if got.CallCount != 0 {
+		t.Errorf("CallCount = %d, want 0 (empty results)", got.CallCount)
+	}
+}
