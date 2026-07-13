@@ -101,6 +101,52 @@ func TestAgentEvalRun_mapsMetrics(t *testing.T) {
 	}
 }
 
+func TestAgentEvalRun_rubricRationaleRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	rubricScore := 0.42
+	sr := execution.SuiteResult{
+		SuiteName: "core",
+		Cases: []execution.CaseResult{{
+			Name:      "core.eval",
+			Status:    evalspb.Status_FAILED,
+			SessionID: "sess-1",
+			Metrics: []execution.Metric{{
+				ID:        "rubric_based_final_response_quality_v1",
+				Status:    evalspb.Status_FAILED,
+				Threshold: 0.7,
+				Score:     &rubricScore,
+				Rubric: []execution.RubricScore{
+					{
+						ID:        "accuracy",
+						Status:    evalspb.Status_FAILED,
+						Score:     &rubricScore,
+						Rationale: "response paraphrased the reference correctly but omitted the source citation",
+					},
+					{
+						ID:     "no_rationale",
+						Status: evalspb.Status_PASSED,
+						Score:  ptrFloat64(0.95),
+					},
+				},
+			}},
+		}},
+	}
+
+	rubrics := AgentEvalRun(sr, "operations/op-r", "run-r").GetAgentEval().GetCases()[0].GetMetrics()[0].GetRubric()
+	if len(rubrics) != 2 {
+		t.Fatalf("rubrics = %d, want 2", len(rubrics))
+	}
+	if got, want := rubrics[0].GetRationale(), "response paraphrased the reference correctly but omitted the source citation"; got != want {
+		t.Errorf("wire rationale[0] = %q, want %q", got, want)
+	}
+	// Empty rationale must yield a nil pointer so proto readers can
+	// distinguish "not set" from an explicit empty string.
+	if rubrics[1].Rationale != nil {
+		t.Errorf("wire Rationale[1] = %v, want nil (source Rationale was empty)", rubrics[1].Rationale)
+	}
+}
+
 func TestAgentEvalRun_noJudgeWhenSuiteJudgeEmpty(t *testing.T) {
 	t.Parallel()
 

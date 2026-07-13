@@ -65,6 +65,7 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 	t.Parallel()
 
 	rubricScore := 0.3
+	rationale := "answer omitted the reference year"
 	r := models.RunEvalResult{
 		EvalID:          "case-3",
 		FinalEvalStatus: models.EvalStatusFailed,
@@ -74,8 +75,9 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 			EvalStatus: models.EvalStatusFailed,
 			Details: &models.EvalMetricResultDetails{
 				RubricScores: []models.RubricScore{{
-					RubricID: "accuracy",
-					Score:    &rubricScore,
+					RubricID:  "accuracy",
+					Score:     &rubricScore,
+					Rationale: &rationale,
 				}},
 			},
 		}},
@@ -87,6 +89,9 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 	}
 	if got.Metrics[0].Rubric[0].Status != evalspb.Status_FAILED {
 		t.Fatalf("rubric status = %v", got.Metrics[0].Rubric[0].Status)
+	}
+	if got.Metrics[0].Rubric[0].Rationale != rationale {
+		t.Fatalf("rubric rationale = %q, want %q", got.Metrics[0].Rubric[0].Rationale, rationale)
 	}
 }
 
@@ -106,6 +111,80 @@ func TestAgentEvalResultsFromRunEvalResults(t *testing.T) {
 	}
 	if proto.GetJudge().GetModel() != "gemini-2.5-pro" {
 		t.Fatalf("judge model = %q", proto.GetJudge().GetModel())
+	}
+}
+
+func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOnWire(t *testing.T) {
+	t.Parallel()
+
+	rubricScore := 0.42
+	rationale := "response paraphrased the reference correctly but omitted the source citation"
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		[]models.RunEvalResult{{
+			EvalID:          "case-1",
+			FinalEvalStatus: models.EvalStatusFailed,
+			OverallEvalMetricResults: []models.EvalMetricResult{{
+				MetricName: "rubric_based_final_response_quality_v1",
+				Threshold:  0.7,
+				EvalStatus: models.EvalStatusFailed,
+				Score:      &rubricScore,
+				Details: &models.EvalMetricResultDetails{
+					RubricScores: []models.RubricScore{{
+						RubricID:  "accuracy",
+						Score:     &rubricScore,
+						Rationale: &rationale,
+					}},
+				},
+			}},
+		}},
+		[]time.Duration{time.Second},
+		adk.JudgeContext{Model: "gemini-2.5-flash", CallCount: 1},
+	)
+
+	cases := proto.GetCases()
+	if len(cases) != 1 || len(cases[0].GetMetrics()) != 1 {
+		t.Fatalf("unexpected cases/metrics shape: %+v", cases)
+	}
+	rubrics := cases[0].GetMetrics()[0].GetRubric()
+	if len(rubrics) != 1 {
+		t.Fatalf("rubrics on wire = %d, want 1", len(rubrics))
+	}
+	if got := rubrics[0].GetRationale(); got != rationale {
+		t.Errorf("wire rationale = %q, want %q", got, rationale)
+	}
+}
+
+func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	rubricScore := 0.9
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		[]models.RunEvalResult{{
+			EvalID:          "case-1",
+			FinalEvalStatus: models.EvalStatusPassed,
+			OverallEvalMetricResults: []models.EvalMetricResult{{
+				MetricName: "rubric_based_final_response_quality_v1",
+				Threshold:  0.7,
+				EvalStatus: models.EvalStatusPassed,
+				Score:      &rubricScore,
+				Details: &models.EvalMetricResultDetails{
+					RubricScores: []models.RubricScore{{
+						RubricID: "accuracy",
+						Score:    &rubricScore,
+					}},
+				},
+			}},
+		}},
+		[]time.Duration{time.Second},
+		adk.JudgeContext{Model: "gemini-2.5-flash", CallCount: 1},
+	)
+
+	// Rationale is a proto3 optional (oneof); when unset the getter returns "",
+	// and the underlying pointer must be nil to keep the wire byte
+	// distinguishable from an explicit empty string.
+	rubrics := proto.GetCases()[0].GetMetrics()[0].GetRubric()
+	if rubrics[0].Rationale != nil {
+		t.Errorf("wire Rationale pointer = %v, want nil (source Rationale was nil)", rubrics[0].Rationale)
 	}
 }
 

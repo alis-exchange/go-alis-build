@@ -66,6 +66,8 @@ func MetricFromCheck(c execution.Check) execution.Metric {
 }
 
 // MetricFromCriterion maps an in-process judge criterion to a wire metric.
+// Per-rubric Rationale is preserved so downstream mappers can emit it on the
+// wire; see [MetricsProto].
 func MetricFromCriterion(c execution.Criterion) execution.Metric {
 	score := c.Score
 	m := execution.Metric{
@@ -79,12 +81,55 @@ func MetricFromCriterion(c execution.Criterion) execution.Metric {
 		m.Rubric = make([]execution.RubricScore, len(c.Rubric))
 		for i, r := range c.Rubric {
 			m.Rubric[i] = execution.RubricScore{
-				ID:     r.ID,
-				Status: r.Status,
+				ID:        r.ID,
+				Status:    r.Status,
+				Rationale: r.Rationale,
 			}
 		}
 	}
 	return m
+}
+
+// MetricsProto converts a slice of internal [execution.Metric] into the wire
+// proto shape emitted on [alis.evals.v1.AgentEvalResults.Case.Metric].
+//
+// Shared between the ADK adapter and the runner-level mapper so both paths
+// into the wire stay in lock-step; without this indirection a schema addition
+// (e.g. the [execution.RubricScore.Rationale] rollout) has to be applied
+// twice and can silently drift.
+//
+// Empty [execution.RubricScore.Rationale] values are elided (the proto's
+// Rationale is proto3-optional) so readers can distinguish "not provided"
+// from an explicit empty string; the same convention applies to
+// [execution.RubricScore.Score] via the *float64.
+func MetricsProto(metrics []execution.Metric) []*evalspb.AgentEvalResults_Case_Metric {
+	out := make([]*evalspb.AgentEvalResults_Case_Metric, len(metrics))
+	for i, m := range metrics {
+		wm := &evalspb.AgentEvalResults_Case_Metric{
+			Id:        m.ID,
+			Status:    m.Status,
+			Score:     m.Score,
+			Threshold: m.Threshold,
+			Message:   m.Message,
+		}
+		if len(m.Rubric) > 0 {
+			wm.Rubric = make([]*evalspb.AgentEvalResults_Case_Metric_RubricScore, len(m.Rubric))
+			for j, r := range m.Rubric {
+				wr := &evalspb.AgentEvalResults_Case_Metric_RubricScore{
+					Id:     r.ID,
+					Status: r.Status,
+					Score:  r.Score,
+				}
+				if r.Rationale != "" {
+					rationale := r.Rationale
+					wr.Rationale = &rationale
+				}
+				wm.Rubric[j] = wr
+			}
+		}
+		out[i] = wm
+	}
+	return out
 }
 
 // MetricsFromEvalLeaves converts in-process assertions and criteria to wire metrics.

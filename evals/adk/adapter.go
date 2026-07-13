@@ -7,6 +7,7 @@ import (
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
+	"go.alis.build/evals/internal/result"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -143,44 +144,14 @@ func countJudgeCalls(results []models.RunEvalResult) int64 {
 }
 
 func caseProtoFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
-	internal := CaseFromRunEvalResult(r, duration)
+	internalCase := CaseFromRunEvalResult(r, duration)
 	return &evalspb.AgentEvalResults_Case{
-		Id:        internal.Name,
-		Status:    internal.Status,
-		SessionId: internal.SessionID,
+		Id:        internalCase.Name,
+		Status:    internalCase.Status,
+		SessionId: internalCase.SessionID,
 		Duration:  durationProto(duration),
-		Metrics:   metricsProto(internal.Metrics),
+		Metrics:   result.MetricsProto(internalCase.Metrics),
 	}
-}
-
-func metricsProto(metrics []execution.Metric) []*evalspb.AgentEvalResults_Case_Metric {
-	out := make([]*evalspb.AgentEvalResults_Case_Metric, len(metrics))
-	for i, m := range metrics {
-		wm := &evalspb.AgentEvalResults_Case_Metric{
-			Id:        m.ID,
-			Status:    m.Status,
-			Threshold: m.Threshold,
-			Message:   m.Message,
-		}
-		if m.Score != nil {
-			wm.Score = m.Score
-		}
-		if len(m.Rubric) > 0 {
-			wm.Rubric = make([]*evalspb.AgentEvalResults_Case_Metric_RubricScore, len(m.Rubric))
-			for j, r := range m.Rubric {
-				wr := &evalspb.AgentEvalResults_Case_Metric_RubricScore{
-					Id:     r.ID,
-					Status: r.Status,
-				}
-				if r.Score != nil {
-					wr.Score = r.Score
-				}
-				wm.Rubric[j] = wr
-			}
-		}
-		out[i] = wm
-	}
-	return out
 }
 
 func metricFromADK(mr models.EvalMetricResult) execution.Metric {
@@ -210,6 +181,9 @@ func rubricScoreFromADK(rs models.RubricScore, threshold float64) execution.Rubr
 		out.Status = rubricStatus(*rs.Score, threshold)
 	} else {
 		out.Status = evalspb.Status_NOT_EVALUATED
+	}
+	if rs.Rationale != nil {
+		out.Rationale = *rs.Rationale
 	}
 	return out
 }

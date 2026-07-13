@@ -31,10 +31,20 @@ type Criterion struct {
 }
 
 // RubricScore is a per-dimension score within an agent eval metric.
+//
+// Rationale is the judge model's per-rubric justification, populated by
+// LLM-as-judge evaluators. Deterministic evaluators leave it empty. On
+// the wire it maps to the optional
+// [alis.evals.v1.AgentEvalResults.Case.Metric.RubricScore.rationale]
+// field; empty strings are elided from the proto by the shared metrics
+// wire converter used by both the runner-level mapper and the ADK
+// adapter, so readers can distinguish "no rationale provided" from an
+// explicit blank.
 type RubricScore struct {
-	ID     string
-	Status evalspb.Status
-	Score  *float64
+	ID        string
+	Status    evalspb.Status
+	Score     *float64
+	Rationale string
 }
 
 // Metric is one evaluated agent metric (deterministic check or judge score).

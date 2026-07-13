@@ -1,324 +1,328 @@
 [
-  {
-    "name": "name",
-    "type": "STRING"
-  },
-  {
-    "name": "batch_id",
-    "type": "STRING"
-  },
-  {
-    "name": "type",
-    "type": "STRING"
-  },
-  {
-    "name": "status",
-    "type": "STRING"
-  },
-  {
-    "fields": [
-      {
-        "fields": [
-          {
-            "name": "id",
-            "type": "STRING"
-          },
-          {
-            "name": "status",
-            "type": "STRING"
-          },
-          {
-            "fields": [
-              {
-                "name": "id",
-                "type": "STRING"
-              },
-              {
-                "name": "status",
-                "type": "STRING"
-              },
-              {
-                "name": "message",
-                "type": "STRING"
-              }
-            ],
-            "mode": "REPEATED",
-            "name": "checks",
-            "type": "RECORD"
-          },
-          {
-            "name": "duration",
-            "type": "STRING"
-          }
-        ],
-        "mode": "REPEATED",
-        "name": "cases",
-        "type": "RECORD"
-      }
-    ],
-    "name": "integration_test",
-    "type": "RECORD"
-  },
-  {
-    "fields": [
-      {
-        "fields": [
-          {
-            "name": "id",
-            "type": "STRING"
-          },
-          {
-            "name": "status",
-            "type": "STRING"
-          },
-          {
-            "fields": [
-              {
-                "name": "mode",
-                "type": "STRING"
-              },
-              {
-                "name": "target_qps",
-                "type": "FLOAT"
-              },
-              {
-                "name": "concurrency",
-                "type": "INTEGER"
-              },
-              {
-                "name": "duration",
-                "type": "STRING"
-              },
-              {
-                "name": "request_count",
-                "type": "INTEGER"
-              },
-              {
-                "name": "error_count",
-                "type": "INTEGER"
-              },
-              {
-                "name": "actual_qps",
-                "type": "FLOAT"
-              },
-              {
-                "fields": [
-                  {
-                    "name": "p50_ms",
-                    "type": "FLOAT"
-                  },
-                  {
-                    "name": "p95_ms",
-                    "type": "FLOAT"
-                  },
-                  {
-                    "name": "p99_ms",
-                    "type": "FLOAT"
-                  },
-                  {
-                    "name": "min_ms",
-                    "type": "FLOAT"
-                  },
-                  {
-                    "name": "mean_ms",
-                    "type": "FLOAT"
-                  },
-                  {
-                    "name": "max_ms",
-                    "type": "FLOAT"
-                  }
-                ],
-                "name": "latency",
-                "type": "RECORD"
-              },
-              {
-                "fields": [
-                  {
-                    "name": "key",
-                    "type": "STRING"
-                  },
-                  {
-                    "name": "value",
-                    "type": "INTEGER"
-                  }
-                ],
-                "mode": "REPEATED",
-                "name": "errors_by_code",
-                "type": "RECORD"
-              }
-            ],
-            "name": "summary",
-            "type": "RECORD"
-          },
-          {
-            "fields": [
-              {
-                "name": "id",
-                "type": "STRING"
-              },
-              {
-                "name": "status",
-                "type": "STRING"
-              },
-              {
-                "name": "message",
-                "type": "STRING"
-              },
-              {
-                "name": "observed",
-                "type": "FLOAT"
-              },
-              {
-                "name": "limit",
-                "type": "FLOAT"
-              },
-              {
-                "name": "unit",
-                "type": "STRING"
-              }
-            ],
-            "mode": "REPEATED",
-            "name": "checks",
-            "type": "RECORD"
-          }
-        ],
-        "mode": "REPEATED",
-        "name": "cases",
-        "type": "RECORD"
-      }
-    ],
-    "name": "load_test",
-    "type": "RECORD"
-  },
-  {
-    "fields": [
-      {
-        "fields": [
-          {
-            "name": "id",
-            "type": "STRING"
-          },
-          {
-            "name": "status",
-            "type": "STRING"
-          },
-          {
-            "name": "duration",
-            "type": "STRING"
-          },
-          {
-            "name": "session_id",
-            "type": "STRING"
-          },
-          {
-            "fields": [
-              {
-                "name": "id",
-                "type": "STRING"
-              },
-              {
-                "name": "status",
-                "type": "STRING"
-              },
-              {
-                "name": "score",
-                "type": "FLOAT"
-              },
-              {
-                "name": "threshold",
-                "type": "FLOAT"
-              },
-              {
-                "name": "message",
-                "type": "STRING"
-              },
-              {
-                "fields": [
-                  {
-                    "name": "id",
-                    "type": "STRING"
-                  },
-                  {
-                    "name": "status",
-                    "type": "STRING"
-                  },
-                  {
-                    "name": "score",
-                    "type": "FLOAT"
-                  }
-                ],
-                "mode": "REPEATED",
-                "name": "rubric",
-                "type": "RECORD"
-              }
-            ],
-            "mode": "REPEATED",
-            "name": "metrics",
-            "type": "RECORD"
-          }
-        ],
-        "mode": "REPEATED",
-        "name": "cases",
-        "type": "RECORD"
-      },
-      {
-        "fields": [
-          {
-            "name": "model",
-            "type": "STRING"
-          },
-          {
-            "name": "model_version",
-            "type": "STRING"
-          },
-          {
-            "name": "judge_call_count",
-            "type": "INTEGER"
-          },
-          {
-            "name": "judge_error_count",
-            "type": "INTEGER"
-          }
-        ],
-        "name": "judge",
-        "type": "RECORD"
-      }
-    ],
-    "name": "agent_eval",
-    "type": "RECORD"
-  },
-  {
-    "name": "start_time",
-    "type": "TIMESTAMP"
-  },
-  {
-    "name": "end_time",
-    "type": "TIMESTAMP"
-  },
-  {
-    "name": "operation",
-    "type": "STRING"
-  },
-  {
-    "fields": [
-      {
-        "name": "code",
-        "type": "INTEGER"
-      },
-      {
-        "name": "message",
+    {
+        "name": "name",
         "type": "STRING"
-      }
-    ],
-    "name": "error",
-    "type": "RECORD"
-  },
-  {
-    "name": "create_time",
-    "type": "TIMESTAMP"
-  },
-  {
-    "name": "google_project_id",
-    "type": "STRING"
-  }
+    },
+    {
+        "name": "batch_id",
+        "type": "STRING"
+    },
+    {
+        "name": "type",
+        "type": "STRING"
+    },
+    {
+        "name": "status",
+        "type": "STRING"
+    },
+    {
+        "fields": [
+            {
+                "fields": [
+                    {
+                        "name": "id",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "status",
+                        "type": "STRING"
+                    },
+                    {
+                        "fields": [
+                            {
+                                "name": "id",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "status",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "message",
+                                "type": "STRING"
+                            }
+                        ],
+                        "mode": "REPEATED",
+                        "name": "checks",
+                        "type": "RECORD"
+                    },
+                    {
+                        "name": "duration",
+                        "type": "STRING"
+                    }
+                ],
+                "mode": "REPEATED",
+                "name": "cases",
+                "type": "RECORD"
+            }
+        ],
+        "name": "integration_test",
+        "type": "RECORD"
+    },
+    {
+        "fields": [
+            {
+                "fields": [
+                    {
+                        "name": "id",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "status",
+                        "type": "STRING"
+                    },
+                    {
+                        "fields": [
+                            {
+                                "name": "mode",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "target_qps",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "name": "concurrency",
+                                "type": "INTEGER"
+                            },
+                            {
+                                "name": "duration",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "request_count",
+                                "type": "INTEGER"
+                            },
+                            {
+                                "name": "error_count",
+                                "type": "INTEGER"
+                            },
+                            {
+                                "name": "actual_qps",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "fields": [
+                                    {
+                                        "name": "p50_ms",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "p95_ms",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "p99_ms",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "min_ms",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "mean_ms",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "max_ms",
+                                        "type": "FLOAT"
+                                    }
+                                ],
+                                "name": "latency",
+                                "type": "RECORD"
+                            },
+                            {
+                                "fields": [
+                                    {
+                                        "name": "key",
+                                        "type": "STRING"
+                                    },
+                                    {
+                                        "name": "value",
+                                        "type": "INTEGER"
+                                    }
+                                ],
+                                "mode": "REPEATED",
+                                "name": "errors_by_code",
+                                "type": "RECORD"
+                            }
+                        ],
+                        "name": "summary",
+                        "type": "RECORD"
+                    },
+                    {
+                        "fields": [
+                            {
+                                "name": "id",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "status",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "message",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "observed",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "name": "limit",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "name": "unit",
+                                "type": "STRING"
+                            }
+                        ],
+                        "mode": "REPEATED",
+                        "name": "checks",
+                        "type": "RECORD"
+                    }
+                ],
+                "mode": "REPEATED",
+                "name": "cases",
+                "type": "RECORD"
+            }
+        ],
+        "name": "load_test",
+        "type": "RECORD"
+    },
+    {
+        "fields": [
+            {
+                "fields": [
+                    {
+                        "name": "id",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "status",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "duration",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "session_id",
+                        "type": "STRING"
+                    },
+                    {
+                        "fields": [
+                            {
+                                "name": "id",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "status",
+                                "type": "STRING"
+                            },
+                            {
+                                "name": "score",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "name": "threshold",
+                                "type": "FLOAT"
+                            },
+                            {
+                                "name": "message",
+                                "type": "STRING"
+                            },
+                            {
+                                "fields": [
+                                    {
+                                        "name": "id",
+                                        "type": "STRING"
+                                    },
+                                    {
+                                        "name": "status",
+                                        "type": "STRING"
+                                    },
+                                    {
+                                        "name": "score",
+                                        "type": "FLOAT"
+                                    },
+                                    {
+                                        "name": "rationale",
+                                        "type": "STRING"
+                                    }
+                                ],
+                                "mode": "REPEATED",
+                                "name": "rubric",
+                                "type": "RECORD"
+                            }
+                        ],
+                        "mode": "REPEATED",
+                        "name": "metrics",
+                        "type": "RECORD"
+                    }
+                ],
+                "mode": "REPEATED",
+                "name": "cases",
+                "type": "RECORD"
+            },
+            {
+                "fields": [
+                    {
+                        "name": "model",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "model_version",
+                        "type": "STRING"
+                    },
+                    {
+                        "name": "judge_call_count",
+                        "type": "INTEGER"
+                    },
+                    {
+                        "name": "judge_error_count",
+                        "type": "INTEGER"
+                    }
+                ],
+                "name": "judge",
+                "type": "RECORD"
+            }
+        ],
+        "name": "agent_eval",
+        "type": "RECORD"
+    },
+    {
+        "name": "start_time",
+        "type": "TIMESTAMP"
+    },
+    {
+        "name": "end_time",
+        "type": "TIMESTAMP"
+    },
+    {
+        "name": "operation",
+        "type": "STRING"
+    },
+    {
+        "fields": [
+            {
+                "name": "code",
+                "type": "INTEGER"
+            },
+            {
+                "name": "message",
+                "type": "STRING"
+            }
+        ],
+        "name": "error",
+        "type": "RECORD"
+    },
+    {
+        "name": "create_time",
+        "type": "TIMESTAMP"
+    },
+    {
+        "name": "google_project_id",
+        "type": "STRING"
+    }
 ]

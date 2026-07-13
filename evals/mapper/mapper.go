@@ -5,6 +5,7 @@ import (
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
+	"go.alis.build/evals/internal/result"
 	"go.alis.build/evals/runner"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -146,7 +147,7 @@ func agentEvalData(sr execution.SuiteResult) *evalspb.AgentEvalResults {
 			Id:        c.Name,
 			Status:    c.Status,
 			SessionId: c.SessionID,
-			Metrics:   mapMetrics(c.Metrics),
+			Metrics:   result.MetricsProto(c.Metrics),
 			Duration:  durationpb.New(c.Duration),
 		})
 	}
@@ -183,32 +184,3 @@ func mapChecks(checks []execution.Check) []*evalspb.IntegrationTestResults_Case_
 	return out
 }
 
-func mapMetrics(metrics []execution.Metric) []*evalspb.AgentEvalResults_Case_Metric {
-	out := make([]*evalspb.AgentEvalResults_Case_Metric, len(metrics))
-	for i, m := range metrics {
-		wm := &evalspb.AgentEvalResults_Case_Metric{
-			Id:        m.ID,
-			Status:    m.Status,
-			Threshold: m.Threshold,
-			Message:   m.Message,
-		}
-		if m.Score != nil {
-			wm.Score = m.Score
-		}
-		if len(m.Rubric) > 0 {
-			wm.Rubric = make([]*evalspb.AgentEvalResults_Case_Metric_RubricScore, len(m.Rubric))
-			for j, r := range m.Rubric {
-				wr := &evalspb.AgentEvalResults_Case_Metric_RubricScore{
-					Id:     r.ID,
-					Status: r.Status,
-				}
-				if r.Score != nil {
-					wr.Score = r.Score
-				}
-				wm.Rubric[j] = wr
-			}
-		}
-		out[i] = wm
-	}
-	return out
-}
