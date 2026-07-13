@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/bigquery v1.77.0
 	cloud.google.com/go/pubsub/v2 v2.6.1
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
-	go.alis.build/adk/launchers v1.0.5
+	go.alis.build/adk/launchers v1.0.7
 	go.alis.build/alog v0.1.0
 	go.alis.build/common v1.1.11
 	go.einride.tech/protobuf-bigquery v0.29.0
