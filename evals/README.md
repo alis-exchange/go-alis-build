@@ -20,6 +20,7 @@ Pub/Sub or BigQuery pin that module directly.
 2. [Concepts](#concepts)
 3. [Wire types](#wire-types)
 4. [Integration tests](#integration-tests)
+   - [Streaming RPCs](#streaming-rpcs)
 5. [Agent evaluations](#agent-evaluations)
 6. [Load tests](#load-tests)
 7. [Options reference](#options-reference)
@@ -353,6 +354,90 @@ t.Check("shape", r.Resp.GetName() != "")
 outcomes.
 
 **StopOnFailure.** For stateful flows (create → get → update → delete), `evals.StopOnFailure()` on the suite marks all subsequent cases `NOT_EVALUATED` once any case fails.
+
+### Streaming RPCs
+
+**When to use which helper:**
+
+- **Unary `Call`** — single request/response RPCs (and client-streaming when split timing is not needed).
+- **`CallServerStream`** — bounded server-streaming RPCs that terminate with EOF.
+- **`CallClientStream`** — client-streaming RPCs where send-side vs response-side timing matters.
+
+Use `evals.CallServerStream` for bounded server-streaming RPCs. The helper drains messages until EOF or error and captures TTFB, total duration, and inter-message gaps uniformly:
+
+```go
+res := evals.CallServerStream(ctx, func(ctx context.Context) (grpc.ServerStreamingClient[examplepb.Event], error) {
+    return clients.Example.WatchEvents(ctx, req)
+})
+if !t.NoErr("grpc", res.Err) { return }
+if len(res.Messages) > 0 {
+    t.Max("ttfb", res.TTFB, 100*time.Millisecond)
+}
+t.Max("total", res.TotalDuration, 2*time.Second)
+t.Check("count", len(res.Messages) == 5)
+// MessageIntervals[i] spans Messages[i] → Messages[i+1]; length is max(0, len(Messages)-1).
+if len(res.MessageIntervals) > 0 {
+    t.Max("gap-0", res.MessageIntervals[0], 500*time.Millisecond)
+}
+```
+
+**TTFB is 0 when no message is received** — always guard with `len(res.Messages) > 0` before asserting on TTFB. TTFB includes stream-open cost (client-perceived latency).
+
+**Do not use `CallServerStream` on watch/subscribe RPCs that never send EOF** — the call blocks until context cancellation. Use a context deadline to bound execution.
+
+If `Recv` returns a nil message with nil error, `Err` is set and any messages received so far are preserved.
+
+Use `evals.CallClientStream` for client-streaming RPCs when you need split send vs response timing:
+
+```go
+r := evals.CallClientStream(ctx,
+    func(ctx context.Context) (grpc.ClientStreamingClient[examplepb.Chunk, examplepb.UploadResult], error) {
+        return clients.Example.Upload(ctx)
+    },
+    func(stream grpc.ClientStreamingClient[examplepb.Chunk, examplepb.UploadResult]) (examplepb.UploadResult, error) {
+        for _, chunk := range chunks {
+            if err := stream.Send(chunk); err != nil {
+                return examplepb.UploadResult{}, err
+            }
+        }
+        resp, err := stream.CloseAndRecv()
+        if err != nil {
+            return examplepb.UploadResult{}, err
+        }
+        return *resp, nil
+    },
+)
+if !t.NoErr("grpc", r.Err) { return }
+t.Max("send", r.SendDuration, 500*time.Millisecond)
+t.Max("response", r.ResponseLatency, 200*time.Millisecond)
+```
+
+**`SendDuration` includes `openFn` cost** (consistent with server TTFB). **`ResponseLatency` is 0** when `CloseAndRecv` was never reached (for example after a send error).
+
+`TotalDuration` may exceed `SendDuration + ResponseLatency` because overhead between the last `Send` and `CloseAndRecv` is author code, not stream I/O. Unary `Call` remains appropriate when split timing is not needed.
+
+#### Result types
+
+**`ServerStreamResult[T]`**
+
+| Field | Meaning |
+| ----- | ------- |
+| `Messages` | All successfully received messages (partial on recv error). |
+| `Err` | Transport error; nil on clean EOF. Set on nil-message `Recv`. |
+| `TTFB` | Start through first message; includes `openFn`. **0 when empty.** |
+| `TotalDuration` | Wall clock from start through recv loop exit. |
+| `MessageIntervals` | Gap between consecutive messages; `len = max(0, len(Messages)-1)`. |
+
+**`ClientStreamResult[Resp]`**
+
+| Field | Meaning |
+| ----- | ------- |
+| `Resp` | Final response from `sendFn` (partial value preserved on error). |
+| `Err` | Transport or sendFn error. |
+| `SendDuration` | Start through last successful Send (includes `openFn`). |
+| `ResponseLatency` | `CloseAndRecv` entry through return; 0 if never reached. |
+| `TotalDuration` | Wall clock through `sendFn` return. |
+| `MessagesSent` | Count of successful Sends. |
 
 ---
 
@@ -922,6 +1007,10 @@ to a gRPC status by the RPC handlers.
 | Function                                                                            | Purpose                                                                                                                 |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `evals.Call[T](ctx context.Context, fn func(context.Context) (T, error)) Result[T]` | Invoke an RPC, capture typed response, error, and wall-clock latency. Records nothing on `T` — assertions are explicit. |
+| `evals.CallServerStream[T](ctx, openFn) ServerStreamResult[T]` | Drain a bounded server stream; capture messages, TTFB (0 when empty), total duration, and inter-message intervals. |
+| `evals.CallClientStream[Req, Resp](ctx, openFn, sendFn) ClientStreamResult[Resp]` | Client-streaming with split send/response timing and message count. |
+| `evals.ServerStreamResult[T]` | `{Messages []T, Err, TTFB, TotalDuration, MessageIntervals}`. |
+| `evals.ClientStreamResult[Resp]` | `{Resp, Err, SendDuration, ResponseLatency, TotalDuration, MessagesSent}`. |
 | `evals.Result[T]`                                                                   | `{Resp T, Err error, Latency time.Duration}`.                                                                           |
 | `evals.Rouge1F1(hypothesis, reference string) float64`                              | Deterministic ROUGE-1 unigram F1 scorer. Empty-empty → 1; one-empty → 0. Feed into `t.Score`.                           |
 | `evals.DefaultLoadProfile(mode evalspb.RunLoadTestRequest_Mode) (Profile, bool)`    | Look up the framework default profile for `mode`. Returns `(zero, false)` for `MODE_UNSPECIFIED`.                       |
@@ -1013,7 +1102,7 @@ callers pass into their own token source when building the transport.
 
 | Path                    | Role                                                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions. |
+| `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `CallServerStream`, `CallClientStream`, `Rouge1F1`, SLO constructors, registration functions. See also `stream_server.go` and `stream_client.go`. |
 | `evals/adk`             | ADK evaluation-launcher client (transport-agnostic) and lazy `AgentEvalProvider`.                                                        |
 | `evals/env`             | Shared environment registration and activation.                                                                                          |
 | `evals/errors`          | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                               |

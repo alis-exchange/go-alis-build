@@ -31,8 +31,8 @@ func TestProfile_Validate(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error")
 				}
-				if !errors.Is(err, ErrInvalidProfile) {
-					t.Fatalf("err = %v, want wrapped ErrInvalidProfile", err)
+				if !errors.Is(err, ErrInvalidProfile{}) {
+					t.Fatalf("err = %v, want ErrInvalidProfile", err)
 				}
 				return
 			}

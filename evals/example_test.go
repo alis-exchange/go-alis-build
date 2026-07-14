@@ -2,10 +2,13 @@ package evals_test
 
 import (
 	"context"
+	"io"
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // fakeItem stands in for a caller's typed protobuf response so the examples
@@ -45,6 +48,101 @@ func ExampleCall() {
 	})
 	// evals.RegisterIntegration(s) — omitted to keep the example
 	// side-effect free.
+	_ = s
+}
+
+type exampleStreamBase struct {
+	ctx context.Context
+}
+
+func (b exampleStreamBase) Header() (metadata.MD, error) { return nil, nil }
+func (b exampleStreamBase) Trailer() metadata.MD         { return nil }
+func (b exampleStreamBase) CloseSend() error             { return nil }
+func (b exampleStreamBase) Context() context.Context {
+	if b.ctx != nil {
+		return b.ctx
+	}
+	return context.Background()
+}
+func (b exampleStreamBase) SendMsg(any) error { return nil }
+func (b exampleStreamBase) RecvMsg(any) error { return nil }
+
+type exampleServerStream struct {
+	exampleStreamBase
+	msgs []string
+	idx  int
+}
+
+func (s *exampleServerStream) Recv() (*string, error) {
+	if s.idx >= len(s.msgs) {
+		return nil, io.EOF
+	}
+	msg := s.msgs[s.idx]
+	s.idx++
+	return &msg, nil
+}
+
+type exampleClientStream struct {
+	exampleStreamBase
+}
+
+func (s *exampleClientStream) Send(*string) error { return nil }
+func (s *exampleClientStream) CloseAndRecv() (*string, error) {
+	resp := "ok"
+	return &resp, nil
+}
+
+// ExampleCallServerStream shows how to drain a bounded server stream and
+// assert on captured timing fields.
+func ExampleCallServerStream() {
+	s := evals.MustNewIntegrationSuite("example-v1")
+	s.MustCase("watch-events", func(ctx context.Context, t *evals.T) {
+		res := evals.CallServerStream(ctx, func(ctx context.Context) (grpc.ServerStreamingClient[string], error) {
+			return &exampleServerStream{
+				exampleStreamBase: exampleStreamBase{ctx: ctx},
+				msgs:              []string{"created", "updated"},
+			}, nil
+		})
+		if !t.NoErr("grpc", res.Err) {
+			return
+		}
+		if len(res.Messages) > 0 {
+			t.Max("ttfb", res.TTFB, time.Second)
+		}
+		t.Max("total", res.TotalDuration, time.Second)
+		// MessageIntervals[i] is the gap between Messages[i] and Messages[i+1].
+		t.Check("count", len(res.Messages) == 2)
+	})
+	_ = s
+}
+
+// ExampleCallClientStream shows client-streaming with split send and response timing.
+func ExampleCallClientStream() {
+	s := evals.MustNewIntegrationSuite("example-v1")
+	s.MustCase("upload", func(ctx context.Context, t *evals.T) {
+		r := evals.CallClientStream(ctx,
+			func(ctx context.Context) (grpc.ClientStreamingClient[string, string], error) {
+				return &exampleClientStream{exampleStreamBase: exampleStreamBase{ctx: ctx}}, nil
+			},
+			func(stream grpc.ClientStreamingClient[string, string]) (string, error) {
+				chunk := "data"
+				if err := stream.Send(&chunk); err != nil {
+					return "", err
+				}
+				resp, err := stream.CloseAndRecv()
+				if err != nil {
+					return "", err
+				}
+				return *resp, nil
+			},
+		)
+		if !t.NoErr("grpc", r.Err) {
+			return
+		}
+		t.Max("send", r.SendDuration, time.Second)
+		t.Max("response", r.ResponseLatency, time.Second)
+		t.Check("result", r.Resp == "ok")
+	})
 	_ = s
 }
 

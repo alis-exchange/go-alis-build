@@ -103,3 +103,37 @@ func (e ErrWrongSuiteKind) Is(target error) bool {
 func (e ErrWrongSuiteKind) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
+
+// ErrNilStream is returned when openFn succeeds but returns a nil stream
+// with a nil error.
+type ErrNilStream struct{}
+
+func (e ErrNilStream) Error() string {
+	return "evals: openFn returned nil stream"
+}
+
+func (e ErrNilStream) Is(target error) bool {
+	var err ErrNilStream
+	return errors.As(target, &err)
+}
+
+func (e ErrNilStream) GRPCStatus() *status.Status {
+	return status.New(codes.Internal, e.Error())
+}
+
+// ErrNilStreamMessage is returned when Recv returns a nil message with a
+// nil error on a server stream.
+type ErrNilStreamMessage struct{}
+
+func (e ErrNilStreamMessage) Error() string {
+	return "evals: server stream Recv returned nil message"
+}
+
+func (e ErrNilStreamMessage) Is(target error) bool {
+	var err ErrNilStreamMessage
+	return errors.As(target, &err)
+}
+
+func (e ErrNilStreamMessage) GRPCStatus() *status.Status {
+	return status.New(codes.Internal, e.Error())
+}

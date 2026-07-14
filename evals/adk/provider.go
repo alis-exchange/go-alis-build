@@ -2,7 +2,6 @@ package adk
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"go.alis.build/evals/execution"
@@ -50,10 +49,10 @@ func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 // Run discovers eval sets, runs filtered cases, and returns suite results.
 func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.SuiteResult, error) {
 	if p == nil {
-		return nil, fmt.Errorf("adk provider: nil provider")
+		return nil, ErrNilProvider{}
 	}
 	if p.agent.BaseURL == "" || p.agent.AppName == "" {
-		return nil, fmt.Errorf("adk provider: base URL and app name are required")
+		return nil, ErrMissingProviderConfig{}
 	}
 
 	client, err := p.newClient(ctx, p.agent.BaseURL, p.agent.pathPrefix())
@@ -63,7 +62,7 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 
 	setIDs, err := client.ListEvalSets(ctx, p.agent.AppName)
 	if err != nil {
-		return nil, fmt.Errorf("list eval sets: %w", err)
+		return nil, ErrListEvalSets{Err: err}
 	}
 
 	parsed, err := suite.ParseFilterPaths(filters)
@@ -95,7 +94,7 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 		results, err := client.RunEval(ctx, params)
 		end := time.Now()
 		if err != nil {
-			return nil, fmt.Errorf("run_eval %s: %w", setID, err)
+			return nil, ErrRunEval{SetID: setID, Err: err}
 		}
 
 		each := end.Sub(start) / time.Duration(max(len(results), 1))

@@ -61,6 +61,10 @@ t.Check("has-name", r.Resp.GetName() != "")
 Load cases do not use `T`. Their assertions are declared as
 [SLOs](/api/slo-constructors.md) alongside the `Target` function.
 
+For gRPC streaming RPCs, use [`CallServerStream`](/api/helpers.md#streaming-helpers)
+and [`CallClientStream`](/api/helpers.md#streaming-helpers) instead of
+unary `Call`.
+
 # Why three kinds under one framework
 
 The three kinds share far more than they differ:

@@ -1,7 +1,6 @@
 package adk
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -22,7 +21,7 @@ func hostFromBaseURL(baseURL string) (string, error) {
 	s = strings.TrimPrefix(s, "https://")
 	s = strings.TrimPrefix(s, "http://")
 	if s == "" {
-		return "", fmt.Errorf("adk: empty base URL")
+		return "", ErrEmptyBaseURL{}
 	}
 	if i := strings.IndexByte(s, '/'); i >= 0 {
 		s = s[:i]
@@ -31,7 +30,7 @@ func hostFromBaseURL(baseURL string) (string, error) {
 		s = s[:i]
 	}
 	if s == "" {
-		return "", fmt.Errorf("adk: invalid base URL %q", baseURL)
+		return "", ErrInvalidBaseURL{URL: baseURL}
 	}
 	return s, nil
 }

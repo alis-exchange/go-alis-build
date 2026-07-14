@@ -2,7 +2,6 @@ package loadgen
 
 import (
 	"context"
-	"fmt"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -55,7 +54,7 @@ type sample struct {
 // produce a returned error (with partial metrics for ctx cancellation).
 func (g *inProcess) Run(ctx context.Context, p Profile, target Target) (*Metrics, error) {
 	if target == nil {
-		return nil, fmt.Errorf("loadgen: nil target")
+		return nil, ErrNilTarget{}
 	}
 	if err := p.validate(); err != nil {
 		return nil, err
@@ -168,7 +167,7 @@ func invokeTarget(ctx context.Context, target Target) (latency time.Duration, er
 	defer func() {
 		latency = time.Since(start)
 		if v := recover(); v != nil {
-			err = fmt.Errorf("target panic: %v\n%s", v, debug.Stack())
+			err = ErrTargetPanic{Value: v, Stack: string(debug.Stack())}
 		}
 	}()
 	err = target(ctx)

@@ -61,15 +61,15 @@ func ensureTableWith(ctx context.Context, prov tableProvisioner, datasetID, tabl
 
 	if err := prov.datasetMetadata(ctx); err != nil {
 		if isNotFound(err) {
-			return fmt.Errorf("bigquery dataset %q does not exist; create the dataset (e.g. via Terraform or `bq mk`) before starting the reporter", datasetID)
+			return ErrDatasetNotFound{DatasetID: datasetID}
 		}
-		return fmt.Errorf("bigquery dataset %q metadata: %w", datasetID, err)
+		return ErrDatasetMetadata{DatasetID: datasetID, Err: err}
 	}
 
 	meta, err := prov.tableMetadata(ctx)
 	if err != nil {
 		if !isNotFound(err) {
-			return fmt.Errorf("bigquery table %s metadata: %w", qualified, err)
+			return ErrTableMetadata{Qualified: qualified, Err: err}
 		}
 		create := &bigquery.TableMetadata{}
 		if tableMD != nil {
@@ -77,14 +77,14 @@ func ensureTableWith(ctx context.Context, prov tableProvisioner, datasetID, tabl
 		}
 		create.Schema = schema
 		if err := prov.createTable(ctx, create); err != nil {
-			return fmt.Errorf("create bigquery table %s: %w", qualified, err)
+			return ErrCreateTable{Qualified: qualified, Err: err}
 		}
 		alog.Infof(ctx, "bqschema: created table %s", qualified)
 		return nil
 	}
 
 	if err := prov.updateSchemaAdditive(ctx, schema, meta.ETag); err != nil {
-		return fmt.Errorf("update bigquery table %s schema (additive changes only): %w", qualified, err)
+		return ErrUpdateTableSchema{Qualified: qualified, Err: err}
 	}
 	alog.Debugf(ctx, "bqschema: ensured schema for table %s", qualified)
 	return nil

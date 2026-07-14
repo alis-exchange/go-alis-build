@@ -299,7 +299,7 @@ func (r *Runner) RunLoadSuites(
 		return nil, err
 	}
 	if resolve == nil {
-		return nil, fmt.Errorf("runner: nil load profile resolver")
+		return nil, ErrNilLoadProfileResolver{}
 	}
 
 	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectLoadEnvironmentNames(runs))
@@ -399,13 +399,14 @@ func (r *Runner) RunLoadSuites(
 func runLoadCaseWithRecovery(ctx context.Context, c suite.LoadCase, mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile) (r *execution.LoadCaseResult) {
 	defer func() {
 		if v := recover(); v != nil {
+			panicErr := ErrCasePanic{Value: v, Stack: string(debug.Stack())}
 			r = &execution.LoadCaseResult{
 				Name:   c.Name(),
 				Status: evalspb.Status_FAILED,
 				Checks: []execution.SloCheckResult{{
 					ID:      result.CaseErrorCheckName,
 					Status:  evalspb.Status_FAILED,
-					Message: fmt.Sprintf("panic: %v\n%s", v, debug.Stack()),
+					Message: panicErr.Error(),
 				}},
 			}
 		}
@@ -418,7 +419,7 @@ func runLoadCaseWithRecovery(ctx context.Context, c suite.LoadCase, mode evalspb
 func runTestCaseWithRecovery(ctx context.Context, c suite.TestCase) (r *execution.CaseResult) {
 	defer func() {
 		if v := recover(); v != nil {
-			r = result.CaseErrorResult(c.Name(), fmt.Errorf("panic: %v\n%s", v, debug.Stack()))
+			r = result.CaseErrorResult(c.Name(), ErrCasePanic{Value: v, Stack: string(debug.Stack())})
 		}
 	}()
 	return c.Run(ctx)
@@ -429,7 +430,7 @@ func runTestCaseWithRecovery(ctx context.Context, c suite.TestCase) (r *executio
 func runEvalCaseWithRecovery(ctx context.Context, c suite.EvalCase) (r *execution.CaseResult) {
 	defer func() {
 		if v := recover(); v != nil {
-			r = result.EvalCaseErrorResult(c.Name(), fmt.Errorf("panic: %v\n%s", v, debug.Stack()))
+			r = result.EvalCaseErrorResult(c.Name(), ErrCasePanic{Value: v, Stack: string(debug.Stack())})
 		}
 	}()
 	return c.Run(ctx)
