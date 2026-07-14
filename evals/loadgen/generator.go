@@ -70,9 +70,10 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	var dropped atomic.Int64
 	var inFlight atomic.Int32
 
-	measurementStart := time.Time{}
-	measurementEnd := time.Time{}
-	agg := newAggregator(&measurementStart, &measurementEnd, p.Duration, 0)
+	start := time.Now()
+	measurementStart := start.Add(p.Warmup)
+	measurementEnd := measurementStart.Add(p.Duration)
+	agg := newAggregator(measurementStart, measurementEnd, p.Duration, 0)
 	aggDone := make(chan *Metrics, 1)
 	go func() {
 		aggDone <- agg.consume(samples)
@@ -114,10 +115,6 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	for i := 0; i < p.initialConcurrency(); i++ {
 		startWorker(i)
 	}
-
-	start := time.Now()
-	measurementStart = start.Add(p.Warmup)
-	measurementEnd = measurementStart.Add(p.Duration)
 
 	maxConc := int32(p.MaxConcurrency())
 
@@ -231,8 +228,8 @@ func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check Abort
 }
 
 type aggregator struct {
-	measurementStart *time.Time
-	measurementEnd   *time.Time
+	measurementStart time.Time
+	measurementEnd   time.Time
 	measureFor       time.Duration
 	dropped          int64
 
@@ -251,7 +248,7 @@ type aggregator struct {
 	messagesTotal int64
 }
 
-func newAggregator(measurementStart, measurementEnd *time.Time, measureFor time.Duration, dropped int64) *aggregator {
+func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.Duration, dropped int64) *aggregator {
 	return &aggregator{
 		measurementStart: measurementStart,
 		measurementEnd:   measurementEnd,
@@ -285,10 +282,10 @@ func (a *aggregator) finalize() *Metrics {
 }
 
 func (a *aggregator) record(s sample) {
-	if a.measurementStart.IsZero() || s.sentAt.Before(*a.measurementStart) {
+	if a.measurementStart.IsZero() || s.sentAt.Before(a.measurementStart) {
 		return
 	}
-	if !a.measurementEnd.IsZero() && !s.sentAt.Before(*a.measurementEnd) {
+	if !a.measurementEnd.IsZero() && !s.sentAt.Before(a.measurementEnd) {
 		return
 	}
 	a.mu.Lock()
@@ -470,11 +467,6 @@ func invokeTarget(ctx context.Context, target ResultTarget, data CallData) (late
 	}()
 	result = target(ctx, data)
 	return
-}
-
-// aggregate drains samples into metrics. Kept for tests that call it directly.
-func aggregate(samples <-chan sample, measurementStart, measurementEnd *time.Time, measureFor time.Duration, dropped int64) *Metrics {
-	return newAggregator(measurementStart, measurementEnd, measureFor, dropped).consume(samples)
 }
 
 // errorCode returns the canonical gRPC status code name for err. Errors that

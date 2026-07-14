@@ -269,10 +269,7 @@ func (a *loadCaseAdapter) resolveData(data CallData) (any, error) {
 	if len(a.data) == 0 {
 		return nil, nil
 	}
-	idx := int(data.RequestNumber-1) % len(a.data)
-	if idx < 0 {
-		idx = 0
-	}
+	idx := int((data.RequestNumber - 1) % uint64(len(a.data)))
 	return a.data[idx], nil
 }
 
