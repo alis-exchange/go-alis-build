@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ func FuzzAggregatorRecordFinalize(f *testing.F) {
 	f.Add(int64(1000), false, false, int32(0), uint8(5))
 
 	f.Fuzz(func(t *testing.T, latencyUs int64, hasTransportErr bool, hasStream bool, messages int32, sampleCount uint8) {
-		if latencyUs < 0 {
+		if latencyUs < 0 || latencyUs > math.MaxInt64/int64(time.Microsecond) {
 			return
 		}
 		if messages < 0 {

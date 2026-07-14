@@ -57,7 +57,7 @@ func FuzzStepStagePacer_expectedHitsMonotonic(f *testing.F) {
 			elapsed1Ms, elapsed2Ms = elapsed2Ms, elapsed1Ms
 		}
 
-		total := time.Duration(seg1Ms+seg2Ms) * time.Millisecond
+		total := (time.Duration(seg1Ms) + time.Duration(seg2Ms)) * time.Millisecond
 		p := StepStagePacer{
 			Stages: []Stage{
 				{Duration: time.Duration(seg1Ms) * time.Millisecond, Target: qps1},
@@ -96,7 +96,7 @@ func FuzzLinearStagePacer_expectedHitsMonotonic(f *testing.F) {
 			elapsed1Ms, elapsed2Ms = elapsed2Ms, elapsed1Ms
 		}
 
-		total := time.Duration(seg1Ms+seg2Ms) * time.Millisecond
+		total := (time.Duration(seg1Ms) + time.Duration(seg2Ms)) * time.Millisecond
 		p := LinearStagePacer{
 			Stages: []Stage{
 				{Duration: time.Duration(seg1Ms) * time.Millisecond, Target: startQPS},

@@ -21,7 +21,7 @@ func FuzzLoadRunProtoRoundtrip(f *testing.F) {
 			return
 		}
 		for _, v := range []float64{p50, p95, p99, actualQPS} {
-			if v < 0 || v > 1e9 {
+			if !(v >= 0 && v <= 1e9) {
 				return
 			}
 		}
