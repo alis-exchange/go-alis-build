@@ -181,13 +181,15 @@ func ExampleNewLoadSuite() {
 	)
 
 	s.MustLoadCase("get-item",
-		func(ctx context.Context) error {
+		evals.TransportTarget(func(ctx context.Context) error {
 			_, err := fetchItem(ctx, "items/root")
 			return err
+		}),
+		[]evals.SLO{
+			evals.SLOLatencyP99(500 * time.Millisecond),
+			evals.SLOErrorRate(0.01),
+			evals.SLOMinQPS(20),
 		},
-		evals.SLOLatencyP99(500*time.Millisecond),
-		evals.SLOErrorRate(0.01),
-		evals.SLOMinQPS(20),
 	)
 
 	// evals.RegisterLoad(s) — omitted here to keep the example
@@ -204,11 +206,11 @@ func ExampleSLOLatencyP99() {
 
 	s := evals.MustNewLoadSuite("example-v1-load")
 	s.MustLoadCase("get-item",
-		func(ctx context.Context) error {
+		evals.TransportTarget(func(ctx context.Context) error {
 			_, err := fetchItem(ctx, "items/root")
 			return err
-		},
-		slo,
+		}),
+		[]evals.SLO{slo},
 	)
 	_ = s
 }

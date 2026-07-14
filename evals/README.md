@@ -111,7 +111,7 @@ launcher import above.
 
 **Suite.** A named group of related cases plus optional environment dependencies and lifecycle hooks. Three kinds exist (integration, eval, load) matching the three RPCs.
 
-**Case.** The unit the runner executes. For integration and eval suites a case is a `func(ctx, *T)` that measures the SUT and records assertions on the per-case `T` recorder. For load suites a case is a `Target = func(ctx) error` invoked many times by the built-in load generator, plus declared SLOs against the aggregate result.
+**Case.** The unit the runner executes. For integration and eval suites a case is a `func(ctx, *T)` that measures the SUT and records assertions on the per-case `T` recorder. For load suites a case is a `ResultTarget` invoked many times by the built-in load generator, plus declared SLOs against the aggregate result.
 
 `T` **recorder.** A per-case handle passed to integration and eval cases. Every recording method (`Check`, `NoErr`, `Max`, `Score`, …) returns whether the assertion passed, so authors control flow
 with plain `if !… { return }`. No panics, no `runtime.Goexit`.
@@ -196,6 +196,7 @@ message LoadTestResults {
     Status  status  = 2;
     Summary summary = 3;
     repeated SloCheck checks = 4;
+    map<string, string> tags = 5;
   }
 
   message Summary {
@@ -204,10 +205,16 @@ message LoadTestResults {
     int32                   concurrency     = 3;
     Duration                duration        = 4;
     int64                   request_count   = 5;
-    int64                   error_count     = 6;
+    int64                   error_count     = 6;   // transport failures only
     double                  actual_qps      = 7;
     LatencyPercentiles      latency         = 8;
-    map<string,int64>       errors_by_code  = 9;   // "UNAVAILABLE" → n
+    map<string,int64>       errors_by_code  = 9;
+    int64                   dropped_count   = 10;
+    int64                   check_passed_count = 11;
+    int64                   check_failed_count = 12;
+    StreamSummary           stream          = 13;
+    repeated LoadStage      qps_stages      = 14;
+    repeated LoadStage      concurrency_stages = 15;
   }
 
   message LatencyPercentiles {
@@ -575,21 +582,25 @@ func Register() {
     )
 
     s.MustLoadCase("list-items",
-        func(ctx context.Context) error {
+        evals.TransportTarget(func(ctx context.Context) error {
             _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
             return err
+        }),
+        []evals.SLO{
+            evals.SLOLatencyP99(500*time.Millisecond),
+            evals.SLOLatencyP50(50*time.Millisecond),
+            evals.SLOErrorRate(0.01),
+            evals.SLOMinQPS(20),
         },
-        evals.SLOLatencyP99(500*time.Millisecond),
-        evals.SLOLatencyP50(50*time.Millisecond),
-        evals.SLOErrorRate(0.01),
-        evals.SLOMinQPS(20),
     ).MustLoadCase("get-item",
-        func(ctx context.Context) error {
+        evals.TransportTarget(func(ctx context.Context) error {
             _, err := clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
             return err
+        }),
+        []evals.SLO{
+            evals.SLOLatencyP99(300*time.Millisecond),
+            evals.SLOErrorRate(0.005),
         },
-        evals.SLOLatencyP99(300*time.Millisecond),
-        evals.SLOErrorRate(0.005),
     )
 
     if err := evals.RegisterLoad(s); err != nil {
@@ -679,14 +690,15 @@ run under whatever context the runner installs so measurements match production 
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `(*Suite).Case(name string, fn CaseFunc) error`                                 | Register a test or eval case. Returns a typed error (`evals.ErrNilCaseFunc`, `suite.ErrInvalidCaseName`, `suite.ErrDuplicateCase`). |
 | `(*Suite).MustCase(name string, fn CaseFunc) *Suite`                            | Panicking variant returning the receiver for fluent chaining.                                                                 |
-| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) error`          | Register a load case. `target` is `func(ctx context.Context) error`. Returns a typed error (`evals.ErrNilTarget`, etc.).      |
-| `(*LoadSuite).MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Panicking variant returning the receiver for fluent chaining.                                                                 |
+| `(*LoadSuite).LoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) error` | Register a load case. Returns a typed error (`evals.ErrNilTarget`, etc.). |
+| `(*LoadSuite).MustLoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) *LoadSuite` | Panicking variant returning the receiver for fluent chaining. |
 
 Types:
 
 ```go
 type CaseFunc func(ctx context.Context, t *T)
-type Target   = loadgen.Target    // func(ctx context.Context) error
+type ResultTarget = loadgen.ResultTarget // func(ctx, CallData) TargetResult
+// evals.TransportTarget adapts func(ctx) error for transport-only cases.
 type Profile  = loadgen.Profile
 type SLO      struct { … opaque … }
 ```
@@ -717,11 +729,15 @@ id `duplicate-check-id` (see the exported constant `evals.DuplicateCheckIDName`)
 
 | Field            | Type            | Meaning                                                                                                                                                |
 | ---------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `QPS`            | `float64`       | Target requests per second. Must be > 0.                                                                                                               |
-| `Concurrency`    | `int`           | Number of worker goroutines. Must be ≥ 1. Sized to keep enough requests in flight for the target rate at the target's expected latency (Little's law). |
+| `QPS`            | `float64`       | Target requests per second when `QPSStages` is empty. Must be > 0 unless stages are set.                                                                                                               |
+| `Concurrency`    | `int`           | Number of worker goroutines when `ConcurrencyStages` is empty. Must be ≥ 1. Sized to keep enough requests in flight for the target rate at the target's expected latency (Little's law). |
 | `Duration`       | `time.Duration` | The measurement window. Must be > 0.                                                                                                                   |
 | `Warmup`         | `time.Duration` | Traffic runs at target rate for this leading period but the samples are dropped. Zero disables warmup.                                                 |
 | `RequestTimeout` | `time.Duration` | Per-request `context.WithTimeout` cap. Zero → 30 s default. Always further capped by the remaining window so a straggler cannot pollute the next case. |
+| `QPSStages`      | `[]Stage`       | Piecewise QPS shape over `Warmup+Duration`. Overrides constant `QPS` when set. Stage durations must sum to the total window.                          |
+| `QPSStageLinear` | `bool`          | Linear interpolation between consecutive QPS stage targets (ghz-style).                                                                               |
+| `ConcurrencyStages` | `[]Stage`    | Piecewise worker-pool shape over `Warmup+Duration`.                                                                                                    |
+| `GracefulRampDown` | `time.Duration` | Allow in-flight requests to finish after the measurement boundary, up to this limit.                                                              |
 
 ### SLO constructors
 
@@ -735,6 +751,20 @@ failed).
 | `evals.SLOLatencyP99(max time.Duration)`  | `latency.p99_ms` | `ms`  | `observed <= limit` | 99th percentile — the usual tail-latency guardrail.                                                                              |
 | `evals.SLOErrorRate(maxFraction float64)` | `error_rate`     | `%`   | `observed <= limit` | Constructor accepts a fraction (`0.01` for 1%). Observed and limit are recorded as percent so wire values match human intuition. |
 | `evals.SLOMinQPS(min float64)`            | `actual_qps`     | `rps` | `observed >= limit` | Throughput floor — useful for detecting silent capacity regressions.                                                             |
+| `evals.SLOStreamTTFB(max time.Duration)`  | `stream.ttfb_p99_ms` | `ms` | `observed <= limit` | Stream send-duration p99. Fails when no stream samples were recorded.                                                         |
+| `evals.SLOMessagesPerSec(min float64)`    | `stream.messages_per_sec` | `msg/s` | `observed >= limit` | Aggregate outbound message rate across the measurement window.                                                          |
+
+`TargetResult.CheckErr` records semantic assertion failures separately from transport errors. When any checks fail, the case receives a synthetic `SloCheck` with id `checks` so status rolls up `FAILED`.
+
+### Load case options
+
+| Option | Effect |
+| ------ | ------ |
+| `evals.WithLoadCaseTags(map[string]string)` | Attach labels to the case wire result. |
+| `evals.WithLoadCaseData(data ...any)` | Round-robin payloads rotated by request number. |
+| `evals.WithLoadCaseDataProvider(p DataProvider)` | Programmatic per-request data. |
+
+Use `runner.WithAbortOnSLOFailure()` to cancel a load case early when any declared SLO fails on partial metrics (polled every 2s).
 
 ### Environment API
 
@@ -1011,6 +1041,7 @@ to a gRPC status by the RPC handlers.
 | `evals.CallClientStream[Req, Resp](ctx, openFn, sendFn) ClientStreamResult[Resp]` | Client-streaming with split send/response timing and message count. |
 | `evals.ServerStreamResult[T]` | `{Messages []T, Err, TTFB, TotalDuration, MessageIntervals}`. |
 | `evals.ClientStreamResult[Resp]` | `{Resp, Err, SendDuration, ResponseLatency, TotalDuration, MessagesSent}`. |
+| `evals.ClientStreamTargetResult(r ClientStreamResult[Resp]) TargetResult` | Map streaming timing into a load-case result for aggregation and stream SLOs. |
 | `evals.Result[T]`                                                                   | `{Resp T, Err error, Latency time.Duration}`.                                                                           |
 | `evals.Rouge1F1(hypothesis, reference string) float64`                              | Deterministic ROUGE-1 unigram F1 scorer. Empty-empty → 1; one-empty → 0. Feed into `t.Score`.                           |
 | `evals.DefaultLoadProfile(mode evalspb.RunLoadTestRequest_Mode) (Profile, bool)`    | Look up the framework default profile for `mode`. Returns `(zero, false)` for `MODE_UNSPECIFIED`.                       |

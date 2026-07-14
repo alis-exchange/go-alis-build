@@ -135,19 +135,27 @@
 // # Load tests
 //
 // Load suites are shaped differently: cases are not func(ctx, *T) but a
-// single [Target] the framework invokes many times under a resolved
+// single [ResultTarget] the framework invokes many times under a resolved
 // [Profile]. There is no [T]; the assertions are SLOs declared alongside
-// the target. See [SLOLatencyP50], [SLOLatencyP95], [SLOLatencyP99],
-// [SLOErrorRate], and [SLOMinQPS].
+// the target. Use [TransportTarget] for transport-only RPCs or return
+// [TargetResult] directly for semantic checks and stream timing. See
+// [SLOLatencyP50], [SLOLatencyP95], [SLOLatencyP99], [SLOErrorRate],
+// [SLOMinQPS], [SLOStreamTTFB], and [SLOMessagesPerSec].
+//
+// [WithLoadCaseTags], [WithLoadCaseData], and [WithLoadCaseDataProvider]
+// configure per-case labels and payload rotation. [runner.WithAbortOnSLOFailure]
+// cancels a case early when any declared SLO fails on partial metrics.
 //
 //	s := evals.MustNewLoadSuite("example-v1-load", evals.WithLoadEnv("example-v1"))
 //	s.MustLoadCase("list-items",
-//	    func(ctx context.Context) error {
+//	    evals.TransportTarget(func(ctx context.Context) error {
 //	        _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
 //	        return err
+//	    }),
+//	    []evals.SLO{
+//	        evals.SLOLatencyP99(500 * time.Millisecond),
+//	        evals.SLOErrorRate(0.01),
 //	    },
-//	    evals.SLOLatencyP99(500*time.Millisecond),
-//	    evals.SLOErrorRate(0.01),
 //	)
 //	if err := evals.RegisterLoad(s); err != nil {
 //	    panic(err)

@@ -174,3 +174,29 @@ func TestRunLoadSuites_ProgressCallback(t *testing.T) {
 		t.Fatalf("progress: completed=%d total=%d, want 2/2", completed, total)
 	}
 }
+
+type abortCtxLoadCase struct {
+	name string
+	saw  bool
+}
+
+func (c abortCtxLoadCase) Name() string { return c.name }
+
+func (c *abortCtxLoadCase) Run(ctx context.Context, _ evalspb.RunLoadTestRequest_Mode, _ loadgen.Profile) *execution.LoadCaseResult {
+	c.saw = loadgen.AbortOnSLOFailure(ctx)
+	return passedLoad(c.name)
+}
+
+func TestRunLoadSuites_AbortOnSLOFailureContext(t *testing.T) {
+	t.Parallel()
+
+	c := &abortCtxLoadCase{name: "s.a"}
+	runner := New(WithAbortOnSLOFailure())
+	runs := loadSuiteRun(c)
+	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil); err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	if !c.saw {
+		t.Fatal("expected abort-on-SLO-failure marker on case ctx")
+	}
+}

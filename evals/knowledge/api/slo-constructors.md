@@ -19,6 +19,15 @@ Each constructor produces one `SLO` value; each SLO produces one
 | `evals.SLOLatencyP99(max time.Duration)` | `latency.p99_ms` | `ms` | `observed <= limit` | 99th percentile — the usual tail-latency guardrail. |
 | `evals.SLOErrorRate(maxFraction float64)` | `error_rate` | `%` | `observed <= limit` | Constructor accepts a fraction (`0.01` for 1%). Observed and limit are recorded as percent so wire values match human intuition. |
 | `evals.SLOMinQPS(min float64)` | `actual_qps` | `rps` | `observed >= limit` | Throughput floor — useful for detecting silent capacity regressions. |
+| `evals.SLOStreamTTFB(max time.Duration)` | `stream.ttfb_p99_ms` | `ms` | `observed <= limit` | Stream send-duration p99 (`StreamSample.SendDuration`). Fails when no stream samples were recorded. |
+| `evals.SLOMessagesPerSec(min float64)` | `stream.messages_per_sec` | `msg/s` | `observed >= limit` | Aggregate outbound message rate across the measurement window. |
+
+# Semantic check failures
+
+`TargetResult.CheckErr` increments `check_failed_count` on the wire
+summary. When any semantic checks fail, the case also receives a
+synthetic `SloCheck` with id `checks` so the case status rolls up
+`FAILED` even without an explicit SLO.
 
 # `SLO` type
 
@@ -48,6 +57,7 @@ Note that:
 - `error_rate` records **percent** — a constructor argument of `0.01`
   produces `limit = 1.0` on the wire.
 - `actual_qps` records **requests per second**.
+- `stream.ttfb_p99_ms` maps to `StreamSummary.ttfb` on the wire.
 
 # Related
 

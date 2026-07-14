@@ -13,14 +13,22 @@ timestamp: 2026-07-08T00:00:00Z
 | ------ | ------ |
 | `(*Suite).Case(name string, fn CaseFunc) error` | Register a test or eval case. Name must not contain `.` and must be unique inside the suite. Returns a typed error on failure. |
 | `(*Suite).MustCase(name string, fn CaseFunc) *Suite` | Panicking variant that returns the receiver for fluent chaining. |
-| `(*LoadSuite).LoadCase(name string, target Target, slos ...SLO) error` | Register a load case. `target` is `func(ctx context.Context) error`. Returns a typed error on failure. |
-| `(*LoadSuite).MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite` | Panicking variant that returns the receiver for fluent chaining. |
+| `(*LoadSuite).LoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) error` | Register a load case. Returns a typed error on failure. |
+| `(*LoadSuite).MustLoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) *LoadSuite` | Panicking variant that returns the receiver for fluent chaining. |
+
+# Load case options
+
+| Option | Effect |
+| ------ | ------ |
+| `evals.WithLoadCaseTags(map[string]string)` | Attach labels to the case wire result (`Case.tags`). |
+| `evals.WithLoadCaseData(data ...any)` | Round-robin payloads rotated by request number. |
+| `evals.WithLoadCaseDataProvider(p DataProvider)` | Programmatic per-request data. |
 
 # Types
 
 ```go
 type CaseFunc func(ctx context.Context, t *T)
-type Target   = loadgen.Target    // func(ctx context.Context) error
+type ResultTarget = loadgen.ResultTarget
 type Profile  = loadgen.Profile
 type SLO      struct { … opaque … }
 ```

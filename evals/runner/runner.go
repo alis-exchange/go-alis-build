@@ -27,8 +27,9 @@ import (
 // latency samples. Case-level concurrency is a load-suite concern
 // expressed via [loadgen.Profile.Concurrency].
 type Runner struct {
-	progress func(completed, total int)
-	decorate suite.ContextDecorator
+	progress            func(completed, total int)
+	decorate            suite.ContextDecorator
+	abortOnSLOFailure   bool
 }
 
 // Option configures a [Runner] at construction time.
@@ -74,6 +75,14 @@ func WithProgress(fn func(completed, total int)) Option {
 func WithContext(fn suite.ContextDecorator) Option {
 	return func(r *Runner) {
 		r.decorate = fn
+	}
+}
+
+// WithAbortOnSLOFailure enables mid-run cancellation when any declared SLO
+// fails on partial metrics (checked every 2s inside the generator).
+func WithAbortOnSLOFailure() Option {
+	return func(r *Runner) {
+		r.abortOnSLOFailure = true
 	}
 }
 
@@ -368,7 +377,11 @@ func (r *Runner) RunLoadSuites(
 					notify()
 					continue
 				}
-				caseResult := runLoadCaseWithRecovery(runCtx, c, mode, profile)
+				caseCtx := runCtx
+				if r.abortOnSLOFailure {
+					caseCtx = loadgen.ContextWithAbortOnSLOFailure(runCtx)
+				}
+				caseResult := runLoadCaseWithRecovery(caseCtx, c, mode, profile)
 				if caseResult == nil {
 					caseResult = &execution.LoadCaseResult{
 						Name:   c.Name(),

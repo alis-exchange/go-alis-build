@@ -8,6 +8,8 @@ import (
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/loadgen"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeGenerator returns predetermined metrics/error, records the profile it
@@ -17,13 +19,18 @@ type fakeGenerator struct {
 	err        error
 	lastProf   loadgen.Profile
 	calls      int
-	lastTarget loadgen.Target
+	lastTarget loadgen.ResultTarget
 }
 
-func (f *fakeGenerator) Run(_ context.Context, p loadgen.Profile, target loadgen.Target) (*loadgen.Metrics, error) {
+func (f *fakeGenerator) Run(ctx context.Context, p loadgen.Profile, target loadgen.ResultTarget) (*loadgen.Metrics, error) {
 	f.calls++
 	f.lastProf = p
 	f.lastTarget = target
+	if target != nil && f.metrics != nil && f.metrics.RequestCount > 0 {
+		for i := uint64(1); i <= uint64(f.metrics.RequestCount); i++ {
+			target(ctx, loadgen.CallData{RequestNumber: i, WorkerID: 0})
+		}
+	}
 	return f.metrics, f.err
 }
 
@@ -42,16 +49,16 @@ func TestLoadSuite_LoadCase_ErrorsOnBadInput(t *testing.T) {
 	t.Parallel()
 
 	s := MustNewLoadSuite("load-suite")
-	if err := s.LoadCase("case", nil); err == nil {
+	if err := s.LoadCase("case", nil, nil); err == nil {
 		t.Fatal("nil target: expected error")
 	}
-	if err := s.LoadCase("case", func(context.Context) error { return nil }); err != nil {
+	if err := s.LoadCase("case", TransportTarget(func(context.Context) error { return nil }), nil); err != nil {
 		t.Fatalf("first LoadCase: %v", err)
 	}
-	if err := s.LoadCase("case", func(context.Context) error { return nil }); err == nil {
+	if err := s.LoadCase("case", TransportTarget(func(context.Context) error { return nil }), nil); err == nil {
 		t.Fatal("duplicate: expected error")
 	}
-	if err := s.LoadCase("a.b", func(context.Context) error { return nil }); err == nil {
+	if err := s.LoadCase("a.b", TransportTarget(func(context.Context) error { return nil }), nil); err == nil {
 		t.Fatal("dotted case name: expected error")
 	}
 }
@@ -60,7 +67,7 @@ func TestLoadSuite_MustLoadCase_PanicsOnNilTarget(t *testing.T) {
 	t.Parallel()
 
 	s := MustNewLoadSuite("must-load-suite")
-	assertPanics(t, "nil target", func() { s.MustLoadCase("case", nil) })
+	assertPanics(t, "nil target", func() { s.MustLoadCase("case", nil, nil) })
 }
 
 func TestLoadCaseAdapter_PassingRun(t *testing.T) {
@@ -79,9 +86,8 @@ func TestLoadCaseAdapter_PassingRun(t *testing.T) {
 	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
 	s.MustLoadCase("c",
-		func(context.Context) error { return nil },
-		SLOLatencyP99(50*time.Millisecond),
-		SLOErrorRate(0.01),
+		TransportTarget(func(context.Context) error { return nil }),
+		[]SLO{SLOLatencyP99(50 * time.Millisecond), SLOErrorRate(0.01)},
 	)
 
 	inner := s.Inner()
@@ -109,7 +115,7 @@ func TestLoadCaseAdapter_PassingRun(t *testing.T) {
 	if result.Summary.TargetQPS != 100 || result.Summary.Concurrency != 10 {
 		t.Fatalf("Summary target/conc = %v/%d", result.Summary.TargetQPS, result.Summary.Concurrency)
 	}
-	if fake.calls != 1 || fake.lastProf != profile {
+	if fake.calls != 1 || fake.lastProf.QPS != profile.QPS || fake.lastProf.Concurrency != profile.Concurrency {
 		t.Fatalf("generator not called correctly: calls=%d prof=%+v", fake.calls, fake.lastProf)
 	}
 }
@@ -123,7 +129,7 @@ func TestLoadCaseAdapter_GeneratorErrorSurfacesAsFailed(t *testing.T) {
 	}
 	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.MustLoadCase("c", func(context.Context) error { return nil })
+	s.MustLoadCase("c", TransportTarget(func(context.Context) error { return nil }), nil)
 
 	result := s.Inner().Cases()[0].Run(context.Background(),
 		evalspb.RunLoadTestRequest_MINIMAL,
@@ -158,7 +164,7 @@ func TestLoadCaseAdapter_FailingSLOFailsRun(t *testing.T) {
 	}
 	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.MustLoadCase("c", func(context.Context) error { return nil }, SLOLatencyP99(100*time.Millisecond))
+	s.MustLoadCase("c", TransportTarget(func(context.Context) error { return nil }), []SLO{SLOLatencyP99(100 * time.Millisecond)})
 
 	result := s.Inner().Cases()[0].Run(context.Background(),
 		evalspb.RunLoadTestRequest_MODERATE,
@@ -212,6 +218,128 @@ func TestRegisterLoad_ErrorsOnNil(t *testing.T) {
 	t.Parallel()
 	if err := RegisterLoad(nil); err == nil {
 		t.Fatal("nil suite: expected error")
+	}
+}
+
+func TestLoadCase_TagsAndData(t *testing.T) {
+	t.Parallel()
+
+	var seenData []any
+	var seenNums []uint64
+	fake := &fakeGenerator{
+		metrics: &loadgen.Metrics{Duration: time.Second, RequestCount: 2, CheckPassedCount: 2},
+	}
+	s := MustNewLoadSuite("s")
+	s.setGenerator(fake)
+	s.MustLoadCase("c",
+		func(_ context.Context, d CallData) TargetResult {
+			seenData = append(seenData, d.Data)
+			seenNums = append(seenNums, d.RequestNumber)
+			return TargetResult{}
+		},
+		nil,
+		WithLoadCaseTags(map[string]string{"model": "gpt-4"}),
+		WithLoadCaseData("a", "b"),
+	)
+
+	result := s.Inner().Cases()[0].Run(context.Background(), evalspb.RunLoadTestRequest_MINIMAL,
+		loadgen.Profile{QPS: 1, Concurrency: 1, Duration: time.Millisecond})
+	if result.Tags["model"] != "gpt-4" {
+		t.Fatalf("Tags=%v", result.Tags)
+	}
+	if len(seenData) != 2 || seenData[0] != "a" || seenData[1] != "b" {
+		t.Fatalf("data rotation: %v", seenData)
+	}
+	if result.Summary.CheckPassedCount != 2 {
+		t.Fatalf("CheckPassedCount=%d", result.Summary.CheckPassedCount)
+	}
+}
+
+func TestLoadCase_CheckErrSeparateFromTransport(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGenerator{
+		metrics: &loadgen.Metrics{
+			Duration:         time.Second,
+			RequestCount:     1,
+			CheckFailedCount: 1,
+		},
+	}
+	s := MustNewLoadSuite("s")
+	s.setGenerator(fake)
+	s.MustLoadCase("c", func(context.Context, CallData) TargetResult {
+		return TargetResult{CheckErr: errors.New("bad score")}
+	}, nil)
+
+	result := s.Inner().Cases()[0].Run(context.Background(), evalspb.RunLoadTestRequest_MINIMAL,
+		loadgen.Profile{QPS: 1, Concurrency: 1, Duration: time.Millisecond})
+	if result.Summary.ErrorCount != 0 {
+		t.Fatalf("ErrorCount=%d, want 0", result.Summary.ErrorCount)
+	}
+	if result.Summary.CheckFailedCount != 1 {
+		t.Fatalf("CheckFailedCount=%d, want 1", result.Summary.CheckFailedCount)
+	}
+	if result.Status != evalspb.Status_FAILED {
+		t.Fatalf("Status=%v, want FAILED when CheckErr without SLO", result.Status)
+	}
+	foundChecks := false
+	for _, c := range result.Checks {
+		if c.ID == "checks" {
+			foundChecks = true
+		}
+	}
+	if !foundChecks {
+		t.Fatal("expected synthetic checks SloCheckResult")
+	}
+}
+
+func TestLoadCase_AbortOnSLOFailure(t *testing.T) {
+	t.Parallel()
+
+	s := MustNewLoadSuite("s")
+	errTarget := func(context.Context, CallData) TargetResult {
+		time.Sleep(5 * time.Millisecond)
+		return TargetResult{TransportErr: status.Error(codes.Unavailable, "down")}
+	}
+	if err := s.LoadCase("c", errTarget, []SLO{SLOErrorRate(0)}); err != nil {
+		t.Fatalf("LoadCase: %v", err)
+	}
+
+	ctx := loadgen.ContextWithAbortOnSLOFailure(context.Background())
+	profile := loadgen.Profile{QPS: 100, Concurrency: 10, Duration: 30 * time.Second}
+	start := time.Now()
+	result := s.Inner().Cases()[0].Run(ctx, evalspb.RunLoadTestRequest_MINIMAL, profile)
+	if elapsed := time.Since(start); elapsed > 8*time.Second {
+		t.Fatalf("expected early abort, took %v", elapsed)
+	}
+	if result.Status != evalspb.Status_FAILED {
+		t.Fatalf("status=%v, want FAILED", result.Status)
+	}
+	foundGenerator := false
+	for _, c := range result.Checks {
+		if c.ID == "generator" {
+			foundGenerator = true
+		}
+	}
+	if !foundGenerator {
+		t.Fatalf("expected generator cancellation check, got %+v", result.Checks)
+	}
+}
+
+func TestClientStreamTargetResult(t *testing.T) {
+	t.Parallel()
+
+	tr := ClientStreamTargetResult(ClientStreamResult[string]{
+		SendDuration:    12 * time.Millisecond,
+		ResponseLatency: 3 * time.Millisecond,
+		TotalDuration:   20 * time.Millisecond,
+		MessagesSent:    4,
+	})
+	if tr.Stream == nil {
+		t.Fatal("Stream=nil")
+	}
+	if tr.Stream.MessagesSent != 4 || tr.Stream.SendDuration != 12*time.Millisecond {
+		t.Fatalf("Stream=%+v", tr.Stream)
 	}
 }
 

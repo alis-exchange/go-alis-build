@@ -14,7 +14,7 @@ import (
 
 // zeroLatencyTarget returns nil immediately. Useful for testing pacing
 // without adding scheduler variance to worker execution time.
-func zeroLatencyTarget(context.Context) error { return nil }
+func zeroLatencyTarget(context.Context, CallData) TargetResult { return TargetResult{} }
 
 // TestInProcess_PacingAccuracy verifies that RequestCount is close to
 // QPS × Duration within a reasonable tolerance for a fast target. We do not
@@ -83,15 +83,15 @@ func TestInProcess_ErrorAccounting(t *testing.T) {
 	var (
 		counter atomic.Int64
 	)
-	target := func(context.Context) error {
+	target := func(context.Context, CallData) TargetResult {
 		n := counter.Add(1)
 		switch n % 3 {
 		case 0:
-			return status.Error(codes.Unavailable, "boom")
+			return TargetResult{TransportErr: status.Error(codes.Unavailable, "boom")}
 		case 1:
-			return status.Error(codes.DeadlineExceeded, "slow")
+			return TargetResult{TransportErr: status.Error(codes.DeadlineExceeded, "slow")}
 		default:
-			return nil
+			return TargetResult{}
 		}
 	}
 
@@ -125,15 +125,15 @@ func TestInProcess_LatencyPercentiles(t *testing.T) {
 	t.Parallel()
 
 	var counter atomic.Int64
-	target := func(context.Context) error {
+	target := TransportTarget(func(context.Context) error {
 		n := counter.Add(1)
 		if n%10 == 0 {
-			time.Sleep(20 * time.Millisecond) // slow tail
+			time.Sleep(20 * time.Millisecond)
 		} else {
-			time.Sleep(2 * time.Millisecond) // fast body
+			time.Sleep(2 * time.Millisecond)
 		}
 		return nil
-	}
+	})
 
 	g := New()
 	p := Profile{QPS: 40, Concurrency: 10, Duration: 800 * time.Millisecond}
@@ -162,10 +162,10 @@ func TestInProcess_LatencyPercentiles(t *testing.T) {
 func TestInProcess_Saturation(t *testing.T) {
 	t.Parallel()
 
-	target := func(context.Context) error {
+	target := TransportTarget(func(context.Context) error {
 		time.Sleep(50 * time.Millisecond)
 		return nil
-	}
+	})
 	g := New()
 	// Single worker × 50ms latency ≈ 20 QPS ceiling, well below 100 target.
 	p := Profile{QPS: 100, Concurrency: 1, Duration: 400 * time.Millisecond}
@@ -186,14 +186,14 @@ func TestInProcess_Saturation(t *testing.T) {
 func TestInProcess_Cancellation(t *testing.T) {
 	t.Parallel()
 
-	target := func(ctx context.Context) error {
+	target := TransportTarget(func(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 			return nil
 		}
-	}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -217,13 +217,13 @@ func TestInProcess_PanicRecovered(t *testing.T) {
 	t.Parallel()
 
 	var count atomic.Int64
-	target := func(context.Context) error {
+	target := TransportTarget(func(context.Context) error {
 		n := count.Add(1)
 		if n%2 == 0 {
 			panic("boom")
 		}
 		return nil
-	}
+	})
 
 	g := New()
 	p := Profile{QPS: 20, Concurrency: 3, Duration: 400 * time.Millisecond}
@@ -304,12 +304,12 @@ func TestInProcess_ConcurrencyRespected(t *testing.T) {
 	t.Parallel()
 
 	inv := &concurrentInvocations{}
-	target := func(context.Context) error {
+	target := TransportTarget(func(context.Context) error {
 		inv.enter()
 		defer inv.leave()
 		time.Sleep(30 * time.Millisecond)
 		return nil
-	}
+	})
 	g := New()
 	p := Profile{QPS: 500, Concurrency: 4, Duration: 400 * time.Millisecond}
 	if _, err := g.Run(context.Background(), p, target); err != nil {
@@ -317,6 +317,205 @@ func TestInProcess_ConcurrencyRespected(t *testing.T) {
 	}
 	if peak := inv.Peak(); peak > p.Concurrency {
 		t.Fatalf("peak in-flight %d exceeds Concurrency %d", peak, p.Concurrency)
+	}
+}
+
+func TestChannelDropBehavior(t *testing.T) {
+	t.Parallel()
+
+	ch := make(chan time.Time)
+	go func() {
+		<-ch
+		time.Sleep(100 * time.Millisecond)
+	}()
+	time.Sleep(5 * time.Millisecond)
+
+	var dropped atomic.Int64
+	for i := 0; i < 50; i++ {
+		select {
+		case ch <- time.Now():
+		default:
+			dropped.Add(1)
+		}
+	}
+	if dropped.Load() == 0 {
+		t.Fatal("expected drops when receiver busy")
+	}
+}
+
+func TestInProcess_DroppedCountUnderSaturation(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error {
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	})
+	g := New()
+	p := Profile{QPS: 200, Concurrency: 1, Duration: 400 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.DroppedCount == 0 {
+		t.Fatalf("DroppedCount=0, want > 0 under saturation")
+	}
+}
+
+func TestInProcess_GracefulRampDownExcludesLateSamples(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error {
+		time.Sleep(5 * time.Millisecond)
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:              40,
+		Concurrency:      5,
+		Duration:         300 * time.Millisecond,
+		GracefulRampDown: 200 * time.Millisecond,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount == 0 {
+		t.Fatal("RequestCount=0, want samples")
+	}
+}
+
+func TestInProcess_ConcurrencyStagesScaleWorkers(t *testing.T) {
+	t.Parallel()
+
+	inv := &concurrentInvocations{}
+	target := TransportTarget(func(context.Context) error {
+		inv.enter()
+		defer inv.leave()
+		time.Sleep(5 * time.Millisecond)
+		return nil
+	})
+	g := New()
+	total := time.Second
+	p := Profile{
+		QPS:         500,
+		Concurrency: 2,
+		Duration:    total,
+		ConcurrencyStages: []Stage{
+			{Duration: 200 * time.Millisecond, Target: 2},
+			{Duration: 800 * time.Millisecond, Target: 8},
+		},
+	}
+	if _, err := g.Run(context.Background(), p, target); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if peak := inv.Peak(); peak < 6 {
+		t.Fatalf("peak in-flight %d, want at least 6 during high stage", peak)
+	}
+}
+
+func TestInProcess_StepQPSStages(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	total := 400 * time.Millisecond
+	p := Profile{
+		Concurrency: 10,
+		Duration:    total,
+		QPSStages: []Stage{
+			{Duration: 200 * time.Millisecond, Target: 20},
+			{Duration: 200 * time.Millisecond, Target: 80},
+		},
+	}
+	m, err := g.Run(context.Background(), p, zeroLatencyTarget)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// ~20*0.2 + 80*0.2 = 4 + 16 = 20 requests in measurement window
+	if m.RequestCount < 10 || m.RequestCount > 35 {
+		t.Fatalf("RequestCount=%d, want ~20 for staged QPS", m.RequestCount)
+	}
+}
+
+func TestInProcess_CheckAccounting(t *testing.T) {
+	t.Parallel()
+
+	target := func(_ context.Context, _ CallData) TargetResult {
+		return TargetResult{CheckErr: errors.New("assertion failed")}
+	}
+	g := New()
+	p := Profile{QPS: 20, Concurrency: 2, Duration: 200 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.ErrorCount != 0 {
+		t.Fatalf("ErrorCount=%d, want 0 transport errors", m.ErrorCount)
+	}
+	if m.CheckFailedCount == 0 {
+		t.Fatal("CheckFailedCount=0, want > 0")
+	}
+}
+
+func TestInProcess_AbortCheckCancelsEarly(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	alwaysErr := func(context.Context, CallData) TargetResult {
+		return TargetResult{TransportErr: errors.New("fail")}
+	}
+	p := Profile{
+		QPS:         50,
+		Concurrency: 5,
+		Duration:    30 * time.Second,
+		AbortCheck: func(m *Metrics) bool {
+			return m != nil && m.RequestCount >= 5 && m.ErrorCount > 0
+		},
+	}
+	start := time.Now()
+	m, err := g.Run(context.Background(), p, alwaysErr)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("run took %v, expected early abort", elapsed)
+	}
+	if m.RequestCount > 200 {
+		t.Fatalf("RequestCount=%d, expected partial window before full duration", m.RequestCount)
+	}
+}
+
+func TestInProcess_StreamSummaryAggregation(t *testing.T) {
+	t.Parallel()
+
+	target := func(_ context.Context, d CallData) TargetResult {
+		ms := 10 + int(d.RequestNumber%5)
+		return TargetResult{
+			Stream: &StreamSample{
+				SendDuration:    time.Duration(ms) * time.Millisecond,
+				ResponseLatency: time.Duration(ms+2) * time.Millisecond,
+				TotalDuration:   time.Duration(ms+5) * time.Millisecond,
+				MessagesSent:    2,
+			},
+		}
+	}
+	g := New()
+	p := Profile{QPS: 40, Concurrency: 4, Duration: 300 * time.Millisecond}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.Stream == nil {
+		t.Fatal("Stream=nil, want aggregate stream summary")
+	}
+	if m.Stream.StreamCount != m.RequestCount {
+		t.Fatalf("StreamCount=%d RequestCount=%d", m.Stream.StreamCount, m.RequestCount)
+	}
+	if m.Stream.MessagesSentTotal != 2*m.RequestCount {
+		t.Fatalf("MessagesSentTotal=%d, want %d", m.Stream.MessagesSentTotal, 2*m.RequestCount)
+	}
+	if m.Stream.TTFB.P50Ms <= 0 {
+		t.Fatalf("TTFB summary empty: %+v", m.Stream.TTFB)
 	}
 }
 

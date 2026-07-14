@@ -17,6 +17,7 @@ timestamp: 2026-07-14T00:00:00Z
 | `evals.Result[T]` | `{Resp T, Err error, Latency time.Duration}`. |
 | `evals.ServerStreamResult[T]` | `{Messages []T, Err, TTFB, TotalDuration, MessageIntervals}`. |
 | `evals.ClientStreamResult[Resp]` | `{Resp, Err, SendDuration, ResponseLatency, TotalDuration, MessagesSent}`. |
+| `evals.ClientStreamTargetResult(r ClientStreamResult[Resp]) TargetResult` | Map streaming timing into a load-case result for aggregation and stream SLOs. |
 | `evals.Rouge1F1(hypothesis, reference string) float64` | Deterministic ROUGE-1 unigram F1 scorer. Empty-empty → 1; one-empty → 0. Feed into `t.Score`. |
 | `evals.DefaultLoadProfile(mode evalspb.RunLoadTestRequest_Mode) (Profile, bool)` | Look up the framework default profile for `mode`. Returns `(zero, false)` for `MODE_UNSPECIFIED`. |
 | `evals.ResolveLoadProfile(mode, overrides map[Mode]Profile) (Profile, bool)` | Merge suite overrides with defaults. Override wins; other modes keep defaults. |

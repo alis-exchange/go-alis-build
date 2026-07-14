@@ -129,3 +129,55 @@ func TestEvaluateSLOs_EmptyOrNil(t *testing.T) {
 		t.Fatal("nil metrics: expected nil result")
 	}
 }
+
+func TestSLOStreamTTFB(t *testing.T) {
+	t.Parallel()
+
+	slo := SLOStreamTTFB(100 * time.Millisecond)
+	pass := &loadgen.Metrics{
+		Stream: &loadgen.StreamSummary{StreamCount: 5, TTFB: loadgen.LatencySummary{P99Ms: 80}},
+	}
+	c := evaluateSLOs([]SLO{slo}, pass)[0]
+	if c.ID != "stream.ttfb_p99_ms" || c.Status != evalspb.Status_PASSED {
+		t.Fatalf("pass case: %+v", c)
+	}
+
+	fail := &loadgen.Metrics{
+		Stream: &loadgen.StreamSummary{StreamCount: 5, TTFB: loadgen.LatencySummary{P99Ms: 150}},
+	}
+	c = evaluateSLOs([]SLO{slo}, fail)[0]
+	if c.Status != evalspb.Status_FAILED {
+		t.Fatalf("fail case: %+v", c)
+	}
+
+	noStream := evaluateSLOs([]SLO{slo}, &loadgen.Metrics{RequestCount: 10})[0]
+	if noStream.Status != evalspb.Status_FAILED {
+		t.Fatalf("no stream samples: %+v", noStream)
+	}
+}
+
+func TestSLOMessagesPerSec(t *testing.T) {
+	t.Parallel()
+
+	slo := SLOMessagesPerSec(10)
+	pass := &loadgen.Metrics{
+		Duration: time.Second,
+		Stream:   &loadgen.StreamSummary{MessagesSentTotal: 20},
+	}
+	c := evaluateSLOs([]SLO{slo}, pass)[0]
+	if c.ID != "stream.messages_per_sec" || c.Unit != "msg/s" {
+		t.Fatalf("check=%+v", c)
+	}
+	if c.Status != evalspb.Status_PASSED || c.Observed != 20 {
+		t.Fatalf("pass case: %+v", c)
+	}
+
+	fail := &loadgen.Metrics{
+		Duration: time.Second,
+		Stream:   &loadgen.StreamSummary{MessagesSentTotal: 5},
+	}
+	c = evaluateSLOs([]SLO{slo}, fail)[0]
+	if c.Status != evalspb.Status_FAILED {
+		t.Fatalf("fail case: %+v", c)
+	}
+}

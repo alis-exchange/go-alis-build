@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Case
-description: The unit of execution — a `func(ctx, *T)` for test/eval, or a `Target` + `SLO`s for load.
+description: The unit of execution — a `func(ctx, *T)` for test/eval, or a `ResultTarget` + `SLO`s for load.
 tags: [case, core]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -28,18 +28,18 @@ The function receives the LRO context and a per-case
 
 ## Load
 
-A load case is defined by a `Target` and a set of SLOs:
+A load case is defined by a `ResultTarget` and a set of SLOs:
 
 ```go
-type Target = loadgen.Target    // func(ctx context.Context) error
-
 s.LoadCase("list-items",
-    func(ctx context.Context) error {
+    evals.TransportTarget(func(ctx context.Context) error {
         _, err := client.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
         return err
+    }),
+    []evals.SLO{
+        evals.SLOLatencyP99(500 * time.Millisecond),
+        evals.SLOErrorRate(0.01),
     },
-    evals.SLOLatencyP99(500*time.Millisecond),
-    evals.SLOErrorRate(0.01),
 )
 ```
 

@@ -43,21 +43,25 @@ func Register() {
     )
 
     s.MustLoadCase("list-items",
-        func(ctx context.Context) error {
+        evals.TransportTarget(func(ctx context.Context) error {
             _, err := clients.Example.ListItems(ctx, &examplepb.ListItemsRequest{PageSize: 5})
             return err
+        }),
+        []evals.SLO{
+            evals.SLOLatencyP99(500*time.Millisecond),
+            evals.SLOLatencyP50(50*time.Millisecond),
+            evals.SLOErrorRate(0.01),
+            evals.SLOMinQPS(20),
         },
-        evals.SLOLatencyP99(500*time.Millisecond),
-        evals.SLOLatencyP50(50*time.Millisecond),
-        evals.SLOErrorRate(0.01),
-        evals.SLOMinQPS(20),
     ).MustLoadCase("get-item",
-        func(ctx context.Context) error {
+        evals.TransportTarget(func(ctx context.Context) error {
             _, err := clients.Example.GetItem(ctx, &examplepb.GetItemRequest{Name: rootItem})
             return err
+        }),
+        []evals.SLO{
+            evals.SLOLatencyP99(300*time.Millisecond),
+            evals.SLOErrorRate(0.005),
         },
-        evals.SLOLatencyP99(300*time.Millisecond),
-        evals.SLOErrorRate(0.005),
     )
 
     if err := evals.RegisterLoad(s); err != nil {
@@ -74,14 +78,18 @@ For each case the runner:
    requested `Mode`, overridden by any suite-level `WithLoadProfile`
    for that mode.
 2. **Spawns `Concurrency` worker goroutines** and a fixed-rate pacer.
-3. **Runs `Warmup + Duration` of traffic**; samples produced during
-   `Warmup` are discarded so autoscalers and JITs have time to settle.
-4. **Aggregates latency into an HDR histogram**, counts errors, groups
-   them by canonical gRPC status code.
-5. **Evaluates every declared SLO** against the aggregate metrics;
+3. **Runs `Warmup + Duration` of traffic** at the resolved rate (constant
+   or staged); samples produced during `Warmup` are discarded so
+   autoscalers and JITs have time to settle.
+4. **Optionally aborts early** when `runner.WithAbortOnSLOFailure()` is
+   enabled and any declared SLO fails on partial metrics.
+5. **Aggregates latency into an HDR histogram**, counts transport errors,
+   semantic check pass/fail counts, dropped ticks, and stream metrics.
+6. **Evaluates every declared SLO** against the aggregate metrics;
    each produces one `SloCheck` (passed or failed) with the observed
-   value, the limit, and the unit.
-6. **Rolls up the case** — `PASSED` only when every SLO passed.
+   value, the limit, and the unit. Semantic check failures produce a
+   synthetic `checks` SloCheck when no explicit SLO covers them.
+7. **Rolls up the case** — `PASSED` only when every check passed.
 
 Load cases run **sequentially within a suite** by design — concurrent
 load windows against different targets would contaminate each other's

@@ -2,7 +2,7 @@
 //
 // The design is deliberately narrow: one [Profile] describes a fixed-rate
 // load window, one [Pacer] schedules sends, a fixed pool of workers
-// executes a caller-supplied [Target] function, and a single aggregator
+// executes a caller-supplied [ResultTarget] function, and a single aggregator
 // goroutine folds results into aggregate [Metrics]. Nothing in this
 // package knows about proto types, suites, or SLOs — the parent [evals]
 // package composes those on top.
@@ -19,10 +19,32 @@
 //	    Duration:       60*time.Second,
 //	    Warmup:         10*time.Second,
 //	    RequestTimeout: 5*time.Second,
-//	}, func(ctx context.Context) error {
+//	}, loadgen.TransportTarget(func(ctx context.Context) error {
 //	    _, err := clients.Files.ListFiles(ctx, req)
 //	    return err
-//	})
+//	}))
+//
+// For semantic checks, stream timing, or per-request data, return a full
+// [TargetResult] from a [ResultTarget] instead of [TransportTarget].
+//
+// # Staged profiles
+//
+// [Profile.QPSStages] and [Profile.ConcurrencyStages] define piecewise load
+// shapes over Warmup+Duration. [Profile.QPSStageLinear] selects linear
+// interpolation between QPS stage targets (ghz-style). [Profile.GracefulRampDown]
+// allows in-flight requests to finish after the measurement boundary.
+//
+// # Stream metrics
+//
+// When a target returns [TargetResult.Stream], the aggregator builds
+// [Metrics.Stream] with HDR histograms for send duration (wire field ttfb),
+// response latency, and total duration.
+//
+// # Abort on SLO failure
+//
+// [Profile.AbortCheck] can cancel the window early when it returns true on
+// a partial metrics snapshot. The evals runner wires this from declared SLOs
+// when [loadgen.AbortOnSLOFailure] is set on the case context.
 //
 // # Concepts borrowed
 //
@@ -48,15 +70,18 @@
 // When the worker pool cannot keep up, [Metrics.ActualQPS] falls below
 // the target rate. The generator emits an alog warning when
 // `ActualQPS < 0.9 × target QPS` so users notice they are measuring the
-// generator rather than the SUT.
+// generator rather than the SUT. [Metrics.DroppedCount] includes pacer
+// backpressure and worker-side skips for ticks that arrived after the
+// window ended.
 //
 // # Error accounting
 //
-// Target errors are data, not control flow. A non-nil return increments
+// Target errors are data, not control flow. Transport failures increment
 // [Metrics.ErrorCount] and [Metrics.ErrorsByCode] under the canonical
 // gRPC status code name (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, ...);
-// non-gRPC errors fall into `UNKNOWN`. Panics are recovered per request
-// and count as `UNKNOWN` errors.
+// non-gRPC errors fall into `UNKNOWN`. Semantic check failures increment
+// check counters separately. Panics are recovered per request and count
+// as `INTERNAL` errors.
 //
 // # Cancellation
 //

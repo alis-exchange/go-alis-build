@@ -62,6 +62,7 @@ func loadTestData(sr execution.LoadSuiteResult) *evalspb.LoadTestResults {
 		cases = append(cases, &evalspb.LoadTestResults_Case{
 			Id:      c.Name,
 			Status:  c.Status,
+			Tags:    c.Tags,
 			Summary: mapLoadSummary(c.Summary),
 			Checks:  mapSloChecks(c.Checks),
 		})
@@ -70,14 +71,17 @@ func loadTestData(sr execution.LoadSuiteResult) *evalspb.LoadTestResults {
 }
 
 func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summary {
-	return &evalspb.LoadTestResults_Summary{
-		Mode:         s.Mode,
-		TargetQps:    s.TargetQPS,
-		Concurrency:  s.Concurrency,
-		Duration:     durationpb.New(s.Duration),
-		RequestCount: s.RequestCount,
-		ErrorCount:   s.ErrorCount,
-		ActualQps:    s.ActualQPS,
+	out := &evalspb.LoadTestResults_Summary{
+		Mode:             s.Mode,
+		TargetQps:        s.TargetQPS,
+		Concurrency:      s.Concurrency,
+		Duration:         durationpb.New(s.Duration),
+		RequestCount:     s.RequestCount,
+		ErrorCount:       s.ErrorCount,
+		CheckPassedCount: s.CheckPassedCount,
+		CheckFailedCount: s.CheckFailedCount,
+		DroppedCount:     s.DroppedCount,
+		ActualQps:        s.ActualQPS,
 		Latency: &evalspb.LoadTestResults_LatencyPercentiles{
 			P50Ms:  s.Latency.P50Ms,
 			P95Ms:  s.Latency.P95Ms,
@@ -86,7 +90,52 @@ func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summar
 			MeanMs: s.Latency.MeanMs,
 			MaxMs:  s.Latency.MaxMs,
 		},
-		ErrorsByCode: s.ErrorsByCode,
+		ErrorsByCode:        s.ErrorsByCode,
+		QpsStages:           mapLoadStages(s.QPSStages),
+		ConcurrencyStages:   mapLoadStages(s.ConcurrencyStages),
+		Stream:              mapLoadStreamSummary(s.Stream),
+	}
+	return out
+}
+
+func mapLoadStages(stages []execution.LoadStage) []*evalspb.LoadTestResults_LoadStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]*evalspb.LoadTestResults_LoadStage, len(stages))
+	for i, s := range stages {
+		out[i] = &evalspb.LoadTestResults_LoadStage{
+			Duration: durationpb.New(s.Duration),
+			Target:   s.Target,
+		}
+	}
+	return out
+}
+
+func mapLoadStreamSummary(s *execution.LoadStreamSummary) *evalspb.LoadTestResults_StreamSummary {
+	if s == nil {
+		return nil
+	}
+	return &evalspb.LoadTestResults_StreamSummary{
+		StreamCount:       s.StreamCount,
+		MessagesSentTotal: s.MessagesSentTotal,
+		Ttfb:              mapLoadLatency(s.TTFB),
+		ResponseLatency:   mapLoadLatency(s.ResponseLatency),
+		TotalDuration:     mapLoadLatency(s.TotalDuration),
+	}
+}
+
+func mapLoadLatency(l execution.LoadLatency) *evalspb.LoadTestResults_LatencyPercentiles {
+	if l == (execution.LoadLatency{}) {
+		return nil
+	}
+	return &evalspb.LoadTestResults_LatencyPercentiles{
+		P50Ms:  l.P50Ms,
+		P95Ms:  l.P95Ms,
+		P99Ms:  l.P99Ms,
+		MinMs:  l.MinMs,
+		MeanMs: l.MeanMs,
+		MaxMs:  l.MaxMs,
 	}
 }
 
