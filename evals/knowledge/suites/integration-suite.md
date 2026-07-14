@@ -101,6 +101,13 @@ headers, tokens, tracing, or any request-scoped values here. The
 framework itself never attaches auth. Different suites can install
 different decorators; see [Context decoration in the README](https://github.com/alis-exchange/go-alis-build/blob/main/evals/README.md#context-and-authentication).
 
+## Streaming RPCs
+
+For server-streaming and client-streaming RPCs, use `CallServerStream`
+and `CallClientStream` instead of unary `Call`. See
+[Helpers — Streaming](/api/helpers.md#streaming-helpers) and the
+[README Streaming RPCs section](https://github.com/alis-exchange/go-alis-build/blob/main/evals/README.md#streaming-rpcs).
+
 # Wire shape
 
 Results appear as [`IntegrationTestResults`](/wire-types/integration-results.md):

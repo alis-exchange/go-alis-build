@@ -15,7 +15,7 @@ grouped by purpose.
 * [T methods](/api/t-methods.md) - the full method vocabulary on `*T`.
 * [SLO constructors](/api/slo-constructors.md) - latency, error-rate, and throughput SLOs.
 * [Load profile](/api/load-profile.md) - `Profile` struct fields and semantics.
-* [Helpers](/api/helpers.md) - `Call`, `Result[T]`, `Rouge1F1`, `DefaultLoadProfile`, `ResolveLoadProfile`.
+* [Helpers](/api/helpers.md) - `Call`, streaming helpers, `Result[T]`, `Rouge1F1`, load-profile resolution.
 
 # Registration and wiring
 

@@ -15,7 +15,7 @@ directly. It exposes:
 - Suite constructors: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`.
 - The `T` recorder and its methods.
 - SLO constructors for load suites.
-- The `Call`/`Result[T]` RPC wrapper.
+- The `Call` / streaming helpers / `Result[T]` RPC wrappers.
 - The `Rouge1F1` deterministic scorer.
 - Registration functions: `RegisterIntegration`, `RegisterEval`,
   `RegisterLoad`, `RegisterAgent`, `DefaultRegistry`.
@@ -31,9 +31,11 @@ directly. It exposes:
 | `slo.go` | `SLO` type and `SLOLatencyP50/P95/P99`, `SLOErrorRate`, `SLOMinQPS`. |
 | `t.go` | `T` and its methods (`Check`, `Checkf`, `NoErr`, `Max`, `Score`). `DuplicateCheckIDName`. |
 | `call.go` | `Call`, `Result[T]`. |
+| `stream_server.go` | `CallServerStream`, `ServerStreamResult[T]`. |
+| `stream_client.go` | `CallClientStream`, `ClientStreamResult[Resp]`. |
 | `score.go` | `Rouge1F1`. |
 | `register.go` | `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterAgent`, `DefaultRegistry`. |
-| `suite_test.go`, `load_test.go`, `slo_test.go`, `t_test.go`, `call_test.go`, `example_test.go` | Tests and doc examples. |
+| `suite_test.go`, `load_test.go`, `slo_test.go`, `t_test.go`, `call_test.go`, `stream_test.go`, `example_test.go` | Tests and doc examples. |
 
 # Related
 

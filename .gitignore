@@ -9,3 +9,5 @@ key**.json
 .vscode
 .cursor
 .idea
+coverage.out
+**/coverage.out

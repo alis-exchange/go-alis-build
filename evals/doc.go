@@ -30,10 +30,10 @@
 //
 // # Integration tests
 //
-// An integration case is a func(ctx, *T) that measures the SUT with [Call]
-// and records assertions on [T]. Every recording method on T returns
-// whether the leaf passed, so authors guard-and-return without any custom
-// flow control:
+// An integration case is a func(ctx, *T) that measures the SUT with [Call],
+// [CallServerStream], or [CallClientStream] and records assertions on [T].
+// Every recording method on T returns whether the leaf passed, so authors
+// guard-and-return without any custom flow control:
 //
 //	func Register() {
 //	    s := evals.MustNewIntegrationSuite("example-v1",
@@ -55,6 +55,54 @@
 //	        panic(err)
 //	    }
 //	}
+//
+// For server-streaming RPCs, use [CallServerStream] to drain a bounded stream
+// and capture TTFB, total duration, and inter-message gaps. TTFB is 0 when
+// no message is received — guard before asserting:
+//
+//	res := evals.CallServerStream(ctx, func(ctx context.Context) (grpc.ServerStreamingClient[Event], error) {
+//	    return clients.Foo.Watch(ctx, req)
+//	})
+//	if !t.NoErr("grpc", res.Err) { return }
+//	if len(res.Messages) > 0 {
+//	    t.Max("ttfb", res.TTFB, 100*time.Millisecond)
+//	}
+//	t.Max("total", res.TotalDuration, 2*time.Second)
+//	// MessageIntervals[i] is the gap between Messages[i] and Messages[i+1].
+//
+// Do not use [CallServerStream] on watch RPCs that never send EOF; use a
+// context deadline to bound execution. If Recv returns a nil message with
+// nil error, Err is set and partial messages are preserved.
+//
+// For client-streaming RPCs, use [CallClientStream] when send-side vs
+// response-side timing matters. [Call] remains appropriate for unary-shaped
+// client streams when split timing is not needed.
+//
+//	r := evals.CallClientStream(ctx,
+//	    func(ctx context.Context) (grpc.ClientStreamingClient[Chunk, UploadResult], error) {
+//	        return clients.Example.Upload(ctx)
+//	    },
+//	    func(stream grpc.ClientStreamingClient[Chunk, UploadResult]) (UploadResult, error) {
+//	        for _, chunk := range chunks {
+//	            if err := stream.Send(chunk); err != nil {
+//	                return UploadResult{}, err
+//	            }
+//	        }
+//	        resp, err := stream.CloseAndRecv()
+//	        if err != nil {
+//	            return UploadResult{}, err
+//	        }
+//	        return *resp, nil
+//	    },
+//	)
+//	if !t.NoErr("grpc", r.Err) { return }
+//	t.Max("send", r.SendDuration, 500*time.Millisecond)
+//	t.Max("response", r.ResponseLatency, 200*time.Millisecond)
+//
+// SendDuration includes stream open. ResponseLatency is 0 when CloseAndRecv
+// was never reached (for example after a send error). TotalDuration may
+// exceed SendDuration + ResponseLatency because author code between the
+// last Send and CloseAndRecv is not attributed to either phase.
 //
 // # Agent evaluations
 //
