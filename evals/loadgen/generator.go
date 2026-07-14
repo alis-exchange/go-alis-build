@@ -217,7 +217,7 @@ func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check Abort
 	for {
 		select {
 		case <-ticker.C:
-			if check(agg.snapshot()) {
+			if check(agg.abortSnapshot()) {
 				cancel()
 				return
 			}
@@ -269,10 +269,13 @@ func (a *aggregator) consume(samples <-chan sample) *Metrics {
 	return a.finalize()
 }
 
-func (a *aggregator) snapshot() *Metrics {
+// abortSnapshot returns partial metrics for mid-run SLO checks. It omits
+// fields abort checks never read (ErrorsByCode, check counts, dropped) and
+// skips min/max/mean latency plus non-TTFB stream histograms.
+func (a *aggregator) abortSnapshot() *Metrics {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.buildMetrics()
+	return a.buildAbortMetrics()
 }
 
 func (a *aggregator) finalize() *Metrics {
@@ -347,6 +350,28 @@ func (a *aggregator) buildMetrics() *Metrics {
 	return m
 }
 
+func (a *aggregator) buildAbortMetrics() *Metrics {
+	m := &Metrics{
+		Duration:     a.measureFor,
+		RequestCount: a.count,
+		ErrorCount:   a.errCount,
+	}
+	if a.measureFor > 0 {
+		m.ActualQPS = float64(a.count) / a.measureFor.Seconds()
+	}
+	if a.count > 0 {
+		m.Latency = latencyPercentilesFromHist(a.hist)
+	}
+	if a.streamCount > 0 {
+		m.Stream = &StreamSummary{
+			StreamCount:       a.streamCount,
+			MessagesSentTotal: a.messagesTotal,
+			TTFB:              latencyPercentilesFromHist(a.ttfbHist),
+		}
+	}
+	return m
+}
+
 func recordDurationHist(h *hdrhistogram.Histogram, d time.Duration) {
 	if d <= 0 {
 		return
@@ -361,22 +386,29 @@ func recordDurationHist(h *hdrhistogram.Histogram, d time.Duration) {
 	_ = h.RecordValue(us)
 }
 
+func latencyPercentilesFromHist(h *hdrhistogram.Histogram) LatencySummary {
+	if h.TotalCount() == 0 {
+		return LatencySummary{}
+	}
+	return LatencySummary{
+		P50Ms: usToMs(h.ValueAtQuantile(50)),
+		P95Ms: usToMs(h.ValueAtQuantile(95)),
+		P99Ms: usToMs(h.ValueAtQuantile(99)),
+	}
+}
+
 func latencyFromHist(h *hdrhistogram.Histogram, sumUs float64, count int64) LatencySummary {
 	if count == 0 {
 		return LatencySummary{}
 	}
-	mean := sumUs / float64(count) / 1000.0
+	summary := latencyPercentilesFromHist(h)
+	summary.MinMs = usToMs(h.Min())
+	summary.MaxMs = usToMs(h.Max())
+	summary.MeanMs = sumUs / float64(count) / 1000.0
 	if sumUs == 0 {
-		mean = usToMs(int64(h.Mean()))
+		summary.MeanMs = usToMs(int64(h.Mean()))
 	}
-	return LatencySummary{
-		P50Ms:  usToMs(h.ValueAtQuantile(50)),
-		P95Ms:  usToMs(h.ValueAtQuantile(95)),
-		P99Ms:  usToMs(h.ValueAtQuantile(99)),
-		MinMs:  usToMs(h.Min()),
-		MaxMs:  usToMs(h.Max()),
-		MeanMs: mean,
-	}
+	return summary
 }
 
 func cloneErrorsMap(in map[string]int64) map[string]int64 {
