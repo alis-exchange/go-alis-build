@@ -133,7 +133,7 @@ func NewHTTPClient(baseURL string, opts ...HTTPClientOption) *HTTPClient {
 // RunEval POSTs to .../eval_sets/{evalSetId}/run_eval and decodes results.
 func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]models.RunEvalResult, error) {
 	if c == nil {
-		return nil, fmt.Errorf("adk client: nil client")
+		return nil, ErrNilClient{}
 	}
 	baseURL := params.BaseURL
 	if baseURL == "" {
@@ -144,7 +144,7 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 		pathPrefix = c.pathPrefix
 	}
 	if params.AppName == "" || params.EvalSetID == "" {
-		return nil, fmt.Errorf("adk client: app name and eval set id are required")
+		return nil, ErrMissingAppNameEvalSetID{}
 	}
 
 	body, err := json.Marshal(runEvalRequest{
@@ -152,7 +152,7 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 		EvalMetrics: params.Metrics,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("adk client: encode request: %w", err)
+		return nil, ErrEncodeRequest{Err: err}
 	}
 
 	url := fmt.Sprintf("%s%s/dev/apps/%s/eval_sets/%s/run_eval",
@@ -164,27 +164,30 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("adk client: build request: %w", err)
+		return nil, ErrBuildRequest{Err: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAgentUnreachable, err)
+		return nil, ErrAgentUnreachable{Cause: err}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("adk client: read response: %w", err)
+		return nil, ErrReadResponse{Err: err}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: status %d: %s", ErrRunEvalFailed, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, ErrRunEvalFailed{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(raw)),
+		}
 	}
 
 	results, err := decodeRunEvalResults(raw)
 	if err != nil {
-		return nil, fmt.Errorf("adk client: decode response: %w", err)
+		return nil, ErrDecodeResponse{Err: err}
 	}
 	return results, nil
 }
@@ -192,10 +195,10 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 // ListEvalSets GETs .../eval_sets and decodes eval set ids for an app.
 func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string, error) {
 	if c == nil {
-		return nil, fmt.Errorf("adk client: nil client")
+		return nil, ErrNilClient{}
 	}
 	if appName == "" {
-		return nil, fmt.Errorf("adk client: app name is required")
+		return nil, ErrMissingAppName{}
 	}
 
 	url := fmt.Sprintf("%s%s/dev/apps/%s/eval_sets",
@@ -206,21 +209,24 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("adk client: build request: %w", err)
+		return nil, ErrBuildRequest{Err: err}
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAgentUnreachable, err)
+		return nil, ErrAgentUnreachable{Cause: err}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("adk client: read response: %w", err)
+		return nil, ErrReadResponse{Err: err}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: status %d: %s", ErrRunEvalFailed, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, ErrRunEvalFailed{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(raw)),
+		}
 	}
 
 	trimmed := bytes.TrimSpace(raw)
@@ -230,7 +236,7 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 
 	var ids []string
 	if err := json.Unmarshal(trimmed, &ids); err != nil {
-		return nil, fmt.Errorf("adk client: decode eval sets: %w", err)
+		return nil, ErrDecodeEvalSets{Err: err}
 	}
 	return ids, nil
 }

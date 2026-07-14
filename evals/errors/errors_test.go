@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"go.alis.build/evals"
 	"go.alis.build/evals/registry"
 	"go.alis.build/evals/suite"
 	"google.golang.org/grpc/codes"
@@ -43,6 +44,19 @@ func TestIsEval(t *testing.T) {
 	}
 	if IsEval(errors.New("plain")) {
 		t.Fatal("plain error should not implement EvalError")
+	}
+}
+
+func TestIsEval_streamErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range []error{
+		evals.ErrNilStream{},
+		evals.ErrNilStreamMessage{},
+	} {
+		if !IsEval(err) {
+			t.Fatalf("expected %T to implement EvalError", err)
+		}
 	}
 }
 

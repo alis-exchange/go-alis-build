@@ -107,6 +107,12 @@ func CallClientStream[Req, Resp any](
 			TotalDuration: time.Since(start),
 		}
 	}
+	if stream == nil {
+		return ClientStreamResult[Resp]{
+			Err:           ErrNilStream{},
+			TotalDuration: time.Since(start),
+		}
+	}
 
 	wrapped := &instrumentedClientStream[Req, Resp]{
 		ClientStreamingClient: stream,

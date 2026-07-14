@@ -2,7 +2,6 @@ package adk
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 )
@@ -102,11 +101,11 @@ func RubricBasedFinalResponseQualityV1(threshold float64, rubrics []models.Rubri
 func metricFromJSON(v any) (models.EvalMetric, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return models.EvalMetric{}, fmt.Errorf("adk: encode metric: %w", err)
+		return models.EvalMetric{}, ErrEncodeMetric{Err: err}
 	}
 	var m models.EvalMetric
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return models.EvalMetric{}, fmt.Errorf("adk: decode metric: %w", err)
+		return models.EvalMetric{}, ErrDecodeMetric{Err: err}
 	}
 	return m, nil
 }

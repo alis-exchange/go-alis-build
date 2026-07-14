@@ -149,13 +149,32 @@ func TestCallServerStream_openFnError(t *testing.T) {
 	}
 }
 
+func TestCallServerStream_openFnNilStream(t *testing.T) {
+	t.Parallel()
+	got := CallServerStream(context.Background(), func(context.Context) (grpc.ServerStreamingClient[int], error) {
+		return nil, nil
+	})
+	if !errors.Is(got.Err, ErrNilStream{}) {
+		t.Fatalf("Err = %v, want %v", got.Err, ErrNilStream{})
+	}
+	if len(got.Messages) != 0 {
+		t.Fatalf("Messages = %v, want empty", got.Messages)
+	}
+	if got.TTFB != 0 {
+		t.Fatalf("TTFB = %v, want 0", got.TTFB)
+	}
+	if got.TotalDuration < 0 {
+		t.Fatalf("TotalDuration = %v, want non-negative", got.TotalDuration)
+	}
+}
+
 func TestCallServerStream_nilMessage(t *testing.T) {
 	t.Parallel()
 	got := CallServerStream(context.Background(), func(context.Context) (grpc.ServerStreamingClient[int], error) {
 		return &nilMessageServerStream{}, nil
 	})
-	if !errors.Is(got.Err, errNilStreamMessage) {
-		t.Fatalf("Err = %v, want %v", got.Err, errNilStreamMessage)
+	if !errors.Is(got.Err, ErrNilStreamMessage{}) {
+		t.Fatalf("Err = %v, want %v", got.Err, ErrNilStreamMessage{})
 	}
 	if len(got.Messages) != 0 {
 		t.Fatalf("Messages = %v, want empty", got.Messages)
@@ -398,6 +417,29 @@ func TestCallClientStream_zeroSendCloseAndRecv(t *testing.T) {
 	if got.TotalDuration < got.SendDuration+got.ResponseLatency {
 		t.Fatalf("TotalDuration = %v, want >= SendDuration(%v) + ResponseLatency(%v)",
 			got.TotalDuration, got.SendDuration, got.ResponseLatency)
+	}
+}
+
+func TestCallClientStream_openFnNilStream(t *testing.T) {
+	t.Parallel()
+	got := CallClientStream(context.Background(),
+		func(context.Context) (grpc.ClientStreamingClient[int, string], error) {
+			return nil, nil
+		},
+		func(grpc.ClientStreamingClient[int, string]) (string, error) {
+			t.Fatal("sendFn should not run")
+			return "", nil
+		},
+	)
+	if !errors.Is(got.Err, ErrNilStream{}) {
+		t.Fatalf("Err = %v, want %v", got.Err, ErrNilStream{})
+	}
+	if got.TotalDuration < 0 {
+		t.Fatalf("TotalDuration = %v, want non-negative", got.TotalDuration)
+	}
+	if got.SendDuration != 0 || got.ResponseLatency != 0 || got.MessagesSent != 0 {
+		t.Fatalf("unexpected timings: SendDuration=%v ResponseLatency=%v MessagesSent=%d",
+			got.SendDuration, got.ResponseLatency, got.MessagesSent)
 	}
 }
 

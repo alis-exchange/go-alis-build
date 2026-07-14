@@ -234,9 +234,8 @@ func TestInProcess_PanicRecovered(t *testing.T) {
 	if m.ErrorCount == 0 {
 		t.Fatal("ErrorCount=0, want panics counted")
 	}
-	// status.Code on a non-status error returns Unknown.
-	if m.ErrorsByCode[codes.Unknown.String()] == 0 {
-		t.Fatalf("expected panics under Unknown: %v", m.ErrorsByCode)
+	if m.ErrorsByCode[codes.Internal.String()] == 0 {
+		t.Fatalf("expected panics under Internal: %v", m.ErrorsByCode)
 	}
 }
 
@@ -250,8 +249,8 @@ func TestInProcess_InvalidProfile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for zero profile")
 	}
-	if !errors.Is(err, ErrInvalidProfile) {
-		t.Fatalf("err=%v, want wrapped ErrInvalidProfile", err)
+	if !errors.Is(err, ErrInvalidProfile{}) {
+		t.Fatalf("err=%v, want ErrInvalidProfile", err)
 	}
 }
 
@@ -263,6 +262,9 @@ func TestInProcess_NilTarget(t *testing.T) {
 	_, err := g.Run(context.Background(), Profile{QPS: 1, Concurrency: 1, Duration: time.Millisecond}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil target")
+	}
+	if !errors.Is(err, ErrNilTarget{}) {
+		t.Fatalf("err = %v, want ErrNilTarget", err)
 	}
 }
 

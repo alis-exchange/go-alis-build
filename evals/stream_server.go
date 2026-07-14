@@ -2,14 +2,11 @@ package evals
 
 import (
 	"context"
-	"errors"
 	"io"
 	"time"
 
 	"google.golang.org/grpc"
 )
-
-var errNilStreamMessage = errors.New("evals: server stream Recv returned nil message")
 
 // ServerStreamResult is what CallServerStream returns: drained messages,
 // transport error (if any), and timing captured uniformly by the framework.
@@ -46,6 +43,12 @@ func CallServerStream[T any](
 			TotalDuration: time.Since(start),
 		}
 	}
+	if stream == nil {
+		return ServerStreamResult[T]{
+			Err:           ErrNilStream{},
+			TotalDuration: time.Since(start),
+		}
+	}
 
 	var (
 		messages  []T
@@ -73,7 +76,7 @@ func CallServerStream[T any](
 		if msg == nil {
 			return ServerStreamResult[T]{
 				Messages:         messages,
-				Err:              errNilStreamMessage,
+				Err:              ErrNilStreamMessage{},
 				TTFB:             ttfb,
 				TotalDuration:    time.Since(start),
 				MessageIntervals: intervals,

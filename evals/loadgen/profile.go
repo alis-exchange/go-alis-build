@@ -1,7 +1,6 @@
 package loadgen
 
 import (
-	"errors"
 	"time"
 )
 
@@ -28,25 +27,21 @@ type Profile struct {
 
 const defaultRequestTimeout = 30 * time.Second
 
-// ErrInvalidProfile is returned by Generator.Run when the profile is not
-// usable.
-var ErrInvalidProfile = errors.New("loadgen: invalid profile")
-
 func (p Profile) validate() error {
 	if p.QPS <= 0 {
-		return &invalidProfileError{field: "QPS", value: p.QPS}
+		return ErrInvalidProfile{Field: "QPS"}
 	}
 	if p.Concurrency < 1 {
-		return &invalidProfileError{field: "Concurrency", value: p.Concurrency}
+		return ErrInvalidProfile{Field: "Concurrency"}
 	}
 	if p.Duration <= 0 {
-		return &invalidProfileError{field: "Duration", value: p.Duration}
+		return ErrInvalidProfile{Field: "Duration"}
 	}
 	if p.Warmup < 0 {
-		return &invalidProfileError{field: "Warmup", value: p.Warmup}
+		return ErrInvalidProfile{Field: "Warmup"}
 	}
 	if p.RequestTimeout < 0 {
-		return &invalidProfileError{field: "RequestTimeout", value: p.RequestTimeout}
+		return ErrInvalidProfile{Field: "RequestTimeout"}
 	}
 	return nil
 }
@@ -58,14 +53,3 @@ func (p Profile) resolvedRequestTimeout() time.Duration {
 	}
 	return p.RequestTimeout
 }
-
-type invalidProfileError struct {
-	field string
-	value any
-}
-
-func (e *invalidProfileError) Error() string {
-	return "loadgen: invalid profile field " + e.field
-}
-
-func (e *invalidProfileError) Unwrap() error { return ErrInvalidProfile }

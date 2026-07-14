@@ -2,8 +2,6 @@ package bigquery
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -109,7 +107,7 @@ func New(ctx context.Context, projectID, datasetID, tableID string, opts ...Opti
 	}
 	client, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
+		return nil, ErrNewClient{Err: err}
 	}
 	r, err := newFromClient(ctx, client, datasetID, tableID, opts...)
 	if err != nil {
@@ -125,7 +123,7 @@ func New(ctx context.Context, projectID, datasetID, tableID string, opts ...Opti
 // remains responsible for closing the client.
 func NewWithClient(ctx context.Context, client *bigquery.Client, datasetID, tableID string, opts ...Option) (*Reporter, error) {
 	if client == nil {
-		return nil, errors.New("bigquery client is nil")
+		return nil, ErrNilClient{}
 	}
 	_, datasetID, tableID, err := normalizeIDs(client.Project(), datasetID, tableID)
 	if err != nil {
@@ -197,13 +195,13 @@ func normalizeIDs(projectID, datasetID, tableID string) (string, string, string,
 	datasetID = strings.TrimSpace(datasetID)
 	tableID = strings.TrimSpace(tableID)
 	if projectID == "" {
-		return "", "", "", errors.New("bigquery project ID is empty")
+		return "", "", "", ErrEmptyProjectID{}
 	}
 	if datasetID == "" {
-		return "", "", "", errors.New("bigquery dataset ID is empty")
+		return "", "", "", ErrEmptyDatasetID{}
 	}
 	if tableID == "" {
-		return "", "", "", errors.New("bigquery table ID is empty")
+		return "", "", "", ErrEmptyTableID{}
 	}
 	return projectID, datasetID, tableID, nil
 }
@@ -248,7 +246,7 @@ func (r *Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 		msg: run.ProtoReflect(),
 	}
 	if err := r.inserter.Put(ctx, saver); err != nil {
-		return fmt.Errorf("bigquery insert into %s.%s: %w", r.datasetID, r.tableID, err)
+		return ErrInsert{DatasetID: r.datasetID, TableID: r.tableID, Err: err}
 	}
 	return nil
 }

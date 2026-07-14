@@ -2,8 +2,6 @@ package pubsub
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"time"
 
@@ -165,11 +163,11 @@ func New(ctx context.Context, opts ...Option) (*Reporter, error) {
 		projectID = os.Getenv(projectEnvVar)
 	}
 	if projectID == "" {
-		return nil, fmt.Errorf("pubsub reporter: project ID is empty (set %s or pass WithProject)", projectEnvVar)
+		return nil, ErrEmptyProjectID{EnvVar: projectEnvVar}
 	}
 	client, err := newPubsubClient(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("pubsub.NewClient: %w", err)
+		return nil, ErrNewClient{Err: err}
 	}
 	r, err := newFromClient(client, cfg)
 	if err != nil {
@@ -189,11 +187,11 @@ func New(ctx context.Context, opts ...Option) (*Reporter, error) {
 // to it. Passing WithProject returns an error at construction.
 func NewWithClient(client *pubsub.Client, opts ...Option) (*Reporter, error) {
 	if client == nil {
-		return nil, errors.New("pubsub client is nil")
+		return nil, ErrNilClient{}
 	}
 	cfg := loadConfig(opts)
 	if cfg.project != "" {
-		return nil, errors.New("pubsub reporter: WithProject is not valid with NewWithClient (the client already has a project)")
+		return nil, ErrWithProjectWithClient{}
 	}
 	return newFromClient(client, cfg)
 }
@@ -282,7 +280,7 @@ func (r *Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 	defer cancel()
 	data, err := marshalOptions.Marshal(run)
 	if err != nil {
-		return fmt.Errorf("pubsub publish %s: protojson marshal: %w", r.topic, err)
+		return ErrPublishMarshal{Topic: r.topic, Err: err}
 	}
 	msg := &pubsub.Message{Data: data}
 	if r.orderingKey != "" {
@@ -293,7 +291,7 @@ func (r *Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 		return nil
 	}
 	if _, err := result.Get(ctx); err != nil {
-		return fmt.Errorf("pubsub publish %s: %w", r.topic, err)
+		return ErrPublish{Topic: r.topic, Err: err}
 	}
 	return nil
 }
