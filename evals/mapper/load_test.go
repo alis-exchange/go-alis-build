@@ -20,16 +20,26 @@ func TestLoadRun_maps(t *testing.T) {
 			{
 				Name:   "files-v2-load.list-files",
 				Status: evalspb.Status_PASSED,
+				Tags:   map[string]string{"rpc": "ListFiles"},
 				Summary: execution.LoadCaseSummary{
-					Mode:         evalspb.RunLoadTestRequest_MODERATE,
-					TargetQPS:    100,
-					Concurrency:  25,
-					Duration:     time.Second,
-					RequestCount: 95,
-					ErrorCount:   2,
-					ActualQPS:    95,
-					Latency:      execution.LoadLatency{P50Ms: 8, P95Ms: 60, P99Ms: 120, MinMs: 2, MeanMs: 12, MaxMs: 250},
-					ErrorsByCode: map[string]int64{"UNAVAILABLE": 2},
+					Mode:             evalspb.RunLoadTestRequest_MODERATE,
+					TargetQPS:        100,
+					Concurrency:      25,
+					Duration:         time.Second,
+					RequestCount:     95,
+					ErrorCount:       2,
+					CheckPassedCount: 90,
+					CheckFailedCount: 3,
+					DroppedCount:     5,
+					ActualQPS:        95,
+					QPSStages:        []execution.LoadStage{{Duration: time.Second, Target: 100}},
+					Latency:          execution.LoadLatency{P50Ms: 8, P95Ms: 60, P99Ms: 120, MinMs: 2, MeanMs: 12, MaxMs: 250},
+					ErrorsByCode:     map[string]int64{"UNAVAILABLE": 2},
+					Stream: &execution.LoadStreamSummary{
+						StreamCount:       10,
+						MessagesSentTotal: 40,
+						TTFB:              execution.LoadLatency{P99Ms: 25},
+					},
 				},
 				Checks: []execution.SloCheckResult{
 					{ID: "latency.p99_ms", Status: evalspb.Status_PASSED, Observed: 120, Limit: 500, Unit: "ms"},
@@ -61,17 +71,33 @@ func TestLoadRun_maps(t *testing.T) {
 	if c.GetId() != "files-v2-load.list-files" || c.GetStatus() != evalspb.Status_PASSED {
 		t.Fatalf("case=%+v", c)
 	}
-	if c.GetSummary().GetMode() != evalspb.RunLoadTestRequest_MODERATE {
-		t.Fatalf("Summary.Mode=%v", c.GetSummary().GetMode())
+	if c.GetTags()["rpc"] != "ListFiles" {
+		t.Fatalf("Tags=%v", c.GetTags())
 	}
-	if c.GetSummary().GetTargetQps() != 100 || c.GetSummary().GetConcurrency() != 25 {
-		t.Fatalf("Summary target/conc=%v/%v", c.GetSummary().GetTargetQps(), c.GetSummary().GetConcurrency())
+	summary := c.GetSummary()
+	if summary.GetMode() != evalspb.RunLoadTestRequest_MODERATE {
+		t.Fatalf("Summary.Mode=%v", summary.GetMode())
 	}
-	if c.GetSummary().GetLatency().GetP99Ms() != 120 {
-		t.Fatalf("P99=%v", c.GetSummary().GetLatency().GetP99Ms())
+	if summary.GetTargetQps() != 100 || summary.GetConcurrency() != 25 {
+		t.Fatalf("Summary target/conc=%v/%v", summary.GetTargetQps(), summary.GetConcurrency())
 	}
-	if got := c.GetSummary().GetErrorsByCode()["UNAVAILABLE"]; got != 2 {
+	if summary.GetCheckPassedCount() != 90 || summary.GetCheckFailedCount() != 3 {
+		t.Fatalf("check counts=%d/%d", summary.GetCheckPassedCount(), summary.GetCheckFailedCount())
+	}
+	if summary.GetDroppedCount() != 5 {
+		t.Fatalf("DroppedCount=%d", summary.GetDroppedCount())
+	}
+	if len(summary.GetQpsStages()) != 1 || summary.GetQpsStages()[0].GetTarget() != 100 {
+		t.Fatalf("QpsStages=%v", summary.GetQpsStages())
+	}
+	if summary.GetLatency().GetP99Ms() != 120 {
+		t.Fatalf("P99=%v", summary.GetLatency().GetP99Ms())
+	}
+	if got := summary.GetErrorsByCode()["UNAVAILABLE"]; got != 2 {
 		t.Fatalf("ErrorsByCode[UNAVAILABLE]=%d", got)
+	}
+	if summary.GetStream().GetStreamCount() != 10 || summary.GetStream().GetMessagesSentTotal() != 40 {
+		t.Fatalf("Stream=%+v", summary.GetStream())
 	}
 	if len(c.GetChecks()) != 2 {
 		t.Fatalf("len(checks)=%d", len(c.GetChecks()))

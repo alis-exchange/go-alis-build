@@ -124,20 +124,41 @@ type SloCheckResult struct {
 	Unit     string
 }
 
+// LoadStage mirrors a staged profile step in the execution layer.
+type LoadStage struct {
+	Duration time.Duration
+	Target   float64
+}
+
 // LoadCaseSummary is the aggregate outcome for one load case. Field
 // semantics match evalspb.LoadTestResults.Summary; mode/target_qps/
 // concurrency are the resolved values passed to the generator so consumers
 // can interpret ActualQPS.
 type LoadCaseSummary struct {
-	Mode         evalspb.RunLoadTestRequest_Mode
-	TargetQPS    float64
-	Concurrency  int32
-	Duration     time.Duration
-	RequestCount int64
-	ErrorCount   int64
-	ActualQPS    float64
-	Latency      LoadLatency
-	ErrorsByCode map[string]int64
+	Mode              evalspb.RunLoadTestRequest_Mode
+	TargetQPS         float64
+	Concurrency       int32
+	Duration          time.Duration
+	RequestCount      int64
+	ErrorCount        int64
+	CheckPassedCount  int64
+	CheckFailedCount  int64
+	DroppedCount      int64
+	ActualQPS         float64
+	QPSStages         []LoadStage
+	ConcurrencyStages []LoadStage
+	Latency           LoadLatency
+	ErrorsByCode      map[string]int64
+	Stream            *LoadStreamSummary
+}
+
+// LoadStreamSummary holds aggregate streaming RPC metrics for a load case.
+type LoadStreamSummary struct {
+	StreamCount       int64
+	MessagesSentTotal int64
+	TTFB              LoadLatency
+	ResponseLatency   LoadLatency
+	TotalDuration     LoadLatency
 }
 
 // LoadLatency mirrors loadgen.LatencySummary in the execution layer so
@@ -155,6 +176,7 @@ type LoadLatency struct {
 type LoadCaseResult struct {
 	Name    string
 	Status  evalspb.Status
+	Tags    map[string]string
 	Summary LoadCaseSummary
 	Checks  []SloCheckResult
 }

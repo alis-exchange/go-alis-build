@@ -1,7 +1,7 @@
 ---
 type: API Reference
 title: Load profile fields
-description: The `Profile` struct — target QPS, concurrency, duration, warmup, request timeout.
+description: The `Profile` struct — target QPS, concurrency, duration, warmup, request timeout, staged load shapes.
 resource: https://github.com/alis-exchange/go-alis-build/blob/main/evals/loadgen/profile.go
 tags: [api, load, profile]
 timestamp: 2026-07-08T00:00:00Z
@@ -13,11 +13,18 @@ timestamp: 2026-07-08T00:00:00Z
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `QPS` | `float64` | Target requests per second. Must be > 0. |
-| `Concurrency` | `int` | Number of worker goroutines. Must be ≥ 1. Sized to keep enough requests in flight for the target rate at the target's expected latency (Little's law). |
+| `QPS` | `float64` | Target requests per second when `QPSStages` is empty. Must be > 0 unless stages are set. |
+| `Concurrency` | `int` | Number of worker goroutines when `ConcurrencyStages` is empty. Must be ≥ 1. Also sizes channel backpressure when stages are set. |
 | `Duration` | `time.Duration` | The measurement window. Must be > 0. |
 | `Warmup` | `time.Duration` | Traffic runs at target rate for this leading period but the samples are dropped. Zero disables warmup. |
 | `RequestTimeout` | `time.Duration` | Per-request `context.WithTimeout` cap. Zero → 30 s default. Always further capped by the remaining window so a straggler cannot pollute the next case. |
+| `QPSStages` | `[]Stage` | Piecewise QPS shape over `Warmup+Duration`. When non-empty, stage durations must sum to the total window and override constant `QPS`. |
+| `QPSStageLinear` | `bool` | When true, linearly interpolate between consecutive QPS stage targets (ghz-style). |
+| `ConcurrencyStages` | `[]Stage` | Piecewise worker-pool shape over `Warmup+Duration`. When non-empty, stage durations must sum to the total window. |
+| `GracefulRampDown` | `time.Duration` | After the measurement boundary, allow in-flight requests to finish up to this limit before cancelling workers. |
+| `AbortCheck` | `func(*Metrics) bool` | Optional mid-run abort hook (normally wired by the runner from declared SLOs). |
+
+`Stage` holds `Duration` and `Target` (QPS or worker count depending on the parent field).
 
 # Sizing `Concurrency`
 

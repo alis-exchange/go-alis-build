@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"fmt"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
@@ -9,10 +10,19 @@ import (
 	"go.alis.build/evals/suite"
 )
 
-// Target is the shape of a load case body: perform exactly one request. A
-// non-nil error marks the request as failed and increments the case's
-// per-code error count.
-type Target = loadgen.Target
+// ResultTarget executes exactly one load request.
+type ResultTarget = loadgen.ResultTarget
+
+// TransportTarget adapts a transport-only function to a [ResultTarget].
+func TransportTarget(fn func(context.Context) error) ResultTarget {
+	return loadgen.TransportTarget(fn)
+}
+
+// CallData is per-request context for load targets.
+type CallData = loadgen.CallData
+
+// TargetResult separates transport and semantic check outcomes.
+type TargetResult = loadgen.TargetResult
 
 // Profile re-exports [loadgen.Profile] so authors of load suites do not need
 // to import the internal loadgen package.
@@ -93,14 +103,45 @@ func MustNewLoadSuite(name string, opts ...LoadSuiteOption) *LoadSuite {
 	return s
 }
 
-// LoadCase registers a case under the suite. The target is invoked once per
-// scheduled request during the load window. Any SLOs are evaluated against
-// the aggregate metrics after the window closes. Returns a typed error
-// on nil suite ([suite.ErrNilSuite]), nil target ([ErrNilTarget]), an
-// invalid case name ([suite.ErrInvalidCaseName]), or a duplicate
-// ([suite.ErrDuplicateCase]). Use [LoadSuite.MustLoadCase] for fluent
-// chaining.
-func (s *LoadSuite) LoadCase(name string, target Target, slos ...SLO) error {
+// DataProvider supplies per-request data for a load case.
+type DataProvider func(CallData) (any, error)
+
+// LoadCaseOption configures an individual load case.
+type LoadCaseOption interface {
+	applyLoadCase(*loadCaseAdapter)
+}
+
+type loadCaseOption func(*loadCaseAdapter)
+
+func (o loadCaseOption) applyLoadCase(a *loadCaseAdapter) { o(a) }
+
+// WithLoadCaseTags attaches labels to the case wire result.
+func WithLoadCaseTags(tags map[string]string) LoadCaseOption {
+	return loadCaseOption(func(a *loadCaseAdapter) {
+		a.tags = cloneStringMap(tags)
+	})
+}
+
+// WithLoadCaseData sets round-robin payloads rotated by request number.
+func WithLoadCaseData(data ...any) LoadCaseOption {
+	return loadCaseOption(func(a *loadCaseAdapter) {
+		a.data = append([]any(nil), data...)
+	})
+}
+
+// WithLoadCaseDataProvider sets a programmatic data provider.
+func WithLoadCaseDataProvider(p DataProvider) LoadCaseOption {
+	return loadCaseOption(func(a *loadCaseAdapter) {
+		a.provider = p
+	})
+}
+
+// LoadCase registers a load case under the suite.
+func (s *LoadSuite) LoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) error {
+	return s.loadCase(name, target, opts, slos...)
+}
+
+func (s *LoadSuite) loadCase(name string, target ResultTarget, opts []LoadCaseOption, slos ...SLO) error {
 	if s == nil {
 		return suite.ErrNilSuite{}
 	}
@@ -113,13 +154,16 @@ func (s *LoadSuite) LoadCase(name string, target Target, slos ...SLO) error {
 		slos:      append([]SLO(nil), slos...),
 		generator: s.generator,
 	}
+	for _, opt := range opts {
+		opt.applyLoadCase(adapter)
+	}
 	return s.inner.AddCase(adapter)
 }
 
 // MustLoadCase is like [LoadSuite.LoadCase] but panics on error and
 // returns the suite for fluent chaining.
-func (s *LoadSuite) MustLoadCase(name string, target Target, slos ...SLO) *LoadSuite {
-	if err := s.LoadCase(name, target, slos...); err != nil {
+func (s *LoadSuite) MustLoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) *LoadSuite {
+	if err := s.LoadCase(name, target, slos, opts...); err != nil {
 		panic(err)
 	}
 	return s
@@ -148,20 +192,27 @@ func (s *LoadSuite) Inner() *suite.LoadSuite {
 // LoadCaseResult.
 type loadCaseAdapter struct {
 	name      string
-	target    Target
+	target    ResultTarget
 	slos      []SLO
 	generator loadgen.Generator
+	tags      map[string]string
+	data      []any
+	provider  DataProvider
 }
 
 func (a *loadCaseAdapter) Name() string { return a.name }
 
 func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile) *execution.LoadCaseResult {
-	m, err := a.generator.Run(ctx, profile, a.target)
+	if loadgen.AbortOnSLOFailure(ctx) {
+		profile.AbortCheck = abortCheckForSLOs(a.slos)
+	}
+	m, err := a.generator.Run(ctx, profile, a.wrapTarget())
 	if m == nil {
 		m = &loadgen.Metrics{}
 	}
 	result := &execution.LoadCaseResult{
 		Name:    a.name,
+		Tags:    cloneStringMap(a.tags),
 		Summary: summaryFromMetrics(mode, profile, m),
 	}
 	if err != nil {
@@ -174,6 +225,16 @@ func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestReque
 			Status:  evalspb.Status_FAILED,
 			Message: err.Error(),
 			Unit:    "",
+		})
+	}
+	if m.CheckFailedCount > 0 {
+		result.Checks = append(result.Checks, execution.SloCheckResult{
+			ID:       "checks",
+			Status:   evalspb.Status_FAILED,
+			Message:  fmt.Sprintf("%d semantic check(s) failed", m.CheckFailedCount),
+			Observed: float64(m.CheckFailedCount),
+			Limit:    0,
+			Unit:     "count",
 		})
 	}
 	result.Checks = append(result.Checks, evaluateSLOs(a.slos, m)...)
@@ -190,6 +251,39 @@ func rollupLoadCaseStatus(checks []execution.SloCheckResult) evalspb.Status {
 	return evalspb.Status_PASSED
 }
 
+func (a *loadCaseAdapter) wrapTarget() loadgen.ResultTarget {
+	return func(ctx context.Context, data CallData) TargetResult {
+		resolved, err := a.resolveData(data)
+		if err != nil {
+			return TargetResult{TransportErr: err}
+		}
+		data.Data = resolved
+		return a.target(ctx, data)
+	}
+}
+
+func (a *loadCaseAdapter) resolveData(data CallData) (any, error) {
+	if a.provider != nil {
+		return a.provider(data)
+	}
+	if len(a.data) == 0 {
+		return nil, nil
+	}
+	idx := int((data.RequestNumber - 1) % uint64(len(a.data)))
+	return a.data[idx], nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func summaryFromMetrics(mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile, m *loadgen.Metrics) execution.LoadCaseSummary {
 	// duration reflects the measurement window as configured; the generator
 	// preserves this on m.Duration (it does not shrink under saturation).
@@ -198,13 +292,18 @@ func summaryFromMetrics(mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Pr
 		dur = profile.Duration
 	}
 	return execution.LoadCaseSummary{
-		Mode:         mode,
-		TargetQPS:    profile.QPS,
-		Concurrency:  int32(profile.Concurrency),
-		Duration:     dur,
-		RequestCount: m.RequestCount,
-		ErrorCount:   m.ErrorCount,
-		ActualQPS:    m.ActualQPS,
+		Mode:             mode,
+		TargetQPS:        profile.EffectiveQPS(),
+		Concurrency:      int32(profile.MaxConcurrency()),
+		Duration:         dur,
+		RequestCount:     m.RequestCount,
+		ErrorCount:       m.ErrorCount,
+		CheckPassedCount: m.CheckPassedCount,
+		CheckFailedCount: m.CheckFailedCount,
+		DroppedCount:     m.DroppedCount,
+		ActualQPS:        m.ActualQPS,
+		QPSStages:        cloneStages(profile.QPSStages),
+		ConcurrencyStages: cloneStages(profile.ConcurrencyStages),
 		Latency: execution.LoadLatency{
 			P50Ms:  m.Latency.P50Ms,
 			P95Ms:  m.Latency.P95Ms,
@@ -213,8 +312,44 @@ func summaryFromMetrics(mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Pr
 			MeanMs: m.Latency.MeanMs,
 			MaxMs:  m.Latency.MaxMs,
 		},
+		Stream:       streamSummaryFromMetrics(m.Stream),
 		ErrorsByCode: cloneErrorsByCode(m.ErrorsByCode),
 	}
+}
+
+func streamSummaryFromMetrics(s *loadgen.StreamSummary) *execution.LoadStreamSummary {
+	if s == nil {
+		return nil
+	}
+	return &execution.LoadStreamSummary{
+		StreamCount:       s.StreamCount,
+		MessagesSentTotal: s.MessagesSentTotal,
+		TTFB:              latencyFromLoadgen(s.TTFB),
+		ResponseLatency:   latencyFromLoadgen(s.ResponseLatency),
+		TotalDuration:     latencyFromLoadgen(s.TotalDuration),
+	}
+}
+
+func latencyFromLoadgen(l loadgen.LatencySummary) execution.LoadLatency {
+	return execution.LoadLatency{
+		P50Ms:  l.P50Ms,
+		P95Ms:  l.P95Ms,
+		P99Ms:  l.P99Ms,
+		MinMs:  l.MinMs,
+		MeanMs: l.MeanMs,
+		MaxMs:  l.MaxMs,
+	}
+}
+
+func cloneStages(stages []loadgen.Stage) []execution.LoadStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]execution.LoadStage, len(stages))
+	for i, s := range stages {
+		out[i] = execution.LoadStage{Duration: s.Duration, Target: s.Target}
+	}
+	return out
 }
 
 func cloneErrorsByCode(in map[string]int64) map[string]int64 {

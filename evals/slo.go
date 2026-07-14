@@ -91,6 +91,79 @@ func SLOMinQPS(min float64) SLO {
 	}
 }
 
+// SLOStreamTTFB asserts that measured stream send-duration p99 stays at or
+// below max. Targets must populate [loadgen.Metrics.Stream] via
+// [StreamSample.SendDuration] (for example through [ClientStreamTargetResult]).
+// The value maps to the wire StreamSummary.ttfb field. Fails when no stream
+// samples were recorded.
+func SLOStreamTTFB(max time.Duration) SLO {
+	limitMs := float64(max) / float64(time.Millisecond)
+	return SLO{
+		id:    "stream.ttfb_p99_ms",
+		unit:  "ms",
+		limit: limitMs,
+		extract: func(m *loadgen.Metrics) float64 {
+			if m.Stream == nil || m.Stream.StreamCount == 0 {
+				return -1
+			}
+			return m.Stream.TTFB.P99Ms
+		},
+		pass: func(observed, limit float64) bool {
+			if observed < 0 {
+				return false
+			}
+			return observed <= limit
+		},
+		failMessage: func(observed, limit float64) string {
+			if observed < 0 {
+				return "no stream samples recorded"
+			}
+			return fmt.Sprintf("%.1fms exceeds limit %.1fms", observed, limit)
+		},
+	}
+}
+
+// SLOMessagesPerSec asserts that aggregate outbound stream message rate stays
+// at or above min across the measurement window.
+func SLOMessagesPerSec(min float64) SLO {
+	return SLO{
+		id:   "stream.messages_per_sec",
+		unit: "msg/s",
+		extract: func(m *loadgen.Metrics) float64 {
+			if m.Stream == nil || m.Duration <= 0 {
+				return 0
+			}
+			return float64(m.Stream.MessagesSentTotal) / m.Duration.Seconds()
+		},
+		limit: min,
+		pass:  func(observed, limit float64) bool { return observed >= limit },
+		failMessage: func(observed, limit float64) string {
+			return fmt.Sprintf("%.1fmsg/s below floor %.1fmsg/s", observed, limit)
+		},
+	}
+}
+
+// abortCheckForSLOs returns a partial-metrics check that reports true when
+// any configured SLO would fail. Zero request windows are ignored so abort
+// does not fire before the first measured sample.
+func abortCheckForSLOs(slos []SLO) loadgen.AbortCheck {
+	if len(slos) == 0 {
+		return nil
+	}
+	return func(m *loadgen.Metrics) bool {
+		if m == nil || m.RequestCount == 0 {
+			return false
+		}
+		for _, s := range slos {
+			observed := s.extract(m)
+			if !s.pass(observed, s.limit) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 // evaluateSLOs runs every SLO against m and returns one SloCheckResult per
 // SLO in declaration order.
 func evaluateSLOs(slos []SLO, m *loadgen.Metrics) []execution.SloCheckResult {

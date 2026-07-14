@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
@@ -11,14 +12,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Target executes exactly one request. A non-nil return marks the request as
-// an error and increments ErrorsByCode[status.Code(err).String()].
-type Target func(context.Context) error
-
 // Generator runs one load window against a target function. Implementations
 // must be safe to call sequentially against different profiles.
 type Generator interface {
-	Run(ctx context.Context, p Profile, target Target) (*Metrics, error)
+	Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error)
 }
 
 // New returns the default in-process Generator. Each Run spawns its own
@@ -43,16 +40,17 @@ const (
 type sample struct {
 	sentAt  time.Time
 	latency time.Duration
-	err     error
+	result  TargetResult
 }
 
-// Run executes the load window described by p, driving target via a pool of
-// Concurrency workers paced by a ConstantPacer.
+// Run executes the load window described by p, driving target via a worker
+// pool paced by the profile's selected pacer.
 //
-// Target errors are data — they land in Metrics.ErrorsByCode and ErrorCount
-// and never abort the window. Only ctx cancellation and invalid profile
-// produce a returned error (with partial metrics for ctx cancellation).
-func (g *inProcess) Run(ctx context.Context, p Profile, target Target) (*Metrics, error) {
+// Transport failures increment Metrics.ErrorCount and ErrorsByCode; semantic
+// check failures increment CheckFailedCount. Neither aborts the window. Only
+// ctx cancellation, abort-on-SLO, and invalid profile produce a returned
+// error (with partial metrics for cancellation/abort).
+func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error) {
 	if target == nil {
 		return nil, ErrNilTarget{}
 	}
@@ -61,33 +59,79 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target Target) (*Metrics
 	}
 
 	total := p.Warmup + p.Duration
-	pacer := ConstantPacer{Freq: p.QPS, Duration: total}
+	pacer := pacerForProfile(p, total)
+	maxWorkers := p.MaxConcurrency()
 
-	// Channels
-	ticks := make(chan time.Time, p.Concurrency)
-	samples := make(chan sample, p.Concurrency*4)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	// Aggregator: single owner of the histogram + counters, no locks.
+	ticks := make(chan time.Time, maxWorkers)
+	samples := make(chan sample, maxWorkers*4)
+	var dropped atomic.Int64
+	var inFlight atomic.Int32
+
+	start := time.Now()
+	measurementStart := start.Add(p.Warmup)
+	measurementEnd := measurementStart.Add(p.Duration)
+	agg := newAggregator(measurementStart, measurementEnd, p.Duration, 0)
 	aggDone := make(chan *Metrics, 1)
-	measurementStart := time.Time{} // set after ticks begin (start + Warmup)
 	go func() {
-		aggDone <- aggregate(samples, &measurementStart, p.Duration)
+		aggDone <- agg.consume(samples)
 	}()
 
-	// Workers: fixed pool consuming ticks.
-	reqTimeout := p.resolvedRequestTimeout()
-	var wg sync.WaitGroup
-	wg.Add(p.Concurrency)
-	for i := 0; i < p.Concurrency; i++ {
-		go func() {
-			defer wg.Done()
-			runWorker(ctx, ticks, samples, target, reqTimeout, total)
-		}()
+	if p.AbortCheck != nil {
+		go runAbortWatcher(runCtx, cancel, p.AbortCheck, agg)
 	}
 
-	// Pacer: absolute-offset scheduling relative to `start`.
-	start := time.Now()
-	measurementStart = start.Add(p.Warmup)
+	reqTimeout := p.resolvedRequestTimeout()
+	var wg sync.WaitGroup
+	var workerMu sync.Mutex
+	stops := make([]context.CancelFunc, 0, maxWorkers)
+	var reqNum atomic.Uint64
+
+	startWorker := func(workerID int) {
+		workerCtx, cancel := context.WithCancel(runCtx)
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			runWorker(workerCtx, ticks, samples, target, reqTimeout, total, &inFlight, &reqNum, &dropped, id)
+		}(workerID)
+		workerMu.Lock()
+		stops = append(stops, cancel)
+		workerMu.Unlock()
+	}
+
+	stopWorker := func() {
+		workerMu.Lock()
+		defer workerMu.Unlock()
+		if len(stops) == 0 {
+			return
+		}
+		last := len(stops) - 1
+		stops[last]()
+		stops = stops[:last]
+	}
+
+	for i := 0; i < p.initialConcurrency(); i++ {
+		startWorker(i)
+	}
+
+	maxConc := int32(p.MaxConcurrency())
+
+	if len(p.ConcurrencyStages) > 0 {
+		var nextWorkerID atomic.Int32
+		nextWorkerID.Store(int32(p.initialConcurrency()))
+		addWorker := func() {
+			id := int(nextWorkerID.Add(1))
+			startWorker(id)
+		}
+		go runConcurrencySupervisor(runCtx, start, p.ConcurrencyStages, addWorker, stopWorker, func() int {
+			workerMu.Lock()
+			defer workerMu.Unlock()
+			return len(stops)
+		})
+	}
+
 	pacerDone := make(chan struct{})
 	go func() {
 		defer close(pacerDone)
@@ -105,48 +149,299 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target Target) (*Metrics
 				timer.Reset(wait)
 				select {
 				case <-timer.C:
-				case <-ctx.Done():
+				case <-runCtx.Done():
 					return
 				}
 			}
 			now := time.Now()
+			if inFlight.Load() >= maxConc {
+				dropped.Add(1)
+			} else {
+				select {
+				case ticks <- now:
+					sent++
+					inFlight.Add(1)
+				default:
+					dropped.Add(1)
+				}
+			}
 			select {
-			case ticks <- now:
-				sent++
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
+			default:
 			}
 		}
 	}()
 
-	// Wait for pacer to stop (window ended or ctx cancelled), then drain
-	// workers, then wait for the aggregator.
 	<-pacerDone
-	wg.Wait()
+
+	if p.GracefulRampDown > 0 {
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(p.GracefulRampDown):
+			workerMu.Lock()
+			for _, cancel := range stops {
+				cancel()
+			}
+			workerMu.Unlock()
+			wg.Wait()
+		}
+	} else {
+		wg.Wait()
+	}
+
 	close(samples)
 	m := <-aggDone
+	m.DroppedCount = dropped.Load()
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := runCtx.Err(); ctxErr != nil {
 		return m, ctxErr
 	}
 
-	// Saturation warning: if we couldn't hold the target rate, surface it.
-	if m.ActualQPS > 0 && m.ActualQPS < saturationThreshold*p.QPS {
-		alog.Warnf(ctx, "loadgen saturated: actual %.1f qps < target %.1f qps (concurrency=%d, mean latency %.1fms)",
-			m.ActualQPS, p.QPS, p.Concurrency, m.Latency.MeanMs)
+	targetQPS := p.EffectiveQPS()
+	if m.ActualQPS > 0 && m.ActualQPS < saturationThreshold*targetQPS {
+		alog.Warnf(runCtx, "loadgen saturated: actual %.1f qps < target %.1f qps (concurrency=%d, mean latency %.1fms)",
+			m.ActualQPS, targetQPS, p.MaxConcurrency(), m.Latency.MeanMs)
 	}
 	return m, nil
+}
+
+func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check AbortCheck, agg *aggregator) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if check(agg.snapshot()) {
+				cancel()
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+type aggregator struct {
+	measurementStart time.Time
+	measurementEnd   time.Time
+	measureFor       time.Duration
+	dropped          int64
+
+	mu            sync.Mutex
+	hist          *hdrhistogram.Histogram
+	ttfbHist      *hdrhistogram.Histogram
+	respHist      *hdrhistogram.Histogram
+	totalHist     *hdrhistogram.Histogram
+	errorsByCode  map[string]int64
+	count         int64
+	errCount      int64
+	checkPassed   int64
+	checkFailed   int64
+	latencySumUs  float64
+	streamCount   int64
+	messagesTotal int64
+}
+
+func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.Duration, dropped int64) *aggregator {
+	return &aggregator{
+		measurementStart: measurementStart,
+		measurementEnd:   measurementEnd,
+		measureFor:       measureFor,
+		dropped:          dropped,
+		hist:             hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
+		ttfbHist:         hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
+		respHist:         hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
+		totalHist:        hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
+		errorsByCode:     map[string]int64{},
+	}
+}
+
+func (a *aggregator) consume(samples <-chan sample) *Metrics {
+	for s := range samples {
+		a.record(s)
+	}
+	return a.finalize()
+}
+
+func (a *aggregator) snapshot() *Metrics {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.buildMetrics()
+}
+
+func (a *aggregator) finalize() *Metrics {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.buildMetrics()
+}
+
+func (a *aggregator) record(s sample) {
+	if a.measurementStart.IsZero() || s.sentAt.Before(a.measurementStart) {
+		return
+	}
+	if !a.measurementEnd.IsZero() && !s.sentAt.Before(a.measurementEnd) {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.count++
+	us := s.latency.Microseconds()
+	if us < hdrMinValueUs {
+		us = hdrMinValueUs
+	}
+	if us > hdrMaxValueUs {
+		us = hdrMaxValueUs
+	}
+	_ = a.hist.RecordValue(us)
+	a.latencySumUs += float64(s.latency) / float64(time.Microsecond)
+	if s.result.TransportErr != nil {
+		a.errCount++
+		a.errorsByCode[errorCode(s.result.TransportErr)]++
+	}
+	if s.result.CheckErr != nil {
+		a.checkFailed++
+	} else if s.result.TransportErr == nil {
+		a.checkPassed++
+	}
+	if st := s.result.Stream; st != nil {
+		a.streamCount++
+		a.messagesTotal += int64(st.MessagesSent)
+		recordDurationHist(a.ttfbHist, st.SendDuration)
+		recordDurationHist(a.respHist, st.ResponseLatency)
+		recordDurationHist(a.totalHist, st.TotalDuration)
+	}
+}
+
+func (a *aggregator) buildMetrics() *Metrics {
+	m := &Metrics{
+		Duration:         a.measureFor,
+		RequestCount:     a.count,
+		ErrorCount:       a.errCount,
+		CheckPassedCount: a.checkPassed,
+		CheckFailedCount: a.checkFailed,
+		ErrorsByCode:     cloneErrorsMap(a.errorsByCode),
+		DroppedCount:     a.dropped,
+	}
+	if a.measureFor > 0 {
+		m.ActualQPS = float64(a.count) / a.measureFor.Seconds()
+	}
+	if a.count > 0 {
+		m.Latency = latencyFromHist(a.hist, a.latencySumUs, a.count)
+	}
+	if a.streamCount > 0 {
+		m.Stream = &StreamSummary{
+			StreamCount:       a.streamCount,
+			MessagesSentTotal: a.messagesTotal,
+			TTFB:              latencyFromHist(a.ttfbHist, 0, a.streamCount),
+			ResponseLatency:   latencyFromHist(a.respHist, 0, a.streamCount),
+			TotalDuration:     latencyFromHist(a.totalHist, 0, a.streamCount),
+		}
+	}
+	return m
+}
+
+func recordDurationHist(h *hdrhistogram.Histogram, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	us := d.Microseconds()
+	if us < hdrMinValueUs {
+		us = hdrMinValueUs
+	}
+	if us > hdrMaxValueUs {
+		us = hdrMaxValueUs
+	}
+	_ = h.RecordValue(us)
+}
+
+func latencyFromHist(h *hdrhistogram.Histogram, sumUs float64, count int64) LatencySummary {
+	if count == 0 {
+		return LatencySummary{}
+	}
+	mean := sumUs / float64(count) / 1000.0
+	if sumUs == 0 {
+		mean = usToMs(int64(h.Mean()))
+	}
+	return LatencySummary{
+		P50Ms:  usToMs(h.ValueAtQuantile(50)),
+		P95Ms:  usToMs(h.ValueAtQuantile(95)),
+		P99Ms:  usToMs(h.ValueAtQuantile(99)),
+		MinMs:  usToMs(h.Min()),
+		MaxMs:  usToMs(h.Max()),
+		MeanMs: mean,
+	}
+}
+
+func cloneErrorsMap(in map[string]int64) map[string]int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func runConcurrencySupervisor(
+	ctx context.Context,
+	start time.Time,
+	stages []Stage,
+	add, remove func(),
+	current func() int,
+) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			want := concurrencyAt(time.Since(start), stages)
+			for current() < want {
+				add()
+			}
+			for current() > want {
+				remove()
+			}
+		}
+	}
+}
+
+func concurrencyAt(elapsed time.Duration, stages []Stage) int {
+	offset := time.Duration(0)
+	for _, s := range stages {
+		if elapsed < offset+s.Duration {
+			return int(s.Target)
+		}
+		offset += s.Duration
+	}
+	if len(stages) == 0 {
+		return 1
+	}
+	return int(stages[len(stages)-1].Target)
 }
 
 // runWorker pulls ticks and executes the target with a per-request timeout.
 // Panics in the target are recovered and recorded as INTERNAL errors so the
 // window keeps running.
-func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sample, target Target, reqTimeout, windowTotal time.Duration) {
+func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sample, target ResultTarget, reqTimeout, windowTotal time.Duration, inFlight *atomic.Int32, reqNum *atomic.Uint64, dropped *atomic.Int64, workerID int) {
 	for sentAt := range ticks {
-		// Cap the per-request timeout by the remaining window; a request
-		// that outlives the window pollutes the next case.
+		if err := parent.Err(); err != nil {
+			inFlight.Add(-1)
+			return
+		}
 		remaining := windowTotal - time.Since(sentAt)
 		if remaining <= 0 {
+			dropped.Add(1)
+			inFlight.Add(-1)
 			continue
 		}
 		timeout := reqTimeout
@@ -154,75 +449,24 @@ func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sa
 			timeout = remaining
 		}
 		reqCtx, cancel := context.WithTimeout(parent, timeout)
-		latency, err := invokeTarget(reqCtx, target)
+		n := reqNum.Add(1)
+		latency, result := invokeTarget(reqCtx, target, CallData{RequestNumber: n, WorkerID: workerID})
 		cancel()
-		samples <- sample{sentAt: sentAt, latency: latency, err: err}
+		samples <- sample{sentAt: sentAt, latency: latency, result: result}
+		inFlight.Add(-1)
 	}
 }
 
-// invokeTarget runs the target under a panic-recovering defer. A panic is
-// converted to an error so aggregation counts it as a failed request.
-func invokeTarget(ctx context.Context, target Target) (latency time.Duration, err error) {
+func invokeTarget(ctx context.Context, target ResultTarget, data CallData) (latency time.Duration, result TargetResult) {
 	start := time.Now()
 	defer func() {
 		latency = time.Since(start)
 		if v := recover(); v != nil {
-			err = ErrTargetPanic{Value: v, Stack: string(debug.Stack())}
+			result = TargetResult{TransportErr: ErrTargetPanic{Value: v, Stack: string(debug.Stack())}}
 		}
 	}()
-	err = target(ctx)
+	result = target(ctx, data)
 	return
-}
-
-// aggregate drains samples into an HDR histogram and counters. Only samples
-// with sentAt >= *measurementStart are counted, so the warmup window is
-// naturally excluded.
-func aggregate(samples <-chan sample, measurementStart *time.Time, measureFor time.Duration) *Metrics {
-	hist := hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs)
-	errorsByCode := map[string]int64{}
-	var count, errCount int64
-	var latencySumUs float64
-
-	for s := range samples {
-		if measurementStart.IsZero() || s.sentAt.Before(*measurementStart) {
-			continue
-		}
-		count++
-		us := s.latency.Microseconds()
-		if us < hdrMinValueUs {
-			us = hdrMinValueUs
-		}
-		if us > hdrMaxValueUs {
-			us = hdrMaxValueUs
-		}
-		_ = hist.RecordValue(us)
-		latencySumUs += float64(s.latency) / float64(time.Microsecond)
-		if s.err != nil {
-			errCount++
-			errorsByCode[errorCode(s.err)]++
-		}
-	}
-
-	m := &Metrics{
-		Duration:     measureFor,
-		RequestCount: count,
-		ErrorCount:   errCount,
-		ErrorsByCode: errorsByCode,
-	}
-	if measureFor > 0 {
-		m.ActualQPS = float64(count) / measureFor.Seconds()
-	}
-	if count > 0 {
-		m.Latency = LatencySummary{
-			P50Ms:  usToMs(hist.ValueAtQuantile(50)),
-			P95Ms:  usToMs(hist.ValueAtQuantile(95)),
-			P99Ms:  usToMs(hist.ValueAtQuantile(99)),
-			MinMs:  usToMs(hist.Min()),
-			MaxMs:  usToMs(hist.Max()),
-			MeanMs: (latencySumUs / float64(count)) / 1000.0,
-		}
-	}
-	return m
 }
 
 // errorCode returns the canonical gRPC status code name for err. Errors that

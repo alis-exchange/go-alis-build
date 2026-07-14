@@ -32,7 +32,9 @@ sequentially, and produces `execution.RunResult`s for the mapper.
 
 - `runner.Runner` — the concrete type. Its `New()` constructor is
   called by the neuron's wiring code.
-- Options for `Runner` configuring env failure behavior and hooks.
+- Options for `Runner` configuring env failure behavior, progress hooks,
+  context decoration, and `WithAbortOnSLOFailure` (cancels load cases when
+  any declared SLO fails on partial metrics, checked every 2s).
 
 # Files
 

@@ -16,7 +16,7 @@ exist, one per RPC on the deployed `TestService`:
 | ---- | ----------- | ------------- | --------- |
 | Integration test | `evals.NewIntegrationSuite` | `evals.RegisterIntegration` | `func(ctx, *T)` |
 | Agent eval       | `evals.NewAgentEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `func(ctx, *T)` |
-| Load             | `evals.NewLoadSuite` | `evals.RegisterLoad` | `Target` + `SLO...` |
+| Load             | `evals.NewLoadSuite` | `evals.RegisterLoad` | `ResultTarget` + `[]SLO` |
 
 # Properties
 

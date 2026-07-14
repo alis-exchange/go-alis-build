@@ -22,6 +22,27 @@ func TestProfile_Validate(t *testing.T) {
 		{"zero duration", Profile{QPS: 5, Concurrency: 2, Duration: 0}, true},
 		{"negative warmup", Profile{QPS: 5, Concurrency: 2, Duration: time.Second, Warmup: -1}, true},
 		{"negative timeout", Profile{QPS: 5, Concurrency: 2, Duration: time.Second, RequestTimeout: -1}, true},
+		{
+			"valid qps stages",
+			Profile{
+				Concurrency: 2,
+				Duration:    200 * time.Millisecond,
+				QPSStages: []Stage{
+					{Duration: 100 * time.Millisecond, Target: 10},
+					{Duration: 100 * time.Millisecond, Target: 20},
+				},
+			},
+			false,
+		},
+		{
+			"qps stages duration mismatch",
+			Profile{
+				Concurrency: 2,
+				Duration:    200 * time.Millisecond,
+				QPSStages:   []Stage{{Duration: 100 * time.Millisecond, Target: 10}},
+			},
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

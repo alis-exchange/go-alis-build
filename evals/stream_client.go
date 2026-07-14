@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"go.alis.build/evals/loadgen"
 	"google.golang.org/grpc"
 )
 
@@ -87,6 +88,23 @@ func responseLatency(t *clientStreamTiming) time.Duration {
 		return 0
 	}
 	return t.closeAndRecvEnd.Sub(t.closeAndRecvStart)
+}
+
+// ClientStreamTargetResult maps a [ClientStreamResult] into a [TargetResult]
+// with stream timing populated for load case aggregation. Use as the return
+// value from a load [ResultTarget] when exercising client-streaming RPCs;
+// pair with [SLOStreamTTFB] and [SLOMessagesPerSec] for stream SLOs.
+func ClientStreamTargetResult[Resp any](r ClientStreamResult[Resp]) TargetResult {
+	tr := TargetResult{TransportErr: r.Err}
+	if r.SendDuration > 0 || r.ResponseLatency > 0 || r.TotalDuration > 0 || r.MessagesSent > 0 {
+		tr.Stream = &loadgen.StreamSample{
+			SendDuration:    r.SendDuration,
+			ResponseLatency: r.ResponseLatency,
+			TotalDuration:   r.TotalDuration,
+			MessagesSent:    r.MessagesSent,
+		}
+	}
+	return tr
 }
 
 // CallClientStream opens a client-streaming RPC, invokes sendFn with an
