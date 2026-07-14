@@ -485,6 +485,61 @@ func TestInProcess_AbortCheckCancelsEarly(t *testing.T) {
 	}
 }
 
+func TestAggregator_AbortSnapshotSLOFields(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now().Add(-time.Minute)
+	agg := newAggregator(start, start.Add(time.Minute), 30*time.Second, 0)
+	for i := 0; i < 50; i++ {
+		agg.record(sample{
+			sentAt:  start.Add(time.Duration(i) * time.Millisecond),
+			latency: time.Duration(10+i%5) * time.Millisecond,
+			result: TargetResult{
+				TransportErr: errors.New("fail"),
+				Stream: &StreamSample{
+					SendDuration: time.Duration(5+i%3) * time.Millisecond,
+					MessagesSent: 2,
+				},
+			},
+		})
+	}
+
+	abort := agg.abortSnapshot()
+	final := agg.finalize()
+	if abort.RequestCount != final.RequestCount || abort.ErrorCount != final.ErrorCount {
+		t.Fatalf("counts mismatch: abort=%+v final=%+v", abort, final)
+	}
+	if abort.ActualQPS != final.ActualQPS {
+		t.Fatalf("ActualQPS abort=%v final=%v", abort.ActualQPS, final.ActualQPS)
+	}
+	for _, field := range []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"P50", abort.Latency.P50Ms, final.Latency.P50Ms},
+		{"P95", abort.Latency.P95Ms, final.Latency.P95Ms},
+		{"P99", abort.Latency.P99Ms, final.Latency.P99Ms},
+	} {
+		if field.got != field.want {
+			t.Fatalf("latency %s abort=%v final=%v", field.name, field.got, field.want)
+		}
+	}
+	if abort.Stream == nil || final.Stream == nil {
+		t.Fatal("stream summary missing")
+	}
+	if abort.Stream.StreamCount != final.Stream.StreamCount ||
+		abort.Stream.MessagesSentTotal != final.Stream.MessagesSentTotal {
+		t.Fatalf("stream counts abort=%+v final=%+v", abort.Stream, final.Stream)
+	}
+	if abort.Stream.TTFB.P99Ms != final.Stream.TTFB.P99Ms {
+		t.Fatalf("TTFB P99 abort=%v final=%v", abort.Stream.TTFB.P99Ms, final.Stream.TTFB.P99Ms)
+	}
+	if abort.ErrorsByCode != nil {
+		t.Fatal("abort snapshot should omit ErrorsByCode")
+	}
+}
+
 func TestInProcess_StreamSummaryAggregation(t *testing.T) {
 	t.Parallel()
 
