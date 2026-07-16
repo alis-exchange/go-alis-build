@@ -2,6 +2,7 @@ package loadgen
 
 import "context"
 
+// abortOnSLOKey is the private context key set by [ContextWithAbortOnSLOFailure].
 type abortOnSLOKey struct{}
 
 // ContextWithAbortOnSLOFailure marks ctx so load cases install an abort

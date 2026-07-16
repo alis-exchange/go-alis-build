@@ -1,18 +1,18 @@
 // Package evals is the case-authoring surface for integration tests, agent
-// evaluations, and load tests. Suites written against this package are
-// picked up by the deployed TestServiceServer and executed via three
-// LRO-backed RPCs (RunIntegrationTest, RunAgentEval, RunLoadTest).
+// evaluations, load tests, and infra observation. Suites written against
+// this package are picked up by the deployed TestServiceServer and executed
+// via four LRO-backed RPCs (RunIntegrationTest, RunAgentEval, RunLoadTest,
+// RunInfraObservation).
 //
 // The framework is split into a small authoring package (this one) and a
 // set of runtime subpackages that consumers rarely import directly:
 // [suite], [registry], [runner], [mapper], [report], [execution],
-// [loadgen], and the case-adjacent helpers in [env] and [adk]. See the
-// top-level README for a wiring diagram and the end-to-end lifecycle.
+// [loadgen], [loadinfra], and the case-adjacent helpers in [env] and [adk].
 //
 // # Suites and cases
 //
 // Everything is organised around Suites — named groups of Cases that share
-// optional environment setup, lifecycle hooks, and caller identity. Three
+// optional environment setup, lifecycle hooks, and caller identity. Four
 // kinds of suite exist, one per run type on the TestService RPC:
 //
 //   - Integration test suite ([NewIntegrationSuite] / [RegisterIntegration]) —
@@ -23,6 +23,10 @@
 //   - Load-test suite ([NewLoadSuite] / [RegisterLoad]) — the framework
 //     generates traffic against a target function and evaluates SLOs on the
 //     aggregate metrics; results surface as per-case `Summary` + `Checks`.
+//   - Infra-observe suite ([NewInfraObserveSuite] / [RegisterInfraObserve]) —
+//     cases fetch Cloud Run and Spanner Monitoring snapshots over a settled
+//     lookback window without generating client load; results surface as
+//     per-case Cloud Run / Spanner snapshots.
 //
 // Every case is qualified as `{suite}.{case}` at registration and can be
 // selected from the RPC via case_ids ("suite" for the whole suite,
@@ -167,6 +171,26 @@
 // duration, or warmup. A resolved profile fully replaces the default (no
 // field-level merging); this keeps intent explicit at high modes.
 //
+// Load suites can attach Cloud Run and Spanner targets with
+// [WithCloudRunTargets] and [WithSpannerTargets]. After each case the
+// framework observes the measurement window and attaches snapshots to the
+// wire result. Infra data is diagnostic in v1 — case status follows SLOs only.
+//
+// # Infra observation
+//
+// Infra-observe suites fetch Cloud Run and Spanner Monitoring snapshots
+// over a settled lookback window without generating client load. Cases run
+// concurrently; lookback resolves request → per-case → suite ([WithLookback]).
+// Declare targets with [WithCloudRunTargets] and [WithSpannerTargets]
+// (shared with load suites).
+//
+//	s := evals.MustNewInfraObserveSuite("peak-hours",
+//	    evals.WithLookback(30*time.Minute),
+//	    evals.WithCloudRunTargets(evals.CloudRunTarget{...}),
+//	)
+//	s.MustInfraObserveCase("hourly")
+//	evals.RegisterInfraObserve(s)
+//
 // # Suite options
 //
 // Test and eval suites share a [SuiteOption] set:
@@ -248,13 +272,14 @@
 // # Registration and execution
 //
 // Suites are published to a process-wide registry via [RegisterIntegration],
-// [RegisterEval], [RegisterLoad], and [RegisterAgent] (lazy providers).
+// [RegisterEval], [RegisterLoad], [RegisterInfraObserve], and
+// [RegisterAgent] (lazy providers).
 // The default registry is accessible via [DefaultRegistry] and is what
 // TestServiceServer consumes when it starts a run — the wiring matches
 // http.DefaultServeMux.
 //
-// Each RunTest/RunEval/RunLoad RPC starts an LRO, selects matching
-// suites from the registry, hands them to [runner.Runner], maps completed
+// Each RunTest/RunEval/RunLoad/RunInfraObservation RPC starts an LRO,
+// selects matching suites from the registry, hands them to [runner.Runner], maps completed
 // suites to `evalspb.Run` via [mapper], and emits every Run to
 // [report.Reporter].
 //

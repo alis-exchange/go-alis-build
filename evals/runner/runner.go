@@ -27,9 +27,12 @@ import (
 // latency samples. Case-level concurrency is a load-suite concern
 // expressed via [loadgen.Profile.Concurrency].
 type Runner struct {
-	progress            func(completed, total int)
-	decorate            suite.ContextDecorator
-	abortOnSLOFailure   bool
+	// progress is the default LRO progress callback when a Run* method receives nil progress.
+	progress func(completed, total int)
+	// decorate is the runner-wide ContextDecorator inherited by suites without their own.
+	decorate suite.ContextDecorator
+	// abortOnSLOFailure enables mid-load cancellation when partial metrics breach an SLO.
+	abortOnSLOFailure bool
 }
 
 // Option configures a [Runner] at construction time.
@@ -359,38 +362,56 @@ func (r *Runner) RunLoadSuites(
 		}
 
 		if setupOK {
-			for _, c := range run.Cases {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if !profileOK {
+			runCtx, closeInfra, infraErr := attachInfraClient(runCtx, run.CloudRun, run.Spanner)
+			if infraErr != nil {
+				for _, c := range run.Cases {
 					cases = append(cases, execution.LoadCaseResult{
 						Name:   c.Name(),
 						Status: evalspb.Status_FAILED,
 						Checks: []execution.SloCheckResult{{
-							ID:      "profile",
+							ID:      result.SetupErrorCheckName,
 							Status:  evalspb.Status_FAILED,
-							Message: fmt.Sprintf("no profile resolved for mode %v", mode),
+							Message: infraErr.Error(),
 						}},
 					})
 					completed++
 					notify()
-					continue
 				}
-				caseCtx := runCtx
-				if r.abortOnSLOFailure {
-					caseCtx = loadgen.ContextWithAbortOnSLOFailure(runCtx)
-				}
-				caseResult := runLoadCaseWithRecovery(caseCtx, c, mode, profile)
-				if caseResult == nil {
-					caseResult = &execution.LoadCaseResult{
-						Name:   c.Name(),
-						Status: evalspb.Status_FAILED,
+			} else {
+				for _, c := range run.Cases {
+					if err := ctx.Err(); err != nil {
+						return nil, err
 					}
+					if !profileOK {
+						cases = append(cases, execution.LoadCaseResult{
+							Name:   c.Name(),
+							Status: evalspb.Status_FAILED,
+							Checks: []execution.SloCheckResult{{
+								ID:      "profile",
+								Status:  evalspb.Status_FAILED,
+								Message: fmt.Sprintf("no profile resolved for mode %v", mode),
+							}},
+						})
+						completed++
+						notify()
+						continue
+					}
+					caseCtx := runCtx
+					if r.abortOnSLOFailure {
+						caseCtx = loadgen.ContextWithAbortOnSLOFailure(runCtx)
+					}
+					caseResult := runLoadCaseWithRecovery(caseCtx, c, mode, profile)
+					if caseResult == nil {
+						caseResult = &execution.LoadCaseResult{
+							Name:   c.Name(),
+							Status: evalspb.Status_FAILED,
+						}
+					}
+					cases = append(cases, *caseResult)
+					completed++
+					notify()
 				}
-				cases = append(cases, *caseResult)
-				completed++
-				notify()
+				closeInfra()
 			}
 			if run.Teardown != nil {
 				_ = run.Teardown(runCtx)
@@ -449,6 +470,7 @@ func runEvalCaseWithRecovery(ctx context.Context, c suite.EvalCase) (r *executio
 	return c.Run(ctx)
 }
 
+// skipReason builds the NOT_EVALUATED message when StopOnFailure halts a suite.
 func skipReason(failedName string) string {
 	if failedName == "" {
 		return "preceding case failed"
@@ -456,6 +478,7 @@ func skipReason(failedName string) string {
 	return fmt.Sprintf("preceding case %q failed", failedName)
 }
 
+// suiteNameFromRun derives the suite name from TestSuiteRun.Name or the first case prefix.
 func suiteNameFromRun(run suite.TestSuiteRun) string {
 	if run.Name != "" {
 		return run.Name
@@ -466,6 +489,7 @@ func suiteNameFromRun(run suite.TestSuiteRun) string {
 	return suitePrefix(run.Cases[0].Name())
 }
 
+// suiteNameFromEvalRun is [suiteNameFromRun] for agent-eval suite runs.
 func suiteNameFromEvalRun(run suite.EvalSuiteRun) string {
 	if run.Name != "" {
 		return run.Name
@@ -476,6 +500,7 @@ func suiteNameFromEvalRun(run suite.EvalSuiteRun) string {
 	return suitePrefix(run.Cases[0].Name())
 }
 
+// suiteNameFromLoadRun is [suiteNameFromRun] for load-test suite runs.
 func suiteNameFromLoadRun(run suite.LoadSuiteRun) string {
 	if run.Name != "" {
 		return run.Name
@@ -495,6 +520,7 @@ func RollupLoadSuiteStatus(sr execution.LoadSuiteResult) evalspb.Status {
 	return result.RollupRunStatus(statuses)
 }
 
+// suitePrefix returns the suite segment of a qualified "suite.case" name.
 func suitePrefix(qualified string) string {
 	suite, _, ok := strings.Cut(qualified, ".")
 	if !ok {
@@ -503,6 +529,7 @@ func suitePrefix(qualified string) string {
 	return suite
 }
 
+// caseStatuses extracts per-case statuses for suite-level rollup.
 func caseStatuses(cases []execution.CaseResult) []evalspb.Status {
 	statuses := make([]evalspb.Status, len(cases))
 	for i, s := range cases {

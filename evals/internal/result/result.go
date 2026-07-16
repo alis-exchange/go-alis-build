@@ -6,11 +6,15 @@ import (
 )
 
 const (
-	CaseErrorCheckName  = "case"
+	// CaseErrorCheckName is the check id recorded when a case panics.
+	CaseErrorCheckName = "case"
+	// SetupErrorCheckName is the check id recorded when suite setup fails.
 	SetupErrorCheckName = "setup"
-	SkippedCheckName    = "skipped"
+	// SkippedCheckName is the check id recorded when a case is not evaluated.
+	SkippedCheckName = "skipped"
 )
 
+// statusPassed reports whether s is the wire PASSED enum value.
 func statusPassed(s evalspb.Status) bool {
 	return s == evalspb.Status_PASSED
 }
@@ -44,10 +48,13 @@ func RollupCaseStatus(metrics []execution.Metric) evalspb.Status {
 	return evalspb.Status_PASSED
 }
 
+// metricPassed reports whether a single metric leaf passed rollup.
 func metricPassed(m execution.Metric) bool {
 	return statusPassed(m.Status)
 }
 
+// caseErrorMetric builds a FAILED metric leaf for a panicked or errored case.
+// The caller may override ID (for example to SetupErrorCheckName).
 func caseErrorMetric(err error) execution.Metric {
 	return execution.Metric{
 		ID:      CaseErrorCheckName,
@@ -69,11 +76,10 @@ func MetricFromCheck(c execution.Check) execution.Metric {
 // Per-rubric Rationale is preserved so downstream mappers can emit it on the
 // wire; see [MetricsProto].
 func MetricFromCriterion(c execution.Criterion) execution.Metric {
-	score := c.Score
 	m := execution.Metric{
 		ID:        c.ID,
 		Status:    c.Status,
-		Score:     &score,
+		Score:     new(c.Score),
 		Threshold: c.Threshold,
 		Message:   c.Rationale,
 	}
@@ -98,6 +104,9 @@ func MetricFromCriterion(c execution.Criterion) execution.Metric {
 // (e.g. the [execution.RubricScore.Rationale] rollout) has to be applied
 // twice and can silently drift.
 //
+// Threshold is emitted only when Score is set: without an observed score there
+// is no comparison baseline to report on the wire.
+//
 // Empty [execution.RubricScore.Rationale] values are elided (the proto's
 // Rationale is proto3-optional) so readers can distinguish "not provided"
 // from an explicit empty string; the same convention applies to
@@ -106,11 +115,13 @@ func MetricsProto(metrics []execution.Metric) []*evalspb.AgentEvalResults_Case_M
 	out := make([]*evalspb.AgentEvalResults_Case_Metric, len(metrics))
 	for i, m := range metrics {
 		wm := &evalspb.AgentEvalResults_Case_Metric{
-			Id:        m.ID,
-			Status:    m.Status,
-			Score:     m.Score,
-			Threshold: m.Threshold,
-			Message:   m.Message,
+			Id:      m.ID,
+			Status:  m.Status,
+			Score:   m.Score,
+			Message: m.Message,
+		}
+		if m.Score != nil {
+			wm.Threshold = new(m.Threshold)
 		}
 		if len(m.Rubric) > 0 {
 			wm.Rubric = make([]*evalspb.AgentEvalResults_Case_Metric_RubricScore, len(m.Rubric))
@@ -121,8 +132,7 @@ func MetricsProto(metrics []execution.Metric) []*evalspb.AgentEvalResults_Case_M
 					Score:  r.Score,
 				}
 				if r.Rationale != "" {
-					rationale := r.Rationale
-					wr.Rationale = &rationale
+					wr.Rationale = new(r.Rationale)
 				}
 				wm.Rubric[j] = wr
 			}

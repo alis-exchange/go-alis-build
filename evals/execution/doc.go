@@ -25,8 +25,13 @@
 //     embedded in SuiteResult. Zero value signals "no judge context"
 //     and suppresses the wire sidecar.
 //   - [LoadCaseResult]  — a load case. Carries a [LoadCaseSummary] with
-//     aggregate metrics plus a list of [SloCheckResult]s.
+//     aggregate metrics plus a list of [SloCheckResult]s. [LoadCaseResult.CloudRun]
+//     and [LoadCaseResult.Spanner] hold diagnostic infra snapshots when targets
+//     are declared on the suite.
 //   - [LoadSuiteResult] — a list of LoadCaseResults.
+//   - [InfraObserveCaseResult] — one standalone infra observation case with
+//     resolved lookback, window bounds, and Cloud Run / Spanner snapshots.
+//   - [InfraObserveSuiteResult] — a list of InfraObserveCaseResults.
 //
 // Checks vs SloCheckResults: a Check is a boolean assertion. A
 // SloCheckResult is a numeric threshold comparison — it always carries

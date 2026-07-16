@@ -13,6 +13,7 @@
 //   - [IntegrationRun] — `SuiteResult` → `evalspb.Run{IntegrationTest: ...}`
 //   - [AgentEvalRun]   — `SuiteResult` → `evalspb.Run{AgentEval: ...}`
 //   - [LoadRun]        — `LoadSuiteResult` → `evalspb.Run{LoadTest: ...}`
+//   - [InfraObserveRun] — `InfraObserveSuiteResult` → `evalspb.Run{InfraObservation: ...}`
 //
 // Each stamps common fields (name, type, status via
 // [runner.RollupSuiteStatus] / [runner.RollupLoadSuiteStatus], start/end

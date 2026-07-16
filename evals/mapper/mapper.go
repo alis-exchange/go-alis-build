@@ -28,7 +28,7 @@ func IntegrationRun(sr execution.SuiteResult, operation, runID, batchID string) 
 		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
 	}
 	if batchID != "" {
-		run.BatchId = &batchID
+		run.BatchId = new(batchID)
 	}
 
 	return run
@@ -51,25 +51,70 @@ func LoadRun(sr execution.LoadSuiteResult, operation, runID, batchID string) *ev
 		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
 	}
 	if batchID != "" {
-		run.BatchId = &batchID
+		run.BatchId = new(batchID)
 	}
 	return run
 }
 
+// loadTestData maps execution load results to the wire LoadTestResults proto.
 func loadTestData(sr execution.LoadSuiteResult) *evalspb.LoadTestResults {
 	cases := make([]*evalspb.LoadTestResults_Case, 0, len(sr.Cases))
 	for _, c := range sr.Cases {
 		cases = append(cases, &evalspb.LoadTestResults_Case{
-			Id:      c.Name,
-			Status:  c.Status,
-			Tags:    c.Tags,
-			Summary: mapLoadSummary(c.Summary),
-			Checks:  mapSloChecks(c.Checks),
+			Id:        c.Name,
+			Status:    c.Status,
+			Tags:      c.Tags,
+			Summary:   mapLoadSummary(c.Summary),
+			Checks:    mapSloChecks(c.Checks),
+			CloudRun:  c.CloudRun,
+			Spanner:   c.Spanner,
+			InfraChecks: nil, // v1 diagnostics only
 		})
 	}
 	return &evalspb.LoadTestResults{Cases: cases}
 }
 
+// InfraObserveRun maps a completed infra observation suite result to a wire Run.
+func InfraObserveRun(sr execution.InfraObserveSuiteResult, operation, runID, batchID string) *evalspb.Run {
+	now := timestamppb.Now()
+	run := &evalspb.Run{
+		Name:       "runs/" + runID,
+		Type:       evalspb.Run_INFRA_OBSERVATION,
+		Status:     runner.RollupInfraObserveSuiteStatus(sr),
+		StartTime:  timestamppb.New(sr.StartTime),
+		EndTime:    timestamppb.New(sr.EndTime),
+		Operation:  operation,
+		CreateTime: now,
+		Data: &evalspb.Run_InfraObservation{
+			InfraObservation: infraObservationData(sr),
+		},
+		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
+	}
+	if batchID != "" {
+		run.BatchId = new(batchID)
+	}
+	return run
+}
+
+// infraObservationData maps execution infra-observe results to the wire proto.
+func infraObservationData(sr execution.InfraObserveSuiteResult) *evalspb.InfraObservationResults {
+	cases := make([]*evalspb.InfraObservationResults_Case, 0, len(sr.Cases))
+	for _, c := range sr.Cases {
+		cases = append(cases, &evalspb.InfraObservationResults_Case{
+			Id:          c.Name,
+			Status:      c.Status,
+			Lookback:    durationpb.New(c.Lookback),
+			WindowStart: timestamppb.New(c.WindowStart),
+			WindowEnd:   timestamppb.New(c.WindowEnd),
+			CloudRun:    c.CloudRun,
+			Spanner:     c.Spanner,
+			InfraChecks: nil, // v1 diagnostics only
+		})
+	}
+	return &evalspb.InfraObservationResults{Cases: cases}
+}
+
+// mapLoadSummary copies one case summary into the wire LoadTestResults_Summary shape.
 func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summary {
 	out := &evalspb.LoadTestResults_Summary{
 		Mode:             s.Mode,
@@ -82,7 +127,7 @@ func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summar
 		CheckFailedCount: s.CheckFailedCount,
 		DroppedCount:     s.DroppedCount,
 		ActualQps:        s.ActualQPS,
-		Latency: &evalspb.LoadTestResults_LatencyPercentiles{
+		Latency: &evalspb.LatencyPercentiles{
 			P50Ms:  s.Latency.P50Ms,
 			P95Ms:  s.Latency.P95Ms,
 			P99Ms:  s.Latency.P99Ms,
@@ -98,6 +143,7 @@ func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summar
 	return out
 }
 
+// mapLoadStages copies staged QPS/concurrency ramps; nil when the case had no stages.
 func mapLoadStages(stages []execution.LoadStage) []*evalspb.LoadTestResults_LoadStage {
 	if len(stages) == 0 {
 		return nil
@@ -112,6 +158,7 @@ func mapLoadStages(stages []execution.LoadStage) []*evalspb.LoadTestResults_Load
 	return out
 }
 
+// mapLoadStreamSummary copies streaming metrics when the case populated Stream.
 func mapLoadStreamSummary(s *execution.LoadStreamSummary) *evalspb.LoadTestResults_StreamSummary {
 	if s == nil {
 		return nil
@@ -125,11 +172,12 @@ func mapLoadStreamSummary(s *execution.LoadStreamSummary) *evalspb.LoadTestResul
 	}
 }
 
-func mapLoadLatency(l execution.LoadLatency) *evalspb.LoadTestResults_LatencyPercentiles {
+// mapLoadLatency copies percentile fields; nil when the source latency is zero-valued.
+func mapLoadLatency(l execution.LoadLatency) *evalspb.LatencyPercentiles {
 	if l == (execution.LoadLatency{}) {
 		return nil
 	}
-	return &evalspb.LoadTestResults_LatencyPercentiles{
+	return &evalspb.LatencyPercentiles{
 		P50Ms:  l.P50Ms,
 		P95Ms:  l.P95Ms,
 		P99Ms:  l.P99Ms,
@@ -139,6 +187,7 @@ func mapLoadLatency(l execution.LoadLatency) *evalspb.LoadTestResults_LatencyPer
 	}
 }
 
+// mapSloChecks copies per-SLO check results in declaration order.
 func mapSloChecks(checks []execution.SloCheckResult) []*evalspb.LoadTestResults_SloCheck {
 	out := make([]*evalspb.LoadTestResults_SloCheck, len(checks))
 	for i, c := range checks {
@@ -174,6 +223,7 @@ func AgentEvalRun(sr execution.SuiteResult, operation, runID string) *evalspb.Ru
 	return run
 }
 
+// integrationData maps execution integration results to the wire proto.
 func integrationData(sr execution.SuiteResult) *evalspb.IntegrationTestResults {
 	cases := make([]*evalspb.IntegrationTestResults_Case, 0, len(sr.Cases))
 	for _, c := range sr.Cases {
@@ -189,6 +239,8 @@ func integrationData(sr execution.SuiteResult) *evalspb.IntegrationTestResults {
 	}
 }
 
+// agentEvalData maps execution agent-eval results to the wire proto, including
+// the optional JudgeInfo sidecar when judge provenance or call count is non-zero.
 func agentEvalData(sr execution.SuiteResult) *evalspb.AgentEvalResults {
 	cases := make([]*evalspb.AgentEvalResults_Case, 0, len(sr.Cases))
 	for _, c := range sr.Cases {
@@ -208,19 +260,23 @@ func agentEvalData(sr execution.SuiteResult) *evalspb.AgentEvalResults {
 	// evals v0.1.4, which was indistinguishable from an unpopulated
 	// judge run on the wire.
 	if !sr.Judge.IsZero() || sr.JudgeCallCount != 0 {
-		out.Judge = &evalspb.AgentEvalResults_JudgeInfo{
+		judge := &evalspb.AgentEvalResults_JudgeInfo{
 			Model:          sr.Judge.Model,
-			ModelVersion:   sr.Judge.ModelVersion,
 			JudgeCallCount: sr.JudgeCallCount,
 			// JudgeErrorCount is not derived here; see adk.JudgeContext
 			// godoc for why NOT_EVALUATED is not classified as an
 			// error. Callers with an out-of-band signal can populate
 			// the field by post-processing the returned proto.
 		}
+		if sr.Judge.ModelVersion != "" {
+			judge.ModelVersion = new(sr.Judge.ModelVersion)
+		}
+		out.Judge = judge
 	}
 	return out
 }
 
+// mapChecks copies integration-test assertion results in declaration order.
 func mapChecks(checks []execution.Check) []*evalspb.IntegrationTestResults_Case_Check {
 	out := make([]*evalspb.IntegrationTestResults_Case_Check, len(checks))
 	for i, c := range checks {

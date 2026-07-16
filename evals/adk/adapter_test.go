@@ -20,7 +20,7 @@ func TestCaseFromRunEvalResult_mapsFields(t *testing.T) {
 		OverallEvalMetricResults: []models.EvalMetricResult{{
 			MetricName: "response_match_score",
 			Threshold:  0.5,
-			Score:      &score,
+			Score:      new(score),
 			EvalStatus: models.EvalStatusPassed,
 		}},
 	}
@@ -50,7 +50,7 @@ func TestCaseFromRunEvalResult_failedMetricMessage(t *testing.T) {
 		OverallEvalMetricResults: []models.EvalMetricResult{{
 			MetricName: "quality",
 			Threshold:  0.8,
-			Score:      &score,
+			Score:      new(score),
 			EvalStatus: models.EvalStatusFailed,
 		}},
 	}
@@ -77,7 +77,7 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 				RubricScores: []models.RubricScore{{
 					RubricID:  "accuracy",
 					Score:     &rubricScore,
-					Rationale: &rationale,
+					Rationale: new(rationale),
 				}},
 			},
 		}},
@@ -132,7 +132,7 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOnWire(t *testing.T) 
 					RubricScores: []models.RubricScore{{
 						RubricID:  "accuracy",
 						Score:     &rubricScore,
-						Rationale: &rationale,
+						Rationale: new(rationale),
 					}},
 				},
 			}},

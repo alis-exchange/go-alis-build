@@ -14,11 +14,14 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// defaultInsertTimeout bounds each streaming insert when [WithInsertTimeout]
+// is unset or non-positive.
 const defaultInsertTimeout = 10 * time.Second
 
 // rowInserter is the write seam. *bigquery.Inserter satisfies it directly;
 // tests substitute a fake.
 type rowInserter interface {
+	// Put streams one row to BigQuery; src is typically a MessageSaver or durationStringSaver.
 	Put(ctx context.Context, src any) error
 }
 
@@ -29,19 +32,29 @@ var ensureTable = bqschema.EnsureTable
 // table. The target schema must match [Reporter.Schema] (equivalently
 // [InferSchema] when no schema options are configured).
 type Reporter struct {
-	inserter       rowInserter
-	datasetID      string
-	tableID        string
-	insertTimeout  time.Duration
+	// inserter performs the streaming insert; tests inject a fake via seams.
+	inserter rowInserter
+	// datasetID and tableID identify the insert target for error messages.
+	datasetID string
+	tableID   string
+	// insertTimeout bounds each [Reporter.ReportRun] call via context.WithTimeout.
+	insertTimeout time.Duration
+	// marshalOptions controls protobq row encoding; schema inference stays in bqschema.
 	marshalOptions protobq.MarshalOptions
-	closer         func() error
+	// closer is non-nil when [New] owns the *bigquery.Client; [NewWithClient] leaves it nil.
+	closer func() error
 }
 
+// config accumulates [Option] values before a Reporter is constructed.
 type config struct {
-	insertTimeout  time.Duration
+	// insertTimeout is the per-insert deadline; zero uses defaultInsertTimeout.
+	insertTimeout time.Duration
+	// marshalOptions holds protobq encoding options (schema stays in bqschema).
 	marshalOptions protobq.MarshalOptions
-	autoCreate     bool
-	tableMetadata  *bigquery.TableMetadata
+	// autoCreate when true makes newFromClient call ensureTable.
+	autoCreate bool
+	// tableMetadata is optional create-time metadata; schema is always overwritten.
+	tableMetadata *bigquery.TableMetadata
 }
 
 // Option configures a Reporter.
@@ -90,7 +103,7 @@ func WithAutoCreateTable(md ...bigquery.TableMetadata) Option {
 		c.autoCreate = true
 		if len(md) > 0 {
 			m := md[0]
-			c.tableMetadata = &m
+			c.tableMetadata = new(m)
 		}
 	}
 }
@@ -132,6 +145,9 @@ func NewWithClient(ctx context.Context, client *bigquery.Client, datasetID, tabl
 	return newFromClient(ctx, client, datasetID, tableID, opts...)
 }
 
+// newFromClient builds a Reporter from an existing client. When autoCreate is
+// enabled it delegates table provisioning to ensureTable (bqschema.EnsureTable
+// by default).
 func newFromClient(ctx context.Context, client *bigquery.Client, datasetID, tableID string, opts ...Option) (*Reporter, error) {
 	cfg := loadConfig(opts)
 	r := &Reporter{
@@ -179,6 +195,7 @@ func newFromClientWithSeams(ctx context.Context, ins rowInserter, datasetID, tab
 	return r, nil
 }
 
+// loadConfig applies options and normalizes insertTimeout to defaultInsertTimeout.
 func loadConfig(opts []Option) config {
 	cfg := config{insertTimeout: defaultInsertTimeout}
 	for _, opt := range opts {
@@ -190,6 +207,7 @@ func loadConfig(opts []Option) config {
 	return cfg
 }
 
+// normalizeIDs trims whitespace and rejects empty project, dataset, or table IDs.
 func normalizeIDs(projectID, datasetID, tableID string) (string, string, string, error) {
 	projectID = strings.TrimSpace(projectID)
 	datasetID = strings.TrimSpace(datasetID)
@@ -264,16 +282,21 @@ func InferSchema() bigquery.Schema {
 	return bqschema.Schema()
 }
 
+// wktDuration is the protoreflect full name checked when rewriting Duration fields.
 const wktDuration = "google.protobuf.Duration"
 
 // durationStringSaver wraps protobq.MessageSaver to write google.protobuf.Duration
 // values as their protojson-native string form (durationpb.String()) instead of
 // FLOAT64 seconds, so bqreport row shape matches evals/report/pubsub JSON output.
 type durationStringSaver struct {
+	// inner is the default protobq row encoder.
 	inner *protobq.MessageSaver
-	msg   protoreflect.Message
+	// msg is the source message walked for Duration overrides.
+	msg protoreflect.Message
 }
 
+// Save implements the row shape expected by bigquery.Inserter.Put. It
+// delegates to inner.Save, then rewrites Duration fields to protojson strings.
 func (s *durationStringSaver) Save() (map[string]bigquery.Value, string, error) {
 	row, insertID, err := s.inner.Save()
 	if err != nil {
@@ -284,6 +307,9 @@ func (s *durationStringSaver) Save() (map[string]bigquery.Value, string, error) 
 	return row, insertID, nil
 }
 
+// overrideDurationValues walks m and rewrites matching Duration columns in row
+// (and nested RECORD/list elements) from protobq FLOAT64 seconds to protojson
+// strings. Unmatched keys are left untouched.
 func overrideDurationValues(m protoreflect.Message, row map[string]bigquery.Value) {
 	if m == nil || row == nil {
 		return
@@ -324,6 +350,9 @@ func overrideDurationValues(m protoreflect.Message, row map[string]bigquery.Valu
 	})
 }
 
+// overrideDurationListElem applies overrideDurationValues to one repeated-field
+// element. elems is the protobq-encoded slice ([]bigquery.Value or
+// []map[string]bigquery.Value) at index i.
 func overrideDurationListElem(fd protoreflect.FieldDescriptor, item protoreflect.Value, elems any, i int) {
 	if fd.Kind() == protoreflect.MessageKind && fd.Message().FullName() == wktDuration {
 		if s := durationString(item); s != "" {
@@ -372,6 +401,8 @@ func jsonDuration(d *durationpb.Duration) string {
 	return strings.Trim(string(b), `"`)
 }
 
+// sliceElemMap extracts the nested RECORD map at index i from a protobq list
+// value. Returns false when elems is the wrong type or i is out of range.
 func sliceElemMap(elems any, i int) (map[string]bigquery.Value, bool) {
 	switch s := elems.(type) {
 	case []bigquery.Value:
@@ -390,6 +421,8 @@ func sliceElemMap(elems any, i int) (map[string]bigquery.Value, bool) {
 	}
 }
 
+// setSliceElem writes val into a []bigquery.Value list at index i. The
+// []map[string]bigquery.Value branch is unused for scalar Duration elems.
 func setSliceElem(elems any, i int, val bigquery.Value) {
 	switch s := elems.(type) {
 	case []bigquery.Value:

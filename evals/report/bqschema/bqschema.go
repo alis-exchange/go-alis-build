@@ -55,6 +55,8 @@ func SchemaJSON() ([]byte, error) {
 	return Schema().ToJSONFields()
 }
 
+// fieldsSchema maps a protoreflect FieldDescriptors collection to a BigQuery
+// schema slice, preserving proto field order.
 func fieldsSchema(fds protoreflect.FieldDescriptors) bigquery.Schema {
 	out := make(bigquery.Schema, 0, fds.Len())
 	for i := 0; i < fds.Len(); i++ {
@@ -63,6 +65,8 @@ func fieldsSchema(fds protoreflect.FieldDescriptors) bigquery.Schema {
 	return out
 }
 
+// fieldSchema maps one proto field to a *bigquery.FieldSchema, applying WKT
+// overrides (Timestamp, Duration, rpc.Status) and recursing into messages.
 func fieldSchema(fd protoreflect.FieldDescriptor) *bigquery.FieldSchema {
 	fs := &bigquery.FieldSchema{Name: string(fd.Name())}
 	if fd.Cardinality() == protoreflect.Repeated {

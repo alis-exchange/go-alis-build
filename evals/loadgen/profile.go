@@ -55,8 +55,10 @@ type Profile struct {
 	AbortCheck AbortCheck
 }
 
+// defaultRequestTimeout is applied when Profile.RequestTimeout is zero.
 const defaultRequestTimeout = 30 * time.Second
 
+// validate checks profile invariants before a load window starts.
 func (p Profile) validate() error {
 	if p.Concurrency < 1 {
 		return ErrInvalidProfile{Field: "Concurrency"}
@@ -89,6 +91,7 @@ func (p Profile) validate() error {
 	return nil
 }
 
+// validateStages ensures stage durations sum to want and each stage is positive.
 func validateStages(stages []Stage, field string, want time.Duration) error {
 	var sum time.Duration
 	for i, s := range stages {
@@ -120,6 +123,8 @@ func (p Profile) EffectiveQPS() float64 {
 	return max
 }
 
+// MaxConcurrency returns the peak worker count for channel sizing and
+// saturation warnings.
 func (p Profile) MaxConcurrency() int {
 	max := p.Concurrency
 	for _, s := range p.ConcurrencyStages {
@@ -130,6 +135,7 @@ func (p Profile) MaxConcurrency() int {
 	return max
 }
 
+// initialConcurrency returns the worker count at window start for staged profiles.
 func (p Profile) initialConcurrency() int {
 	if len(p.ConcurrencyStages) == 0 {
 		return p.Concurrency

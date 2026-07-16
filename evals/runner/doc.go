@@ -23,6 +23,11 @@
 //   - [Runner.RunLoadSuites]  — load tests, always sequential (concurrent
 //     load windows against different targets would contaminate each
 //     other's measurements).
+//   - [Runner.RunInfraObserveSuites] — infra observation, cases within a
+//     suite run concurrently; one [loadinfra.MetricClient] per suite run.
+//
+// Load and infra-observe runs attach a shared Monitoring client to context
+// when targets are declared. The client is closed after each suite finishes.
 //
 // # Load profile resolution
 //
@@ -41,8 +46,8 @@
 //
 // # Rollup
 //
-// [RollupSuiteStatus] and [RollupLoadSuiteStatus] compute the top-level
-// status the mapper stamps on each `evalspb.Run`: PASSED only when every
+// [RollupSuiteStatus], [RollupLoadSuiteStatus], and
+// [RollupInfraObserveSuiteStatus] compute the top-level status the mapper stamps on each `evalspb.Run`: PASSED only when every
 // case ran and passed; FAILED otherwise (including NOT_EVALUATED cases,
 // which are treated as failures at the run level).
 package runner

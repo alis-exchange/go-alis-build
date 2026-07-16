@@ -10,6 +10,7 @@ import (
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
 	"go.alis.build/evals/loadgen"
+	"go.alis.build/evals/loadinfra"
 )
 
 // SuiteHook runs once per suite execution (before or after selected cases).
@@ -25,23 +26,37 @@ type ContextDecorator func(context.Context) context.Context
 // TestSuite groups test cases that share optional environment and lifecycle hooks.
 // Case names are qualified as "{suite}.{case}" at construction time.
 type TestSuite struct {
-	name          string
-	environments  []string
-	setup         SuiteHook
-	teardown      SuiteHook
-	cases         []TestCase
-	decorate      ContextDecorator
+	// name is the unqualified suite identifier used in filters and qualified case names.
+	name string
+	// environments lists shared env.Get names required before cases run.
+	environments []string
+	// setup runs once before selected cases when non-nil.
+	setup SuiteHook
+	// teardown runs once after selected cases when non-nil.
+	teardown SuiteHook
+	// cases holds qualified test cases in registration order.
+	cases []TestCase
+	// decorate overrides the runner-level ContextDecorator for this suite.
+	decorate ContextDecorator
+	// stopOnFailure skips remaining cases after the first non-PASSED result.
 	stopOnFailure bool
 }
 
 // EvalSuite groups eval cases that share optional environment and lifecycle hooks.
 type EvalSuite struct {
-	name          string
-	environments  []string
-	setup         SuiteHook
-	teardown      SuiteHook
-	cases         []EvalCase
-	decorate      ContextDecorator
+	// name is the unqualified suite identifier used in filters and qualified case names.
+	name string
+	// environments lists shared env.Get names required before cases run.
+	environments []string
+	// setup runs once before selected cases when non-nil.
+	setup SuiteHook
+	// teardown runs once after selected cases when non-nil.
+	teardown SuiteHook
+	// cases holds qualified eval cases in registration order.
+	cases []EvalCase
+	// decorate overrides the runner-level ContextDecorator for this suite.
+	decorate ContextDecorator
+	// stopOnFailure skips remaining cases after the first non-PASSED result.
 	stopOnFailure bool
 }
 
@@ -185,6 +200,7 @@ func (s *TestSuite) AddCases(cases ...TestCase) error {
 	return nil
 }
 
+// addEnvironments appends registered environment names to dst, rejecting unknown names.
 func addEnvironments(dst *[]string, names []string) error {
 	for _, name := range names {
 		if env.Get(name) == nil {
@@ -218,6 +234,7 @@ func (s *EvalSuite) AddCases(cases ...EvalCase) error {
 	return nil
 }
 
+// addTestCase qualifies and appends one test case, enforcing unique short names.
 func (s *TestSuite) addTestCase(c TestCase) error {
 	if s == nil {
 		return ErrNilSuite{}
@@ -231,6 +248,7 @@ func (s *TestSuite) addTestCase(c TestCase) error {
 	return nil
 }
 
+// addEvalCase qualifies and appends one eval case, enforcing unique short names.
 func (s *EvalSuite) addEvalCase(c EvalCase) error {
 	if s == nil {
 		return ErrNilSuite{}
@@ -244,6 +262,7 @@ func (s *EvalSuite) addEvalCase(c EvalCase) error {
 	return nil
 }
 
+// qualifyTestCase wraps c with a suite-qualified name and rejects duplicates.
 func qualifyTestCase(suiteName string, c TestCase, existing []TestCase) (TestCase, error) {
 	short := c.Name()
 	if strings.Contains(short, ".") {
@@ -258,6 +277,7 @@ func qualifyTestCase(suiteName string, c TestCase, existing []TestCase) (TestCas
 	return &qualifiedTestCase{name: qualified, inner: c}, nil
 }
 
+// qualifyEvalCase is [qualifyTestCase] for eval cases.
 func qualifyEvalCase(suiteName string, c EvalCase, existing []EvalCase) (EvalCase, error) {
 	short := c.Name()
 	if strings.Contains(short, ".") {
@@ -272,6 +292,7 @@ func qualifyEvalCase(suiteName string, c EvalCase, existing []EvalCase) (EvalCas
 	return &qualifiedEvalCase{name: qualified, inner: c}, nil
 }
 
+// containsString reports whether want appears in ss.
 func containsString(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {
@@ -422,6 +443,7 @@ func QualifiedName(suite, short string) string {
 	return suite + "." + short
 }
 
+// validateSuiteName rejects empty names and names containing '.'.
 func validateSuiteName(name string) error {
 	if name == "" {
 		return ErrInvalidSuiteName{Reason: "suite name is required"}
@@ -454,6 +476,7 @@ func ParseFilterPaths(paths []string) ([]FilterPath, error) {
 	return out, nil
 }
 
+// parseFilterPath splits one filter string into suite and optional case segments.
 func parseFilterPath(s string) (FilterPath, error) {
 	if s == "" {
 		return FilterPath{}, ErrInvalidFilterPath{Path: s, err: fmt.Errorf("empty filter path")}
@@ -481,6 +504,7 @@ func (s *EvalSuite) SelectEvalCases(filters []FilterPath) []EvalCase {
 	return selectEvalCasesInSuite(s, filters)
 }
 
+// selectTestCasesInSuite returns cases from suite matching parsed filters.
 func selectTestCasesInSuite(suite *TestSuite, filters []FilterPath) []TestCase {
 	if suite == nil {
 		return nil
@@ -517,6 +541,7 @@ func selectTestCasesInSuite(suite *TestSuite, filters []FilterPath) []TestCase {
 	return out
 }
 
+// selectEvalCasesInSuite is [selectTestCasesInSuite] for eval suites.
 func selectEvalCasesInSuite(suite *EvalSuite, filters []FilterPath) []EvalCase {
 	if suite == nil {
 		return nil
@@ -586,12 +611,22 @@ func TotalLoadCases(runs []LoadSuiteRun) int {
 // running two load windows concurrently against different targets would
 // contaminate each other's measurements.
 type LoadSuite struct {
-	name             string
-	environments     []string
-	setup            SuiteHook
-	teardown         SuiteHook
-	cases            []LoadCase
+	// name is the unqualified suite identifier used in filters and qualified case names.
+	name string
+	// environments lists shared env.Get names required before cases run.
+	environments []string
+	// setup runs once before selected cases when non-nil.
+	setup SuiteHook
+	// teardown runs once after selected cases when non-nil.
+	teardown SuiteHook
+	// cases holds qualified load cases in registration order.
+	cases []LoadCase
+	// profileOverrides replaces framework default profiles per RunLoadTestRequest_Mode.
 	profileOverrides map[evalspb.RunLoadTestRequest_Mode]loadgen.Profile
+	// cloudRun holds declared Cloud Run infra targets for post-load observation.
+	cloudRun []loadinfra.CloudRunTarget
+	// spanner holds declared Spanner infra targets for post-load observation.
+	spanner []loadinfra.SpannerTarget
 }
 
 // LoadSuiteOption configures a LoadSuite at construction time.
@@ -646,6 +681,9 @@ func NewLoadSuite(name string, opts ...LoadSuiteOption) (*LoadSuite, error) {
 			return nil, err
 		}
 	}
+	if err := ValidateInfraTargets(s); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -657,6 +695,7 @@ func (s *LoadSuite) AddCase(c LoadCase) error {
 	return s.addLoadCase(c)
 }
 
+// addLoadCase qualifies and appends one load case, enforcing unique short names.
 func (s *LoadSuite) addLoadCase(c LoadCase) error {
 	if s == nil {
 		return ErrNilSuite{}
@@ -669,6 +708,7 @@ func (s *LoadSuite) addLoadCase(c LoadCase) error {
 	return nil
 }
 
+// qualifyLoadCase is [qualifyTestCase] for load cases.
 func qualifyLoadCase(suiteName string, c LoadCase, existing []LoadCase) (LoadCase, error) {
 	short := c.Name()
 	if strings.Contains(short, ".") {
@@ -741,6 +781,10 @@ type LoadSuiteRun struct {
 	Teardown         SuiteHook
 	Cases            []LoadCase
 	ProfileOverrides map[evalspb.RunLoadTestRequest_Mode]loadgen.Profile
+	// CloudRun is the suite's declared Cloud Run targets copied at selection time.
+	CloudRun []loadinfra.CloudRunTarget
+	// Spanner is the suite's declared Spanner targets copied at selection time.
+	Spanner []loadinfra.SpannerTarget
 }
 
 // SelectLoadCases returns cases from s matching parsed filters.
@@ -748,6 +792,7 @@ func (s *LoadSuite) SelectLoadCases(filters []FilterPath) []LoadCase {
 	return selectLoadCasesInSuite(s, filters)
 }
 
+// selectLoadCasesInSuite is [selectTestCasesInSuite] for load suites.
 func selectLoadCasesInSuite(s *LoadSuite, filters []FilterPath) []LoadCase {
 	if s == nil {
 		return nil
@@ -784,11 +829,15 @@ func selectLoadCasesInSuite(s *LoadSuite, filters []FilterPath) []LoadCase {
 	return out
 }
 
+// qualifiedLoadCase wraps a user LoadCase with a suite-qualified Name().
 type qualifiedLoadCase struct {
-	name  string
+	// name is the canonical "suite.case" identifier stamped on results.
+	name string
+	// inner is the user-registered case implementation.
 	inner LoadCase
 }
 
+// Name returns the qualified case name.
 func (q *qualifiedLoadCase) Name() string {
 	if q == nil {
 		return ""
@@ -796,6 +845,7 @@ func (q *qualifiedLoadCase) Name() string {
 	return q.name
 }
 
+// Run delegates to inner and overwrites the result Name with the qualified value.
 func (q *qualifiedLoadCase) Run(ctx context.Context, mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile) *execution.LoadCaseResult {
 	if q == nil || q.inner == nil {
 		return &execution.LoadCaseResult{Name: q.Name(), Status: evalspb.Status_FAILED}
@@ -808,11 +858,15 @@ func (q *qualifiedLoadCase) Run(ctx context.Context, mode evalspb.RunLoadTestReq
 	return r
 }
 
+// qualifiedTestCase wraps a user TestCase with a suite-qualified Name().
 type qualifiedTestCase struct {
-	name  string
+	// name is the canonical "suite.case" identifier stamped on results.
+	name string
+	// inner is the user-registered case implementation.
 	inner TestCase
 }
 
+// Name returns the qualified case name.
 func (q *qualifiedTestCase) Name() string {
 	if q == nil {
 		return ""
@@ -820,6 +874,7 @@ func (q *qualifiedTestCase) Name() string {
 	return q.name
 }
 
+// Run delegates to inner and overwrites the result Name with the qualified value.
 func (q *qualifiedTestCase) Run(ctx context.Context) *execution.CaseResult {
 	if q == nil {
 		return result.SetupErrorResult("", ErrNilCaseResult{})
@@ -835,11 +890,15 @@ func (q *qualifiedTestCase) Run(ctx context.Context) *execution.CaseResult {
 	return r
 }
 
+// qualifiedEvalCase wraps a user EvalCase with a suite-qualified Name().
 type qualifiedEvalCase struct {
-	name  string
+	// name is the canonical "suite.case" identifier stamped on results.
+	name string
+	// inner is the user-registered case implementation.
 	inner EvalCase
 }
 
+// Name returns the qualified case name.
 func (q *qualifiedEvalCase) Name() string {
 	if q == nil {
 		return ""
@@ -847,6 +906,7 @@ func (q *qualifiedEvalCase) Name() string {
 	return q.name
 }
 
+// Run delegates to inner and overwrites the result Name with the qualified value.
 func (q *qualifiedEvalCase) Run(ctx context.Context) *execution.CaseResult {
 	if q == nil {
 		return result.EvalSetupErrorResult("", ErrNilCaseResult{})

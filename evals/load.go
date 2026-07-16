@@ -7,6 +7,7 @@ import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadgen"
+	"go.alis.build/evals/loadinfra"
 	"go.alis.build/evals/suite"
 )
 
@@ -28,12 +29,24 @@ type TargetResult = loadgen.TargetResult
 // to import the internal loadgen package.
 type Profile = loadgen.Profile
 
+// CloudRunTarget declares a Cloud Run scope for infrastructure observation.
+type CloudRunTarget = loadinfra.CloudRunTarget
+
+// SpannerTarget declares a Spanner scope for infrastructure observation.
+type SpannerTarget = loadinfra.SpannerTarget
+
+// Infra target role constants.
+const (
+	RoleEntry      = loadinfra.RoleEntry
+	RoleDependency = loadinfra.RoleDependency
+)
+
 // LoadSuite is the author-facing handle for a load-test suite. Cases within
 // a load suite always run sequentially and the framework owns pacing,
 // concurrency, warmup, and aggregation — case authors only supply a target
 // function and its SLOs.
 type LoadSuite struct {
-	inner *suite.LoadSuite
+	inner *suite.LoadSuite // underlying suite registered with the runner
 	// generator is the loadgen used by every case adapter registered under
 	// this suite. Exposed only for tests to substitute a fake generator; the
 	// public API always uses [loadgen.New].
@@ -45,8 +58,10 @@ type LoadSuiteOption interface {
 	applyLoad(*suite.LoadSuite) error
 }
 
+// loadOption is a functional [LoadSuiteOption] that mutates suite.LoadSuite.
 type loadOption func(*suite.LoadSuite) error
 
+// applyLoad invokes the option against a load suite.
 func (o loadOption) applyLoad(s *suite.LoadSuite) error { return o(s) }
 
 // WithLoadEnv declares one or more shared environments the load suite requires.
@@ -78,6 +93,57 @@ func WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile) LoadSuiteO
 	})
 }
 
+// WithCloudRunTargets declares Cloud Run infrastructure targets. Valid on load
+// suites ([LoadSuiteOption]) and infra observation suites ([InfraObserveSuiteOption]).
+func WithCloudRunTargets(targets ...CloudRunTarget) interface {
+	LoadSuiteOption
+	InfraObserveSuiteOption
+} {
+	return cloudRunTargetsOption{targets: targets}
+}
+
+// WithSpannerTargets declares Spanner infrastructure targets. Valid on load
+// suites ([LoadSuiteOption]) and infra observation suites ([InfraObserveSuiteOption]).
+func WithSpannerTargets(targets ...SpannerTarget) interface {
+	LoadSuiteOption
+	InfraObserveSuiteOption
+} {
+	return spannerTargetsOption{targets: targets}
+}
+
+// cloudRunTargetsOption carries Cloud Run infra targets for load and observe suites.
+type cloudRunTargetsOption struct {
+	// targets are copied into suite config at apply time.
+	targets []loadinfra.CloudRunTarget
+}
+
+// applyLoad registers Cloud Run targets on a load suite.
+func (o cloudRunTargetsOption) applyLoad(s *suite.LoadSuite) error {
+	return suite.WithCloudRunTargets(o.targets...)(s)
+}
+
+// applyInfraObserve registers Cloud Run targets on an infra observation suite.
+func (o cloudRunTargetsOption) applyInfraObserve(s *suite.InfraObserveSuite) error {
+	return suite.WithInfraObserveCloudRunTargets(o.targets...)(s)
+}
+
+// spannerTargetsOption carries Spanner infra targets for load and observe suites.
+type spannerTargetsOption struct {
+	// targets are copied into suite config at apply time.
+	targets []loadinfra.SpannerTarget
+}
+
+// applyLoad registers Spanner targets on a load suite.
+func (o spannerTargetsOption) applyLoad(s *suite.LoadSuite) error {
+	return suite.WithSpannerTargets(o.targets...)(s)
+}
+
+// applyInfraObserve registers Spanner targets on an infra observation suite.
+func (o spannerTargetsOption) applyInfraObserve(s *suite.InfraObserveSuite) error {
+	return suite.WithInfraObserveSpannerTargets(o.targets...)(s)
+}
+
+
 // NewLoadSuite constructs a load-test suite. Returns a typed error on
 // invalid config (empty or dotted name, unknown environment, or a failing
 // option). See the [suite] package for the typed error values.
@@ -90,6 +156,9 @@ func NewLoadSuite(name string, opts ...LoadSuiteOption) (*LoadSuite, error) {
 		if err := opt.applyLoad(s); err != nil {
 			return nil, err
 		}
+	}
+	if err := suite.ValidateInfraTargets(s); err != nil {
+		return nil, err
 	}
 	return &LoadSuite{inner: s, generator: loadgen.New()}, nil
 }
@@ -111,8 +180,10 @@ type LoadCaseOption interface {
 	applyLoadCase(*loadCaseAdapter)
 }
 
+// loadCaseOption is a functional [LoadCaseOption] applied at case registration.
 type loadCaseOption func(*loadCaseAdapter)
 
+// applyLoadCase mutates the adapter before it is registered on the suite.
 func (o loadCaseOption) applyLoadCase(a *loadCaseAdapter) { o(a) }
 
 // WithLoadCaseTags attaches labels to the case wire result.
@@ -141,6 +212,7 @@ func (s *LoadSuite) LoadCase(name string, target ResultTarget, slos []SLO, opts 
 	return s.loadCase(name, target, opts, slos...)
 }
 
+// loadCase registers a load case after validating target and applying options.
 func (s *LoadSuite) loadCase(name string, target ResultTarget, opts []LoadCaseOption, slos ...SLO) error {
 	if s == nil {
 		return suite.ErrNilSuite{}
@@ -153,6 +225,8 @@ func (s *LoadSuite) loadCase(name string, target ResultTarget, opts []LoadCaseOp
 		target:    target,
 		slos:      append([]SLO(nil), slos...),
 		generator: s.generator,
+		cloudRun:  s.inner.CloudRunTargets(),
+		spanner:   s.inner.SpannerTargets(),
 	}
 	for _, opt := range opts {
 		opt.applyLoadCase(adapter)
@@ -191,17 +265,30 @@ func (s *LoadSuite) Inner() *suite.LoadSuite {
 // evaluate every SLO against the returned metrics and assemble a
 // LoadCaseResult.
 type loadCaseAdapter struct {
-	name      string
-	target    ResultTarget
-	slos      []SLO
+	// name is the case name registered via LoadCase.
+	name string
+	// target is the per-request SUT invocation.
+	target ResultTarget
+	// slos are thresholds evaluated after the generator run.
+	slos []SLO
+	// generator is copied from LoadSuite at registration.
 	generator loadgen.Generator
-	tags      map[string]string
-	data      []any
-	provider  DataProvider
+	// tags are wire labels; set by WithLoadCaseTags.
+	tags map[string]string
+	// data holds round-robin payloads; set by WithLoadCaseData.
+	data []any
+	// provider is the programmatic payload resolver; set by WithLoadCaseDataProvider.
+	provider DataProvider
+	// cloudRun is infra scope; copied from suite at registration.
+	cloudRun []loadinfra.CloudRunTarget
+	// spanner is infra scope; copied from suite at registration.
+	spanner []loadinfra.SpannerTarget
 }
 
+// Name returns the registered load case name.
 func (a *loadCaseAdapter) Name() string { return a.name }
 
+// Run drives load generation, evaluates SLOs, and optionally fetches infra snapshots.
 func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile) *execution.LoadCaseResult {
 	if loadgen.AbortOnSLOFailure(ctx) {
 		profile.AbortCheck = abortCheckForSLOs(a.slos)
@@ -239,9 +326,17 @@ func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestReque
 	}
 	result.Checks = append(result.Checks, evaluateSLOs(a.slos, m)...)
 	result.Status = rollupLoadCaseStatus(result.Checks)
+	if client := loadinfra.ClientFromContext(ctx); client != nil && (len(a.cloudRun) > 0 || len(a.spanner) > 0) {
+		// Infra fetch failures are recorded per-target on the snapshot
+		// (FetchStatus/FetchMessage); they do not fail the load case in v1.
+		obs, _ := loadinfra.Observe(ctx, client, a.cloudRun, a.spanner, loadinfra.WindowFromMetrics(m), true)
+		result.CloudRun = obs.CloudRun
+		result.Spanner = obs.Spanner
+	}
 	return result
 }
 
+// rollupLoadCaseStatus fails the case when any SloCheckResult is non-PASSED.
 func rollupLoadCaseStatus(checks []execution.SloCheckResult) evalspb.Status {
 	for _, c := range checks {
 		if c.Status != evalspb.Status_PASSED {
@@ -251,6 +346,7 @@ func rollupLoadCaseStatus(checks []execution.SloCheckResult) evalspb.Status {
 	return evalspb.Status_PASSED
 }
 
+// wrapTarget resolves per-request data then delegates to the author target.
 func (a *loadCaseAdapter) wrapTarget() loadgen.ResultTarget {
 	return func(ctx context.Context, data CallData) TargetResult {
 		resolved, err := a.resolveData(data)
@@ -262,6 +358,7 @@ func (a *loadCaseAdapter) wrapTarget() loadgen.ResultTarget {
 	}
 }
 
+// resolveData picks the payload for request data via provider or round-robin data.
 func (a *loadCaseAdapter) resolveData(data CallData) (any, error) {
 	if a.provider != nil {
 		return a.provider(data)
@@ -273,6 +370,7 @@ func (a *loadCaseAdapter) resolveData(data CallData) (any, error) {
 	return a.data[idx], nil
 }
 
+// cloneStringMap returns a defensive copy of in, or nil when empty.
 func cloneStringMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
@@ -284,6 +382,7 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+// summaryFromMetrics maps generator metrics and profile into a wire LoadCaseSummary.
 func summaryFromMetrics(mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile, m *loadgen.Metrics) execution.LoadCaseSummary {
 	// duration reflects the measurement window as configured; the generator
 	// preserves this on m.Duration (it does not shrink under saturation).
@@ -317,6 +416,7 @@ func summaryFromMetrics(mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Pr
 	}
 }
 
+// streamSummaryFromMetrics copies stream aggregates when any stream samples exist.
 func streamSummaryFromMetrics(s *loadgen.StreamSummary) *execution.LoadStreamSummary {
 	if s == nil {
 		return nil
@@ -330,6 +430,7 @@ func streamSummaryFromMetrics(s *loadgen.StreamSummary) *execution.LoadStreamSum
 	}
 }
 
+// latencyFromLoadgen copies percentile fields into the execution wire shape.
 func latencyFromLoadgen(l loadgen.LatencySummary) execution.LoadLatency {
 	return execution.LoadLatency{
 		P50Ms:  l.P50Ms,
@@ -341,6 +442,7 @@ func latencyFromLoadgen(l loadgen.LatencySummary) execution.LoadLatency {
 	}
 }
 
+// cloneStages copies profile stages for the wire summary.
 func cloneStages(stages []loadgen.Stage) []execution.LoadStage {
 	if len(stages) == 0 {
 		return nil
@@ -352,6 +454,7 @@ func cloneStages(stages []loadgen.Stage) []execution.LoadStage {
 	return out
 }
 
+// cloneErrorsByCode returns a defensive copy of transport error counts.
 func cloneErrorsByCode(in map[string]int64) map[string]int64 {
 	if len(in) == 0 {
 		return nil

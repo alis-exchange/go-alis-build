@@ -6,8 +6,7 @@
       "metrics": [
         {
           "id": "response_match_score",
-          "status": "PASSED",
-          "threshold": 0.3
+          "status": "PASSED"
         }
       ],
       "sessionId": "sess-1",

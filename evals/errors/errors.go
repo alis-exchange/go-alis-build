@@ -37,6 +37,8 @@ func ToGRPCf(field string, err error) error {
 	return status.Errorf(codes.InvalidArgument, "%s: %v", field, err)
 }
 
+// evalStatus extracts a gRPC status from err when it implements [EvalError].
+// Returns false for plain errors so callers can fall back to InvalidArgument.
 func evalStatus(err error) (*status.Status, bool) {
 	var evalErr EvalError
 	if errors.As(err, &evalErr) {

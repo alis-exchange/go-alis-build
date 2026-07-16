@@ -3,7 +3,8 @@
 //
 // A [Registry] is populated at startup — case packages call
 // [Registry.RegisterIntegrationSuite], [Registry.RegisterAgentEvalSuite],
-// [Registry.RegisterLoadSuite], and [Registry.RegisterAgentEvalProvider]
+// [Registry.RegisterLoadSuite], [Registry.RegisterInfraObserveSuite], and
+// [Registry.RegisterAgentEvalProvider]
 // during package init via the wrappers in the parent [evals] package.
 // TestServiceServer is constructed with [evals.DefaultRegistry] so all
 // case packages published to that registry are reachable via the RPCs.
@@ -17,7 +18,8 @@
 //   - "suite.a" → run just that case
 //
 // Selection is performed by [Registry.SelectTestRuns],
-// [Registry.SelectEvalRuns], and [Registry.SelectLoadRuns]. Each returns
+// [Registry.SelectEvalRuns], [Registry.SelectLoadRuns], and
+// [Registry.SelectInfraObserveRuns]. Each returns
 // suite-scoped run objects that carry only the matching cases; the runner
 // iterates these directly.
 //
@@ -35,7 +37,8 @@
 //
 // # Errors
 //
-// [ErrNoSuites], [ErrNoEvalSuites], [ErrNoLoadSuites], [ErrUnknownCase],
+// [ErrNoSuites], [ErrNoEvalSuites], [ErrNoLoadSuites],
+// [ErrNoInfraObserveSuites], [ErrUnknownCase],
 // [ErrUnsupportedRunType], and [ErrNotConfigured] all implement
 // [errors.EvalError] and map to appropriate gRPC codes.
 package registry

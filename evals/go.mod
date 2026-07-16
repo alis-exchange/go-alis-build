@@ -4,13 +4,15 @@ go 1.26.1
 
 require (
 	cloud.google.com/go/bigquery v1.79.0
+	cloud.google.com/go/monitoring v1.30.0
 	cloud.google.com/go/pubsub/v2 v2.6.1
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	go.alis.build/adk/launchers v1.0.9
 	go.alis.build/alog v0.1.0
-	go.alis.build/common v1.1.12
+	go.alis.build/common v1.1.13
 	go.einride.tech/protobuf-bigquery v0.29.0
 	google.golang.org/api v0.288.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
@@ -61,6 +63,5 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genai v1.63.0 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d // indirect
 )

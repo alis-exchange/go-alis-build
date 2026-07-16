@@ -341,6 +341,289 @@
       "mode": "REPEATED",
       "name": "tags",
       "type": "RECORD"
+     },
+     {
+      "fields": [
+       {
+        "name": "id",
+        "type": "STRING"
+       },
+       {
+        "name": "role",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "project_id",
+          "type": "STRING"
+         },
+         {
+          "name": "region",
+          "type": "STRING"
+         },
+         {
+          "name": "service_name",
+          "type": "STRING"
+         },
+         {
+          "name": "revision",
+          "type": "STRING"
+         }
+        ],
+        "name": "target",
+        "type": "RECORD"
+       },
+       {
+        "name": "window_start",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "window_end",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "fetch_status",
+        "type": "STRING"
+       },
+       {
+        "name": "fetch_message",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "request_count",
+          "type": "INTEGER"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "latency",
+          "type": "RECORD"
+         },
+         {
+          "name": "error_5xx_rate",
+          "type": "FLOAT"
+         },
+         {
+          "name": "max_instance_count",
+          "type": "FLOAT"
+         },
+         {
+          "name": "cpu_utilization_p99",
+          "type": "FLOAT"
+         },
+         {
+          "name": "memory_utilization_p99",
+          "type": "FLOAT"
+         },
+         {
+          "name": "startup_latency_p99",
+          "type": "FLOAT"
+         }
+        ],
+        "name": "metrics",
+        "type": "RECORD"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "cloud_run",
+      "type": "RECORD"
+     },
+     {
+      "fields": [
+       {
+        "name": "id",
+        "type": "STRING"
+       },
+       {
+        "name": "role",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "project_id",
+          "type": "STRING"
+         },
+         {
+          "name": "instance_id",
+          "type": "STRING"
+         },
+         {
+          "name": "location",
+          "type": "STRING"
+         },
+         {
+          "name": "database",
+          "type": "STRING"
+         }
+        ],
+        "name": "target",
+        "type": "RECORD"
+       },
+       {
+        "name": "window_start",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "window_end",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "fetch_status",
+        "type": "STRING"
+       },
+       {
+        "name": "fetch_message",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "query_count",
+          "type": "INTEGER"
+         },
+         {
+          "name": "query_error_count",
+          "type": "INTEGER"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "api_latency",
+          "type": "RECORD"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "query_latency",
+          "type": "RECORD"
+         },
+         {
+          "name": "cpu_utilization_max",
+          "type": "FLOAT"
+         }
+        ],
+        "name": "metrics",
+        "type": "RECORD"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "spanner",
+      "type": "RECORD"
+     },
+     {
+      "fields": [
+       {
+        "name": "kind",
+        "type": "STRING"
+       },
+       {
+        "name": "target_id",
+        "type": "STRING"
+       },
+       {
+        "name": "check_id",
+        "type": "STRING"
+       },
+       {
+        "name": "status",
+        "type": "STRING"
+       },
+       {
+        "name": "message",
+        "type": "STRING"
+       },
+       {
+        "name": "observed",
+        "type": "FLOAT"
+       },
+       {
+        "name": "limit",
+        "type": "FLOAT"
+       },
+       {
+        "name": "unit",
+        "type": "STRING"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "infra_checks",
+      "type": "RECORD"
      }
     ],
     "mode": "REPEATED",
@@ -450,6 +733,322 @@
    }
   ],
   "name": "agent_eval",
+  "type": "RECORD"
+ },
+ {
+  "fields": [
+   {
+    "fields": [
+     {
+      "name": "id",
+      "type": "STRING"
+     },
+     {
+      "name": "status",
+      "type": "STRING"
+     },
+     {
+      "name": "lookback",
+      "type": "STRING"
+     },
+     {
+      "name": "window_start",
+      "type": "TIMESTAMP"
+     },
+     {
+      "name": "window_end",
+      "type": "TIMESTAMP"
+     },
+     {
+      "fields": [
+       {
+        "name": "id",
+        "type": "STRING"
+       },
+       {
+        "name": "role",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "project_id",
+          "type": "STRING"
+         },
+         {
+          "name": "region",
+          "type": "STRING"
+         },
+         {
+          "name": "service_name",
+          "type": "STRING"
+         },
+         {
+          "name": "revision",
+          "type": "STRING"
+         }
+        ],
+        "name": "target",
+        "type": "RECORD"
+       },
+       {
+        "name": "window_start",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "window_end",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "fetch_status",
+        "type": "STRING"
+       },
+       {
+        "name": "fetch_message",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "request_count",
+          "type": "INTEGER"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "latency",
+          "type": "RECORD"
+         },
+         {
+          "name": "error_5xx_rate",
+          "type": "FLOAT"
+         },
+         {
+          "name": "max_instance_count",
+          "type": "FLOAT"
+         },
+         {
+          "name": "cpu_utilization_p99",
+          "type": "FLOAT"
+         },
+         {
+          "name": "memory_utilization_p99",
+          "type": "FLOAT"
+         },
+         {
+          "name": "startup_latency_p99",
+          "type": "FLOAT"
+         }
+        ],
+        "name": "metrics",
+        "type": "RECORD"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "cloud_run",
+      "type": "RECORD"
+     },
+     {
+      "fields": [
+       {
+        "name": "id",
+        "type": "STRING"
+       },
+       {
+        "name": "role",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "project_id",
+          "type": "STRING"
+         },
+         {
+          "name": "instance_id",
+          "type": "STRING"
+         },
+         {
+          "name": "location",
+          "type": "STRING"
+         },
+         {
+          "name": "database",
+          "type": "STRING"
+         }
+        ],
+        "name": "target",
+        "type": "RECORD"
+       },
+       {
+        "name": "window_start",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "window_end",
+        "type": "TIMESTAMP"
+       },
+       {
+        "name": "fetch_status",
+        "type": "STRING"
+       },
+       {
+        "name": "fetch_message",
+        "type": "STRING"
+       },
+       {
+        "fields": [
+         {
+          "name": "query_count",
+          "type": "INTEGER"
+         },
+         {
+          "name": "query_error_count",
+          "type": "INTEGER"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "api_latency",
+          "type": "RECORD"
+         },
+         {
+          "fields": [
+           {
+            "name": "p50_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p95_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "p99_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "min_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "mean_ms",
+            "type": "FLOAT"
+           },
+           {
+            "name": "max_ms",
+            "type": "FLOAT"
+           }
+          ],
+          "name": "query_latency",
+          "type": "RECORD"
+         },
+         {
+          "name": "cpu_utilization_max",
+          "type": "FLOAT"
+         }
+        ],
+        "name": "metrics",
+        "type": "RECORD"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "spanner",
+      "type": "RECORD"
+     },
+     {
+      "fields": [
+       {
+        "name": "kind",
+        "type": "STRING"
+       },
+       {
+        "name": "target_id",
+        "type": "STRING"
+       },
+       {
+        "name": "check_id",
+        "type": "STRING"
+       },
+       {
+        "name": "status",
+        "type": "STRING"
+       },
+       {
+        "name": "message",
+        "type": "STRING"
+       },
+       {
+        "name": "observed",
+        "type": "FLOAT"
+       },
+       {
+        "name": "limit",
+        "type": "FLOAT"
+       },
+       {
+        "name": "unit",
+        "type": "STRING"
+       }
+      ],
+      "mode": "REPEATED",
+      "name": "infra_checks",
+      "type": "RECORD"
+     }
+    ],
+    "mode": "REPEATED",
+    "name": "cases",
+    "type": "RECORD"
+   }
+  ],
+  "name": "infra_observation",
   "type": "RECORD"
  },
  {

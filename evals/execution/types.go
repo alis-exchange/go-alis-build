@@ -179,6 +179,12 @@ type LoadCaseResult struct {
 	Tags    map[string]string
 	Summary LoadCaseSummary
 	Checks  []SloCheckResult
+	// CloudRun holds server-side Cloud Run snapshots for this case's measurement
+	// window. Empty when the suite declared no Cloud Run targets.
+	CloudRun []*evalspb.CloudRunTargetSnapshot
+	// Spanner holds server-side Spanner snapshots for this case's measurement
+	// window. Empty when the suite declared no Spanner targets.
+	Spanner []*evalspb.SpannerTargetSnapshot
 }
 
 // LoadSuiteResult groups load case outcomes for one suite execution.
@@ -187,4 +193,37 @@ type LoadSuiteResult struct {
 	Cases     []LoadCaseResult
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// InfraObserveCaseResult is the internal outcome of one infra observation case.
+type InfraObserveCaseResult struct {
+	// Name is the qualified case id (`{suite}.{case}`).
+	Name string
+	// Status is PASSED when observation completes in v1; FAILED only on
+	// runner or configuration errors.
+	Status evalspb.Status
+	// Tags are optional labels attached at case registration.
+	Tags map[string]string
+	// Lookback is the resolved observation lookback for this case.
+	Lookback time.Duration
+	// WindowStart is the inclusive start of the settled observation window (UTC).
+	WindowStart time.Time
+	// WindowEnd is the exclusive end of the settled observation window (UTC).
+	WindowEnd time.Time
+	// CloudRun holds server-side Cloud Run snapshots for the observation window.
+	CloudRun []*evalspb.CloudRunTargetSnapshot
+	// Spanner holds server-side Spanner snapshots for the observation window.
+	Spanner []*evalspb.SpannerTargetSnapshot
+}
+
+// InfraObserveSuiteResult groups infra observation case outcomes for one suite run.
+type InfraObserveSuiteResult struct {
+	// SuiteName is the short suite name (unqualified).
+	SuiteName string
+	// Cases holds one result per executed infra observation case.
+	Cases []InfraObserveCaseResult
+	// StartTime is when the suite run began (UTC).
+	StartTime time.Time
+	// EndTime is when the suite run finished (UTC).
+	EndTime time.Time
 }

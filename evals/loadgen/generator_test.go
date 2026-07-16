@@ -76,6 +76,54 @@ func TestInProcess_WarmupExcluded(t *testing.T) {
 	}
 }
 
+// TestInProcess_MeasurementWindow verifies MeasurementStart and MeasurementEnd
+// bound the measurement window (warmup excluded).
+func TestInProcess_MeasurementWindow(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	p := Profile{QPS: 20, Concurrency: 2, Duration: 200 * time.Millisecond}
+	before := time.Now()
+	m, err := g.Run(context.Background(), p, zeroLatencyTarget)
+	after := time.Now()
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.MeasurementStart.IsZero() || m.MeasurementEnd.IsZero() {
+		t.Fatalf("MeasurementStart=%v MeasurementEnd=%v, want both set", m.MeasurementStart, m.MeasurementEnd)
+	}
+	if got := m.MeasurementEnd.Sub(m.MeasurementStart); got != p.Duration {
+		t.Fatalf("measurement span=%v, want %v", got, p.Duration)
+	}
+	if m.MeasurementStart.Before(before) || m.MeasurementEnd.After(after.Add(time.Second)) {
+		t.Fatalf("measurement window [%v, %v) outside run bounds [%v, %v]",
+			m.MeasurementStart, m.MeasurementEnd, before, after)
+	}
+}
+
+// TestInProcess_MeasurementWindowWarmup verifies MeasurementStart follows warmup.
+func TestInProcess_MeasurementWindowWarmup(t *testing.T) {
+	t.Parallel()
+
+	g := New()
+	p := Profile{
+		QPS:         20,
+		Concurrency: 2,
+		Warmup:      150 * time.Millisecond,
+		Duration:    200 * time.Millisecond,
+	}
+	m, err := g.Run(context.Background(), p, zeroLatencyTarget)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.MeasurementStart.IsZero() || m.MeasurementEnd.IsZero() {
+		t.Fatalf("MeasurementStart=%v MeasurementEnd=%v, want both set", m.MeasurementStart, m.MeasurementEnd)
+	}
+	if got := m.MeasurementEnd.Sub(m.MeasurementStart); got != p.Duration {
+		t.Fatalf("measurement span=%v, want %v", got, p.Duration)
+	}
+}
+
 // TestInProcess_ErrorAccounting verifies error grouping by canonical code.
 func TestInProcess_ErrorAccounting(t *testing.T) {
 	t.Parallel()

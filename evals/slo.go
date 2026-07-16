@@ -14,13 +14,16 @@ import (
 // per case run — passed and failed alike — so consumers see headroom on
 // passed checks, not just breaches.
 type SLO struct {
-	id      string
-	unit    string
-	limit   float64
+	// id is the wire check id (for example "latency.p95_ms").
+	id string
+	// unit is the observed/limit unit on the wire (ms, %, rps, msg/s).
+	unit string
+	// limit is the threshold in unit; upper bound for latency/error SLOs, lower bound for QPS.
+	limit float64
+	// extract projects aggregate metrics to the observed value.
 	extract func(*loadgen.Metrics) float64
-	// pass reports whether observed satisfies the limit. Encoded per-SLO
-	// because latency SLOs are upper bounds while SLOMinQPS is a lower
-	// bound.
+	// pass reports whether observed satisfies the limit. Latency SLOs use upper
+	// bounds; SLOMinQPS uses a lower bound.
 	pass func(observed, limit float64) bool
 	// failMessage formats a helpful triage message when pass returns false.
 	failMessage func(observed, limit float64) string
@@ -41,6 +44,7 @@ func SLOLatencyP99(max time.Duration) SLO {
 	return latencySLO("latency.p99_ms", max, func(m *loadgen.Metrics) float64 { return m.Latency.P99Ms })
 }
 
+// latencySLO builds an upper-bound latency SLO from a percentile extractor.
 func latencySLO(id string, max time.Duration, extract func(*loadgen.Metrics) float64) SLO {
 	limitMs := float64(max) / float64(time.Millisecond)
 	return SLO{

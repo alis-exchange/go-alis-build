@@ -27,12 +27,19 @@ func (f AgentEvalProviderFunc) Run(ctx context.Context, filters []string) ([]exe
 
 // Registry holds registered suites keyed by run type.
 type Registry struct {
-	byType        map[evalspb.Run_Type][]*suite.TestSuite
-	evals         []*suite.EvalSuite
-	loads         []*suite.LoadSuite
+	// byType indexes integration-test suites by run type (today only INTEGRATION_TEST).
+	byType map[evalspb.Run_Type][]*suite.TestSuite
+	// evals holds eagerly registered agent-eval suites selected by filter paths.
+	evals []*suite.EvalSuite
+	// loads holds registered load-test suites.
+	loads []*suite.LoadSuite
+	// infraObserves holds registered infra-observation suites.
+	infraObserves []*suite.InfraObserveSuite
+	// evalProviders supplies lazy agent-eval suites (for example ADK discovery).
 	evalProviders []AgentEvalProvider
 }
 
+// New returns an empty Registry. [evals.DefaultRegistry] uses this constructor.
 func New() *Registry {
 	return &Registry{
 		byType: make(map[evalspb.Run_Type][]*suite.TestSuite),
@@ -61,6 +68,14 @@ func (r *Registry) RegisterLoadSuite(s *suite.LoadSuite) {
 		return
 	}
 	r.loads = append(r.loads, s)
+}
+
+// RegisterInfraObserveSuite adds an infra observation suite.
+func (r *Registry) RegisterInfraObserveSuite(s *suite.InfraObserveSuite) {
+	if r == nil {
+		return
+	}
+	r.infraObserves = append(r.infraObserves, s)
 }
 
 // RegisterAgentEvalProvider adds a lazy agent eval provider (for example ADK discovery).
@@ -136,6 +151,40 @@ func (r *Registry) SelectLoadRuns(filters []string) ([]suite.LoadSuiteRun, error
 			Teardown:         s.TeardownHook(),
 			Cases:            cases,
 			ProfileOverrides: copyProfileOverrides(s),
+			CloudRun:         s.CloudRunTargets(),
+			Spanner:          s.SpannerTargets(),
+		})
+	}
+	return runs, nil
+}
+
+// SelectInfraObserveRuns returns filtered infra observation suite runs.
+func (r *Registry) SelectInfraObserveRuns(filters []string) ([]suite.InfraObserveSuiteRun, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if len(r.infraObserves) == 0 {
+		return nil, nil
+	}
+	parsed, err := suite.ParseFilterPaths(filters)
+	if err != nil {
+		return nil, err
+	}
+	var runs []suite.InfraObserveSuiteRun
+	for _, s := range r.infraObserves {
+		cases := s.SelectInfraObserveCases(parsed)
+		if len(cases) == 0 {
+			continue
+		}
+		runs = append(runs, suite.InfraObserveSuiteRun{
+			Name:         s.Name(),
+			Environments: s.Environments(),
+			Setup:        s.SetupHook(),
+			Teardown:     s.TeardownHook(),
+			Lookback:     s.Lookback(),
+			CloudRun:     s.CloudRunTargets(),
+			Spanner:      s.SpannerTargets(),
+			Cases:        cases,
 		})
 	}
 	return runs, nil
@@ -221,11 +270,18 @@ func (r *Registry) ValidateSelection(runType evalspb.Run_Type, filters []string)
 			return ErrNoLoadSuites{}
 		}
 		return validateLoadSelection(r.loads, filters)
+	case evalspb.Run_INFRA_OBSERVATION:
+		if len(r.infraObserves) == 0 {
+			return ErrNoInfraObserveSuites{}
+		}
+		return validateInfraObserveSelection(r.infraObserves, filters)
 	default:
 		return ErrUnsupportedRunType{Type: runType}
 	}
 }
 
+// validateTestSelection rejects unknown case_ids before an LRO starts. Empty
+// filters mean "run everything" and skip per-path existence checks.
 func validateTestSelection(suites []*suite.TestSuite, filters []string) error {
 	parsed, err := suite.ParseFilterPaths(filters)
 	if err != nil {
@@ -242,6 +298,7 @@ func validateTestSelection(suites []*suite.TestSuite, filters []string) error {
 	return nil
 }
 
+// validateEvalSelection is [validateTestSelection] for agent-eval suites.
 func validateEvalSelection(suites []*suite.EvalSuite, filters []string) error {
 	parsed, err := suite.ParseFilterPaths(filters)
 	if err != nil {
@@ -258,6 +315,8 @@ func validateEvalSelection(suites []*suite.EvalSuite, filters []string) error {
 	return nil
 }
 
+// filterMatchesTestSuite reports whether fp resolves to at least one case
+// across the registered integration-test suites.
 func filterMatchesTestSuite(suites []*suite.TestSuite, fp suite.FilterPath) bool {
 	for _, s := range suites {
 		if len(s.SelectTestCases([]suite.FilterPath{fp})) > 0 {
@@ -267,6 +326,7 @@ func filterMatchesTestSuite(suites []*suite.TestSuite, fp suite.FilterPath) bool
 	return false
 }
 
+// filterMatchesEvalSuite is [filterMatchesTestSuite] for agent-eval suites.
 func filterMatchesEvalSuite(suites []*suite.EvalSuite, fp suite.FilterPath) bool {
 	for _, s := range suites {
 		if len(s.SelectEvalCases([]suite.FilterPath{fp})) > 0 {
@@ -276,6 +336,7 @@ func filterMatchesEvalSuite(suites []*suite.EvalSuite, fp suite.FilterPath) bool
 	return false
 }
 
+// validateLoadSelection is [validateTestSelection] for load-test suites.
 func validateLoadSelection(suites []*suite.LoadSuite, filters []string) error {
 	parsed, err := suite.ParseFilterPaths(filters)
 	if err != nil {
@@ -292,6 +353,7 @@ func validateLoadSelection(suites []*suite.LoadSuite, filters []string) error {
 	return nil
 }
 
+// filterMatchesLoadSuite is [filterMatchesTestSuite] for load-test suites.
 func filterMatchesLoadSuite(suites []*suite.LoadSuite, fp suite.FilterPath) bool {
 	for _, s := range suites {
 		if len(s.SelectLoadCases([]suite.FilterPath{fp})) > 0 {
@@ -301,6 +363,34 @@ func filterMatchesLoadSuite(suites []*suite.LoadSuite, fp suite.FilterPath) bool
 	return false
 }
 
+// validateInfraObserveSelection is [validateTestSelection] for infra-observation suites.
+func validateInfraObserveSelection(suites []*suite.InfraObserveSuite, filters []string) error {
+	parsed, err := suite.ParseFilterPaths(filters)
+	if err != nil {
+		return err
+	}
+	if len(parsed) == 0 {
+		return nil
+	}
+	for _, fp := range parsed {
+		if !filterMatchesInfraObserveSuite(suites, fp) {
+			return ErrUnknownCase{Name: filterPathString(fp)}
+		}
+	}
+	return nil
+}
+
+// filterMatchesInfraObserveSuite is [filterMatchesTestSuite] for infra-observation suites.
+func filterMatchesInfraObserveSuite(suites []*suite.InfraObserveSuite, fp suite.FilterPath) bool {
+	for _, s := range suites {
+		if len(s.SelectInfraObserveCases([]suite.FilterPath{fp})) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// filterPathString formats a parsed filter for ErrUnknownCase messages.
 func filterPathString(fp suite.FilterPath) string {
 	if fp.CaseName == "" {
 		return fp.Suite

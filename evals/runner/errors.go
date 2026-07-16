@@ -71,3 +71,24 @@ func (e ErrCasePanic) Is(target error) bool {
 func (e ErrCasePanic) GRPCStatus() *status.Status {
 	return status.New(codes.Internal, e.Error())
 }
+
+// ErrInfraMetricClient is returned when the Cloud Monitoring client cannot be
+// constructed for an infra observation run.
+type ErrInfraMetricClient struct {
+	Err error
+}
+
+func (e ErrInfraMetricClient) Error() string {
+	return fmt.Sprintf("infra metric client: %v", e.Err)
+}
+
+func (e ErrInfraMetricClient) Unwrap() error { return e.Err }
+
+func (e ErrInfraMetricClient) Is(target error) bool {
+	var err ErrInfraMetricClient
+	return errors.As(target, &err) || errors.Is(e.Err, target)
+}
+
+func (e ErrInfraMetricClient) GRPCStatus() *status.Status {
+	return status.New(codes.Unavailable, e.Error())
+}

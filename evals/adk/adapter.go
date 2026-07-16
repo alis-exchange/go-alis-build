@@ -87,12 +87,15 @@ func AgentEvalResultsFromRunEvalResults(results []models.RunEvalResult, duration
 	}
 	out := &evalspb.AgentEvalResults{Cases: cases}
 	if !judge.isZero() {
-		out.Judge = &evalspb.AgentEvalResults_JudgeInfo{
+		judgeInfo := &evalspb.AgentEvalResults_JudgeInfo{
 			Model:           judge.Model,
-			ModelVersion:    judge.ModelVersion,
 			JudgeCallCount:  judge.CallCount,
 			JudgeErrorCount: judge.ErrorCount,
 		}
+		if judge.ModelVersion != "" {
+			judgeInfo.ModelVersion = new(judge.ModelVersion)
+		}
+		out.Judge = judgeInfo
 	}
 	return out
 }
@@ -143,6 +146,8 @@ func countJudgeCalls(results []models.RunEvalResult) int64 {
 	return n
 }
 
+// caseProtoFromRunEvalResult maps one ADK case into the wire AgentEvalResults
+// case shape, reusing [CaseFromRunEvalResult] for status and metric conversion.
 func caseProtoFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
 	internalCase := CaseFromRunEvalResult(r, duration)
 	return &evalspb.AgentEvalResults_Case{
@@ -154,6 +159,8 @@ func caseProtoFromRunEvalResult(r models.RunEvalResult, duration time.Duration) 
 	}
 }
 
+// metricFromADK converts one ADK EvalMetricResult into the internal execution
+// metric model, including optional rubric breakdown and failure messages.
 func metricFromADK(mr models.EvalMetricResult) execution.Metric {
 	m := execution.Metric{
 		ID:        mr.MetricName,
@@ -161,8 +168,7 @@ func metricFromADK(mr models.EvalMetricResult) execution.Metric {
 		Threshold: mr.Threshold,
 	}
 	if mr.Score != nil {
-		score := *mr.Score
-		m.Score = &score
+		m.Score = new(*mr.Score)
 	}
 	m.Message = metricMessage(mr)
 	if mr.Details != nil && len(mr.Details.RubricScores) > 0 {
@@ -174,6 +180,8 @@ func metricFromADK(mr models.EvalMetricResult) execution.Metric {
 	return m
 }
 
+// rubricScoreFromADK maps one ADK rubric score to execution.RubricScore,
+// deriving pass/fail from the metric threshold when a score is present.
 func rubricScoreFromADK(rs models.RubricScore, threshold float64) execution.RubricScore {
 	out := execution.RubricScore{ID: rs.RubricID}
 	if rs.Score != nil {
@@ -188,6 +196,7 @@ func rubricScoreFromADK(rs models.RubricScore, threshold float64) execution.Rubr
 	return out
 }
 
+// rubricStatus compares a rubric score against the metric threshold.
 func rubricStatus(score, threshold float64) evalspb.Status {
 	if score >= threshold {
 		return evalspb.Status_PASSED
@@ -195,6 +204,8 @@ func rubricStatus(score, threshold float64) evalspb.Status {
 	return evalspb.Status_FAILED
 }
 
+// metricMessage synthesises a human-readable failure reason for wire output
+// when the ADK result carries no explicit message.
 func metricMessage(mr models.EvalMetricResult) string {
 	switch mr.EvalStatus {
 	case models.EvalStatusNotEvaluated:
@@ -209,6 +220,7 @@ func metricMessage(mr models.EvalMetricResult) string {
 	}
 }
 
+// statusFromADK maps ADK EvalStatus values to alis.evals.v1.Status.
 func statusFromADK(s models.EvalStatus) evalspb.Status {
 	switch s {
 	case models.EvalStatusPassed:
@@ -222,6 +234,7 @@ func statusFromADK(s models.EvalStatus) evalspb.Status {
 	}
 }
 
+// durationProto returns nil for zero durations so optional proto fields stay unset.
 func durationProto(d time.Duration) *durationpb.Duration {
 	if d == 0 {
 		return nil

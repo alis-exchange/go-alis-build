@@ -31,23 +31,38 @@ type ClientStreamResult[Resp any] struct {
 	MessagesSent    int
 }
 
+// clientStreamTiming accumulates wall-clock checkpoints for client-stream send
+// and CloseAndRecv phases; CallClientStream reads it to populate ClientStreamResult.
 type clientStreamTiming struct {
-	start             time.Time
-	messagesSent      int
-	lastSendEnd       time.Time
-	sendFailedAt      time.Time
+	// start is set once at CallClientStream entry.
+	start time.Time
+	// messagesSent increments after each successful Send.
+	messagesSent int
+	// lastSendEnd is wall time after the most recent successful Send.
+	lastSendEnd time.Time
+	// sendFailedAt is wall time when the first Send error occurred.
+	sendFailedAt time.Time
+	// closeAndRecvStart is set when CloseAndRecv is entered.
 	closeAndRecvStart time.Time
-	closeAndRecvEnd   time.Time
-	closeInvoked      bool
-	sendFailed        bool
+	// closeAndRecvEnd is set when CloseAndRecv returns.
+	closeAndRecvEnd time.Time
+	// closeInvoked is true once CloseAndRecv has been called.
+	closeInvoked bool
+	// sendFailed is true once any Send returns an error.
+	sendFailed bool
+	// hadSuccessfulSend is true once at least one Send succeeds.
 	hadSuccessfulSend bool
 }
 
+// instrumentedClientStream wraps a gRPC client stream to record send and
+// CloseAndRecv timing for load SLO aggregation.
 type instrumentedClientStream[Req, Resp any] struct {
 	grpc.ClientStreamingClient[Req, Resp]
+	// timing holds shared checkpoint state for one CallClientStream invocation.
 	timing *clientStreamTiming
 }
 
+// Send records send outcome and updates timing counters before delegating.
 func (w *instrumentedClientStream[Req, Resp]) Send(req *Req) error {
 	err := w.ClientStreamingClient.Send(req)
 	now := time.Now()
@@ -62,6 +77,7 @@ func (w *instrumentedClientStream[Req, Resp]) Send(req *Req) error {
 	return nil
 }
 
+// CloseAndRecv records CloseAndRecv wall times before delegating.
 func (w *instrumentedClientStream[Req, Resp]) CloseAndRecv() (*Resp, error) {
 	w.timing.closeInvoked = true
 	w.timing.closeAndRecvStart = time.Now()
@@ -70,6 +86,9 @@ func (w *instrumentedClientStream[Req, Resp]) CloseAndRecv() (*Resp, error) {
 	return resp, err
 }
 
+// sendDuration derives TTFB-style send duration from recorded timing events.
+// Prefers last successful send end; falls back to first send error or
+// CloseAndRecv entry when no sends succeeded.
 func sendDuration(t *clientStreamTiming) time.Duration {
 	switch {
 	case t.hadSuccessfulSend:
@@ -83,6 +102,7 @@ func sendDuration(t *clientStreamTiming) time.Duration {
 	}
 }
 
+// responseLatency returns CloseAndRecv wall time; zero when never invoked.
 func responseLatency(t *clientStreamTiming) time.Duration {
 	if !t.closeInvoked {
 		return 0

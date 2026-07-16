@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
@@ -29,4 +30,14 @@ type EvalCase interface {
 type LoadCase interface {
 	Name() string
 	Run(ctx context.Context, mode evalspb.RunLoadTestRequest_Mode, profile loadgen.Profile) *execution.LoadCaseResult
+}
+
+// InfraObserveCase is the erased, runnable unit an infra observation suite
+// executes. The runner supplies resolved lookback and infra targets; the case
+// fetches Monitoring snapshots over the settled lookback window.
+type InfraObserveCase interface {
+	Name() string
+	// Lookback returns a per-case lookback override when the second value is true.
+	Lookback() (time.Duration, bool)
+	Run(ctx context.Context, cfg InfraObserveCaseConfig) *execution.InfraObserveCaseResult
 }
