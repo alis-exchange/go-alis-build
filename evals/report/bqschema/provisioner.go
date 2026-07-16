@@ -15,9 +15,13 @@ import (
 // operations the production implementation forwards to the BigQuery API and
 // that tests substitute with an in-memory fake.
 type tableProvisioner interface {
+	// datasetMetadata verifies the target dataset exists.
 	datasetMetadata(ctx context.Context) error
+	// tableMetadata reads the current table metadata, or returns a not-found error.
 	tableMetadata(ctx context.Context) (*bigquery.TableMetadata, error)
+	// createTable creates the table with the supplied metadata (schema already set).
 	createTable(ctx context.Context, md *bigquery.TableMetadata) error
+	// updateSchemaAdditive applies an etag-guarded additive schema update.
 	updateSchemaAdditive(ctx context.Context, schema bigquery.Schema, etag string) error
 }
 
@@ -54,7 +58,7 @@ func ensureTableWith(ctx context.Context, prov tableProvisioner, datasetID, tabl
 	var tableMD *bigquery.TableMetadata
 	if len(md) > 0 {
 		m := md[0]
-		tableMD = &m
+		tableMD = new(m)
 	}
 	schema := Schema()
 	qualified := datasetID + "." + tableID
@@ -93,30 +97,38 @@ func ensureTableWith(ctx context.Context, prov tableProvisioner, datasetID, tabl
 // bqTableProvisioner is the production [tableProvisioner]. It forwards
 // operations to the BigQuery Dataset and Table APIs.
 type bqTableProvisioner struct {
-	dataset      *bigquery.Dataset
+	// dataset is the target dataset handle.
+	dataset *bigquery.Dataset
+	// datasetLabel is "project:dataset" for error messages.
 	datasetLabel string
-	tableID      string
+	// tableID is the bare table ID within dataset.
+	tableID string
 }
 
+// datasetMetadata implements tableProvisioner.
 func (p *bqTableProvisioner) datasetMetadata(ctx context.Context) error {
 	_, err := p.dataset.Metadata(ctx)
 	return err
 }
 
+// tableMetadata implements tableProvisioner.
 func (p *bqTableProvisioner) tableMetadata(ctx context.Context) (*bigquery.TableMetadata, error) {
 	return p.dataset.Table(p.tableID).Metadata(ctx)
 }
 
+// createTable implements tableProvisioner.
 func (p *bqTableProvisioner) createTable(ctx context.Context, md *bigquery.TableMetadata) error {
 	return p.dataset.Table(p.tableID).Create(ctx, md)
 }
 
+// updateSchemaAdditive implements tableProvisioner.
 func (p *bqTableProvisioner) updateSchemaAdditive(ctx context.Context, schema bigquery.Schema, etag string) error {
 	update := bigquery.TableMetadataToUpdate{Schema: schema}
 	_, err := p.dataset.Table(p.tableID).Update(ctx, update, etag)
 	return err
 }
 
+// isNotFound reports whether err is a BigQuery API 404 (dataset or table missing).
 func isNotFound(err error) bool {
 	var gerr *googleapi.Error
 	return errors.As(err, &gerr) && gerr.Code == http.StatusNotFound

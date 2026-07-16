@@ -198,7 +198,7 @@ func TestFormatRun_batchIdIncludedWhenSet(t *testing.T) {
 		Name:    "runs/b",
 		Type:    evalspb.Run_INTEGRATION_TEST,
 		Status:  evalspb.Status_PASSED,
-		BatchId: &bid,
+		BatchId: new(bid),
 	}
 	got := formatRun(run)
 	if !strings.Contains(got, "batch=batch-42") {

@@ -224,7 +224,7 @@ func TestSchema_mapAsRepeatedRecord(t *testing.T) {
 func TestSchema_oneofArmsAreSiblings(t *testing.T) {
 	t.Parallel()
 	s := Schema()
-	for _, name := range []string{"integration_test", "load_test", "agent_eval"} {
+	for _, name := range []string{"integration_test", "load_test", "agent_eval", "infra_observation"} {
 		if lookupField(s, []string{name}) == nil {
 			t.Errorf("oneof arm %q missing from top-level schema", name)
 		}

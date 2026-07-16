@@ -42,6 +42,16 @@ func TestIsEval(t *testing.T) {
 	if !IsEval(suite.ErrNilSuite{}) {
 		t.Fatal("expected ErrNilSuite to implement EvalError")
 	}
+	for _, err := range []error{
+		suite.ErrInfraDuplicateID{ID: "same"},
+		suite.ErrInfraObserveLookbackUnset{},
+		suite.ErrInfraObserveNoTargets{},
+		suite.ErrInvalidLookback{Value: 0},
+	} {
+		if !IsEval(err) {
+			t.Fatalf("expected %T to implement EvalError", err)
+		}
+	}
 	if IsEval(errors.New("plain")) {
 		t.Fatal("plain error should not implement EvalError")
 	}

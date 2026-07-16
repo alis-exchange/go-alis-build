@@ -96,6 +96,25 @@ func TestReporter_ReportRun_marshalsJSONMatchesGolden(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:    "infra_observation",
+			fixture: "run.infra_observation.json",
+			run: &evalspb.Run{
+				Name: "runs/infra", Type: evalspb.Run_INFRA_OBSERVATION, Status: evalspb.Status_PASSED,
+				StartTime: start, EndTime: end,
+				Data: &evalspb.Run_InfraObservation{
+					InfraObservation: &evalspb.InfraObservationResults{
+						Cases: []*evalspb.InfraObservationResults_Case{
+							{
+								Id: "peak.hourly", Status: evalspb.Status_PASSED,
+								Lookback: durationpb.New(30 * time.Minute),
+								WindowStart: start, WindowEnd: end,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

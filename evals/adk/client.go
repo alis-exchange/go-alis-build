@@ -29,12 +29,18 @@ type RunEvalParams struct {
 	Metrics     []models.EvalMetric
 }
 
+// runEvalRequest is the JSON body POSTed to the sublauncher's run_eval endpoint.
 type runEvalRequest struct {
-	EvalCaseIDs []string            `json:"eval_case_ids,omitempty"`
+	// EvalCaseIDs limits the run to these case IDs; empty means all cases in the set.
+	EvalCaseIDs []string `json:"eval_case_ids,omitempty"`
+	// EvalMetrics lists required scoring criteria for this run.
 	EvalMetrics []models.EvalMetric `json:"eval_metrics"`
 }
 
+// runEvalResponse wraps the sublauncher's run_eval JSON when it is an object
+// rather than a bare results array.
 type runEvalResponse struct {
+	// RunEvalResults holds per-case eval outcomes.
 	RunEvalResults []models.RunEvalResult `json:"runEvalResults"`
 }
 
@@ -46,18 +52,26 @@ const defaultTimeout = 10 * time.Minute
 // HTTPClient calls the ADK evals launcher over HTTP. It is transport-agnostic:
 // callers plug in any authentication they need via [WithTransport].
 type HTTPClient struct {
+	// httpClient owns Transport and Timeout configured at construction.
 	httpClient *http.Client
-	baseURL    string
+	// baseURL is the trimmed agent base URL without trailing slash.
+	baseURL string
+	// pathPrefix is the effective sublauncher path prefix for this client.
 	pathPrefix string
 }
 
 // HTTPClientOption configures an [HTTPClient] at construction time.
 type HTTPClientOption func(*httpClientConfig)
 
+// httpClientConfig collects [HTTPClientOption] overrides applied by [NewHTTPClient].
 type httpClientConfig struct {
-	transport  http.RoundTripper
-	timeout    time.Duration
+	// transport is the outbound RoundTripper; nil selects http.DefaultTransport.
+	transport http.RoundTripper
+	// timeout is the request timeout when timeoutSet is true.
+	timeout time.Duration
+	// timeoutSet is true when [WithTimeout] was applied, including zero.
 	timeoutSet bool
+	// pathPrefix is the sublauncher mount prefix; empty restores defaultPathPrefix.
 	pathPrefix string
 }
 
@@ -241,6 +255,8 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 	return ids, nil
 }
 
+// decodeRunEvalResults accepts either a bare runEvalResults array or the
+// wrapped runEvalResponse object emitted by some sublauncher versions.
 func decodeRunEvalResults(raw []byte) ([]models.RunEvalResult, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {

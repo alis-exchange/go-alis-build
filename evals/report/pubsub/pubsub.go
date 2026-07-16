@@ -11,11 +11,16 @@ import (
 )
 
 const (
-	defaultTopic          = "alis.evals.v1.Run"
+	// defaultTopic is the proto full name of evalspb.Run; matches Terraform topic wiring.
+	defaultTopic = "alis.evals.v1.Run"
+	// defaultPublishTimeout bounds each publish when [WithPublishTimeout] is unset or non-positive.
 	defaultPublishTimeout = 10 * time.Second
-	projectEnvVar         = "ALIS_OS_PRODUCT_PROJECT"
+	// projectEnvVar is read by [New] when [WithProject] is not set.
+	projectEnvVar = "ALIS_OS_PRODUCT_PROJECT"
 )
 
+// marshalOptions pins the JSON contract shared with Pub/Sub → BigQuery subscriptions.
+// UseProtoNames and EmitUnpopulated must stay aligned with bqschema's protojson assumptions.
 var marshalOptions = protojson.MarshalOptions{
 	UseProtoNames:   true,
 	EmitUnpopulated: true,
@@ -24,22 +29,31 @@ var marshalOptions = protojson.MarshalOptions{
 // publisher is the write seam. A *pubsub.Publisher satisfies it via
 // realPublisher; tests substitute a fake.
 type publisher interface {
+	// Publish enqueues msg and returns a handle for awaiting broker acknowledgement.
 	Publish(ctx context.Context, msg *pubsub.Message) publishResult
+	// Stop flushes pending messages and shuts down the publisher.
 	Stop()
 }
 
+// publishResult is the per-message handle returned by publisher.Publish.
+// Blocking [Reporter.ReportRun] waits on Get; [WithBackground] discards it.
 type publishResult interface {
+	// Get blocks until the publish completes or ctx is cancelled.
 	Get(ctx context.Context) (string, error)
 }
 
+// realPublisher adapts *pubsub.Publisher to the publisher interface.
 type realPublisher struct {
+	// inner is the underlying client publisher for the configured topic.
 	inner *pubsub.Publisher
 }
 
+// Publish forwards to the wrapped *pubsub.Publisher.
 func (p *realPublisher) Publish(ctx context.Context, msg *pubsub.Message) publishResult {
 	return p.inner.Publish(ctx, msg)
 }
 
+// Stop flushes pending messages and tears down the publisher goroutines.
 func (p *realPublisher) Stop() {
 	p.inner.Stop()
 }
@@ -57,22 +71,28 @@ func (p *realPublisher) Stop() {
 // See the package documentation for the JSON payload contract and wiring
 // examples.
 type Reporter struct {
-	publisher      publisher
-	topic          string
-	orderingKey    string
-	background     bool
-	publishTimeout time.Duration
+	publisher      publisher       // publish seam; nil in partially constructed test reporters
+	topic          string          // bare ID or fully-qualified resource name
+	orderingKey    string          // empty disables message ordering
+	background     bool            // when true, ReportRun does not wait on publishResult.Get
+	publishTimeout time.Duration   // bounds each ReportRun via context.WithTimeout
 	// clientCloser is non-nil exactly when the Reporter owns the underlying
 	// *pubsub.Client (i.e. constructed via [New]). [NewWithClient] leaves it
 	// nil so [Reporter.Close] never closes a borrowed client.
 	clientCloser func() error
 }
 
+// config accumulates [Option] values before a Reporter is constructed.
 type config struct {
-	project        string
-	topic          string
-	orderingKey    string
-	background     bool
+	// project is the GCP project for [New]; invalid with [NewWithClient].
+	project string
+	// topic is the bare topic ID or fully-qualified name; empty uses defaultTopic.
+	topic string
+	// orderingKey is the Pub/Sub ordering key; empty disables ordering.
+	orderingKey string
+	// background when true makes ReportRun not await broker ack.
+	background bool
+	// publishTimeout is the per-publish deadline; zero uses defaultPublishTimeout.
 	publishTimeout time.Duration
 }
 
@@ -197,6 +217,9 @@ func NewWithClient(client *pubsub.Client, opts ...Option) (*Reporter, error) {
 	return newFromClient(client, cfg)
 }
 
+// newFromClient builds a Reporter from an existing client. It always creates
+// its own *pubsub.Publisher for the resolved topic; the client itself is only
+// closed when constructed via [New].
 func newFromClient(client *pubsub.Client, cfg config) (*Reporter, error) {
 	topic := cfg.topic
 	if topic == "" {
@@ -213,6 +236,8 @@ func newFromClient(client *pubsub.Client, cfg config) (*Reporter, error) {
 	}, nil
 }
 
+// loadConfig applies options, fills defaultTopic when unset, and normalizes
+// publishTimeout to defaultPublishTimeout.
 func loadConfig(opts []Option) config {
 	cfg := config{
 		publishTimeout: defaultPublishTimeout,

@@ -69,6 +69,20 @@ func (e ErrNoLoadSuites) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// ErrNoInfraObserveSuites is returned when no infra observation suites are registered.
+type ErrNoInfraObserveSuites struct{}
+
+func (e ErrNoInfraObserveSuites) Error() string { return "no infra observation suites registered" }
+
+func (e ErrNoInfraObserveSuites) Is(target error) bool {
+	var err ErrNoInfraObserveSuites
+	return errors.As(target, &err)
+}
+
+func (e ErrNoInfraObserveSuites) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // ErrUnknownCase is returned when case_ids contains an unknown filter.
 type ErrUnknownCase struct {
 	Name string

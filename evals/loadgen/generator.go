@@ -27,20 +27,25 @@ func New() Generator { return &inProcess{} }
 // nag but sustained undershoot does.
 const saturationThreshold = 0.9
 
+// inProcess is the default [Generator] implementation; each Run is isolated.
 type inProcess struct{}
 
 // hdrConfig covers 1µs to 1h with 3 significant figures. Latencies above 1h
 // are extremely unlikely for a single RPC and would be clamped to the max.
 const (
-	hdrMinValueUs = 1
-	hdrMaxValueUs = int64(time.Hour / time.Microsecond)
-	hdrSigFigs    = 3
+	hdrMinValueUs = 1                                      // minimum recordable latency in microseconds
+	hdrMaxValueUs = int64(time.Hour / time.Microsecond)    // maximum recordable latency in microseconds
+	hdrSigFigs    = 3                                      // HDR histogram significant-figure precision
 )
 
+// sample is one completed request handed from a worker to the aggregator.
 type sample struct {
-	sentAt  time.Time
+	// sentAt is the pacer tick timestamp used for warmup/window filtering.
+	sentAt time.Time
+	// latency is wall time from tick dispatch through target return.
 	latency time.Duration
-	result  TargetResult
+	// result holds transport, check, and optional stream outcome.
+	result TargetResult
 }
 
 // Run executes the load window described by p, driving target via a worker
@@ -155,6 +160,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 			}
 			now := time.Now()
 			if inFlight.Load() >= maxConc {
+				// Drop when concurrency is saturated (open-loop).
 				dropped.Add(1)
 			} else {
 				select {
@@ -162,6 +168,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 					sent++
 					inFlight.Add(1)
 				default:
+					// Drop when the tick channel is full; both paths count toward DroppedCount.
 					dropped.Add(1)
 				}
 			}
@@ -211,6 +218,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	return m, nil
 }
 
+// runAbortWatcher polls AbortCheck every 2s and cancels the run when it returns true.
 func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check AbortCheck, agg *aggregator) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -227,27 +235,46 @@ func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check Abort
 	}
 }
 
+// aggregator folds worker samples into HDR histograms and counters for one window.
 type aggregator struct {
+	// measurementStart is the inclusive measurement boundary; warmup samples are dropped.
 	measurementStart time.Time
-	measurementEnd   time.Time
-	measureFor       time.Duration
-	dropped          int64
+	// measurementEnd is the exclusive measurement boundary.
+	measurementEnd time.Time
+	// measureFor is the Duration field copied into finalized Metrics.
+	measureFor time.Duration
+	// dropped counts pacer-side drops seeded at construction; worker drops added later.
+	dropped int64
 
-	mu            sync.Mutex
-	hist          *hdrhistogram.Histogram
-	ttfbHist      *hdrhistogram.Histogram
-	respHist      *hdrhistogram.Histogram
-	totalHist     *hdrhistogram.Histogram
-	errorsByCode  map[string]int64
-	count         int64
-	errCount      int64
-	checkPassed   int64
-	checkFailed   int64
-	latencySumUs  float64
-	streamCount   int64
+	// mu guards all counters and histograms below.
+	mu sync.Mutex
+	// hist records per-request end-to-end latency.
+	hist *hdrhistogram.Histogram
+	// ttfbHist records stream send-phase latency.
+	ttfbHist *hdrhistogram.Histogram
+	// respHist records stream response latency.
+	respHist *hdrhistogram.Histogram
+	// totalHist records stream total duration.
+	totalHist *hdrhistogram.Histogram
+	// errorsByCode groups transport failures by gRPC code name.
+	errorsByCode map[string]int64
+	// count is requests recorded inside the measurement window.
+	count int64
+	// errCount is transport failures among recorded requests.
+	errCount int64
+	// checkPassed counts semantic checks that passed.
+	checkPassed int64
+	// checkFailed counts semantic check failures.
+	checkFailed int64
+	// latencySumUs is the sum of latencies in microseconds for mean calculation.
+	latencySumUs float64
+	// streamCount is requests that returned StreamSample data.
+	streamCount int64
+	// messagesTotal is total stream messages sent across all streams.
 	messagesTotal int64
 }
 
+// newAggregator constructs an empty aggregator for one measurement window.
 func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.Duration, dropped int64) *aggregator {
 	return &aggregator{
 		measurementStart: measurementStart,
@@ -262,6 +289,7 @@ func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.D
 	}
 }
 
+// consume drains samples until the channel closes and returns finalized metrics.
 func (a *aggregator) consume(samples <-chan sample) *Metrics {
 	for s := range samples {
 		a.record(s)
@@ -278,12 +306,14 @@ func (a *aggregator) abortSnapshot() *Metrics {
 	return a.buildAbortMetrics()
 }
 
+// finalize builds complete Metrics from accumulated samples under a lock.
 func (a *aggregator) finalize() *Metrics {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.buildMetrics()
 }
 
+// record ingests one sample when its sentAt falls inside the measurement window.
 func (a *aggregator) record(s sample) {
 	if a.measurementStart.IsZero() || s.sentAt.Before(a.measurementStart) {
 		return
@@ -322,15 +352,18 @@ func (a *aggregator) record(s sample) {
 	}
 }
 
+// buildMetrics assembles the full Metrics snapshot from aggregator state.
 func (a *aggregator) buildMetrics() *Metrics {
 	m := &Metrics{
-		Duration:         a.measureFor,
-		RequestCount:     a.count,
-		ErrorCount:       a.errCount,
-		CheckPassedCount: a.checkPassed,
-		CheckFailedCount: a.checkFailed,
-		ErrorsByCode:     cloneErrorsMap(a.errorsByCode),
-		DroppedCount:     a.dropped,
+		Duration:          a.measureFor,
+		RequestCount:      a.count,
+		ErrorCount:        a.errCount,
+		CheckPassedCount:  a.checkPassed,
+		CheckFailedCount:  a.checkFailed,
+		ErrorsByCode:      cloneErrorsMap(a.errorsByCode),
+		DroppedCount:      a.dropped,
+		MeasurementStart:  a.measurementStart,
+		MeasurementEnd:    a.measurementEnd,
 	}
 	if a.measureFor > 0 {
 		m.ActualQPS = float64(a.count) / a.measureFor.Seconds()
@@ -350,6 +383,7 @@ func (a *aggregator) buildMetrics() *Metrics {
 	return m
 }
 
+// buildAbortMetrics assembles the reduced Metrics snapshot used by AbortCheck.
 func (a *aggregator) buildAbortMetrics() *Metrics {
 	m := &Metrics{
 		Duration:     a.measureFor,
@@ -372,6 +406,7 @@ func (a *aggregator) buildAbortMetrics() *Metrics {
 	return m
 }
 
+// recordDurationHist records d into h, clamping to the shared HDR value range.
 func recordDurationHist(h *hdrhistogram.Histogram, d time.Duration) {
 	if d <= 0 {
 		return
@@ -386,6 +421,7 @@ func recordDurationHist(h *hdrhistogram.Histogram, d time.Duration) {
 	_ = h.RecordValue(us)
 }
 
+// latencyPercentilesFromHist derives P50/P95/P99 from an HDR histogram in milliseconds.
 func latencyPercentilesFromHist(h *hdrhistogram.Histogram) LatencySummary {
 	if h.TotalCount() == 0 {
 		return LatencySummary{}
@@ -397,6 +433,7 @@ func latencyPercentilesFromHist(h *hdrhistogram.Histogram) LatencySummary {
 	}
 }
 
+// latencyFromHist builds a full LatencySummary including min, max, and mean.
 func latencyFromHist(h *hdrhistogram.Histogram, sumUs float64, count int64) LatencySummary {
 	if count == 0 {
 		return LatencySummary{}
@@ -411,6 +448,7 @@ func latencyFromHist(h *hdrhistogram.Histogram, sumUs float64, count int64) Late
 	return summary
 }
 
+// cloneErrorsMap returns a defensive copy of errorsByCode for Metrics output.
 func cloneErrorsMap(in map[string]int64) map[string]int64 {
 	if len(in) == 0 {
 		return nil
@@ -422,6 +460,8 @@ func cloneErrorsMap(in map[string]int64) map[string]int64 {
 	return out
 }
 
+// runConcurrencySupervisor adjusts the worker pool every 50ms to match staged
+// ConcurrencyStages targets for the elapsed window time.
 func runConcurrencySupervisor(
 	ctx context.Context,
 	start time.Time,
@@ -447,6 +487,7 @@ func runConcurrencySupervisor(
 	}
 }
 
+// concurrencyAt returns the configured worker count for elapsed time within stages.
 func concurrencyAt(elapsed time.Duration, stages []Stage) int {
 	offset := time.Duration(0)
 	for _, s := range stages {
@@ -472,6 +513,8 @@ func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sa
 		}
 		remaining := windowTotal - time.Since(sentAt)
 		if remaining <= 0 {
+			// Ticks scheduled before the boundary but executed after it are excluded
+			// from aggregates; count as dropped so ActualQPS stays honest under ramp-down.
 			dropped.Add(1)
 			inFlight.Add(-1)
 			continue
@@ -489,6 +532,7 @@ func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sa
 	}
 }
 
+// invokeTarget executes target and recovers panics as ErrTargetPanic transport errors.
 func invokeTarget(ctx context.Context, target ResultTarget, data CallData) (latency time.Duration, result TargetResult) {
 	start := time.Now()
 	defer func() {
@@ -510,6 +554,7 @@ func errorCode(err error) string {
 	return status.Code(err).String()
 }
 
+// usToMs converts HDR histogram microsecond values to milliseconds for wire output.
 func usToMs(us int64) float64 {
 	return float64(us) / 1000.0
 }

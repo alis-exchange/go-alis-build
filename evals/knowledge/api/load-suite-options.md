@@ -15,6 +15,19 @@ timestamp: 2026-07-08T00:00:00Z
 | `evals.WithLoadSetup(hook suite.SuiteHook)` | Suite-level pre-cases hook. Failure fails every case with a `setup` marker. |
 | `evals.WithLoadTeardown(hook suite.SuiteHook)` | Suite-level post-cases hook. Errors logged, ignored. |
 | `evals.WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile)` | Override the framework default profile for that specific mode. The override fully replaces the default; other modes keep theirs. Panics if `mode == MODE_UNSPECIFIED`. |
+| `evals.WithCloudRunTargets(...)` | Declare Cloud Run infra targets. After each case, server-side snapshots are fetched over the measurement window and attached to `LoadTestResults.Case.cloud_run`. |
+| `evals.WithSpannerTargets(...)` | Declare Spanner infra targets. Snapshots attach to `LoadTestResults.Case.spanner`. Role is always `DEPENDENCY` on the wire. |
+
+# Infra targets on load suites
+
+`WithCloudRunTargets` and `WithSpannerTargets` also apply to
+[infra observe suites](/suites/infra-observe-suite.md). On load suites
+they are optional diagnostics: case `status` is unchanged in v1;
+`infra_checks` is empty on the wire.
+
+Target `ID` values must be unique across Cloud Run and Spanner targets
+in a suite. Each `WithCloudRunTargets` call must include exactly one
+`RoleEntry` target.
 
 # Why load has its own option set
 

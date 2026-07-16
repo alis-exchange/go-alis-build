@@ -35,3 +35,25 @@ func TestErrInvalidFilterPath_GRPCStatus(t *testing.T) {
 		t.Fatalf("code = %v", st.Code())
 	}
 }
+
+func TestInfraErrors_GRPCStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range []error{
+		ErrInfraTargetsEmpty{Kind: "cloud run"},
+		ErrInfraDuplicateID{ID: "same"},
+		ErrInfraCloudRunEntry{EntryCount: 0},
+		ErrInfraSpannerDatabase{ID: "db"},
+		ErrInfraCloudRunTargetIncomplete{ID: "cr"},
+		ErrInfraSpannerTargetIncomplete{ID: "sp"},
+		ErrInfraObserveLookbackUnset{},
+		ErrInfraObserveNoTargets{},
+		ErrInvalidLookback{Value: 0},
+		ErrNilInfraObserveCase{},
+	} {
+		st, ok := status.FromError(err.(interface{ GRPCStatus() *status.Status }).GRPCStatus().Err())
+		if !ok || st.Code() != codes.InvalidArgument {
+			t.Fatalf("%T: code = %v, want InvalidArgument", err, st.Code())
+		}
+	}
+}

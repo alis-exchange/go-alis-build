@@ -46,10 +46,10 @@ func (k SuiteKind) String() string {
 // primitives in [suite] and adapts CaseFunc values to the erased case
 // interfaces the runner consumes.
 type Suite struct {
-	kind    SuiteKind
-	test    *suite.TestSuite
-	eval    *suite.EvalSuite
-	options []configApplier
+	kind    SuiteKind        // KindTest or KindEval; set at construction, immutable
+	test    *suite.TestSuite // non-nil for integration suites
+	eval    *suite.EvalSuite // non-nil for agent-eval suites
+	options []configApplier  // unused after construction; retained for future re-apply
 }
 
 // SuiteOption configures a suite at construction time (excluding cases).
@@ -58,11 +58,16 @@ type SuiteOption interface {
 	applyEval(*suite.EvalSuite) error
 }
 
+// configApplier holds optional apply hooks for test and eval suite kinds.
+// Exactly one hook is non-nil per SuiteOption value.
 type configApplier struct {
+	// test is applied by applyTest; nil when option is eval-only.
 	test func(*suite.TestSuite) error
+	// eval is applied by applyEval; nil when option is test-only.
 	eval func(*suite.EvalSuite) error
 }
 
+// applyTest forwards the option to a test suite when configured.
 func (a configApplier) applyTest(s *suite.TestSuite) error {
 	if a.test == nil {
 		return nil
@@ -70,6 +75,7 @@ func (a configApplier) applyTest(s *suite.TestSuite) error {
 	return a.test(s)
 }
 
+// applyEval forwards the option to an eval suite when configured.
 func (a configApplier) applyEval(s *suite.EvalSuite) error {
 	if a.eval == nil {
 		return nil
@@ -243,13 +249,18 @@ func (s *Suite) Kind() SuiteKind {
 	return s.kind
 }
 
+// testCaseAdapter bridges a CaseFunc to suite.TestCase for integration suites.
 type testCaseAdapter struct {
+	// name is the case name registered via Suite.Case.
 	name string
-	fn   CaseFunc
+	// fn is the author body; invoked with a fresh T per run.
+	fn CaseFunc
 }
 
+// Name returns the registered case name.
 func (a *testCaseAdapter) Name() string { return a.name }
 
+// Run executes the case body and maps recorded leaves to execution.Check values.
 func (a *testCaseAdapter) Run(ctx context.Context) *execution.CaseResult {
 	rec := newT()
 	a.fn(ctx, rec)
@@ -261,13 +272,18 @@ func (a *testCaseAdapter) Run(ctx context.Context) *execution.CaseResult {
 	}
 }
 
+// evalCaseAdapter bridges a CaseFunc to suite.EvalCase for agent-eval suites.
 type evalCaseAdapter struct {
+	// name is the case name registered via Suite.Case.
 	name string
-	fn   CaseFunc
+	// fn is the author body; invoked with a fresh T per run.
+	fn CaseFunc
 }
 
+// Name returns the registered case name.
 func (a *evalCaseAdapter) Name() string { return a.name }
 
+// Run executes the case body and maps recorded leaves to execution.Metric values.
 func (a *evalCaseAdapter) Run(ctx context.Context) *execution.CaseResult {
 	rec := newT()
 	a.fn(ctx, rec)

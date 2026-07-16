@@ -16,6 +16,8 @@ func AudienceFromBaseURL(baseURL string) (string, error) {
 	return "https://" + host, nil
 }
 
+// hostFromBaseURL strips scheme, path, and port from baseURL and returns the
+// bare hostname used for Cloud Run ID token audiences.
 func hostFromBaseURL(baseURL string) (string, error) {
 	s := strings.TrimSpace(baseURL)
 	s = strings.TrimPrefix(s, "https://")

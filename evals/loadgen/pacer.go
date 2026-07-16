@@ -70,6 +70,8 @@ func (p StepStagePacer) Pace(elapsed time.Duration, sent uint64) (time.Duration,
 	return wait, false
 }
 
+// expectedHits returns the cumulative request count the step pacer should have
+// scheduled by elapsed, integrating constant rate over each stage segment.
 func (p StepStagePacer) expectedHits(elapsed time.Duration) float64 {
 	if elapsed <= 0 {
 		return 0
@@ -114,6 +116,8 @@ func (p LinearStagePacer) Pace(elapsed time.Duration, sent uint64) (time.Duratio
 	return wait, false
 }
 
+// expectedHits returns the cumulative request count the linear pacer should have
+// scheduled by elapsed, integrating the trapezoidal rate curve within each stage.
 func (p LinearStagePacer) expectedHits(elapsed time.Duration) float64 {
 	if elapsed <= 0 {
 		return 0
@@ -143,6 +147,8 @@ func (p LinearStagePacer) expectedHits(elapsed time.Duration) float64 {
 	return hits
 }
 
+// linearSegmentHits integrates request count for one linear ramp segment from
+// start to end over stageDur when elapsed time has passed within the segment.
 func linearSegmentHits(start, end float64, stageDur, elapsed time.Duration) float64 {
 	if elapsed <= 0 {
 		return 0
@@ -158,14 +164,20 @@ func linearSegmentHits(start, end float64, stageDur, elapsed time.Duration) floa
 	return start*e + (end-start)*e*e/(2*d)
 }
 
+// timeUntilHit returns how long to wait from from until the step pacer reaches
+// targetHits cumulative scheduled requests.
 func (p StepStagePacer) timeUntilHit(from time.Duration, targetHits float64) time.Duration {
 	return timeUntilIntegratedHits(from, p.Duration, targetHits, p.expectedHits)
 }
 
+// timeUntilHit returns how long to wait from from until the linear pacer reaches
+// targetHits cumulative scheduled requests.
 func (p LinearStagePacer) timeUntilHit(from time.Duration, targetHits float64) time.Duration {
 	return timeUntilIntegratedHits(from, p.Duration, targetHits, p.expectedHits)
 }
 
+// timeUntilIntegratedHits binary-searches elapsed time until integrate(t) reaches
+// targetHits, shared by step and linear staged pacers.
 func timeUntilIntegratedHits(from, total time.Duration, targetHits float64, integrate func(time.Duration) float64) time.Duration {
 	if integrate(total) <= targetHits {
 		return total - from
@@ -186,7 +198,8 @@ func timeUntilIntegratedHits(from, total time.Duration, targetHits float64, inte
 	return wait
 }
 
-// pacerForProfile selects the pacer for a resolved profile and total window.
+// pacerForProfile selects constant, step, or linear staged pacing for the
+// resolved profile over the full Warmup+Duration window.
 func pacerForProfile(p Profile, total time.Duration) Pacer {
 	if len(p.QPSStages) == 0 {
 		return ConstantPacer{Freq: p.QPS, Duration: total}

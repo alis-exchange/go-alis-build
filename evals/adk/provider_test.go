@@ -54,7 +54,7 @@ func TestProvider_Run_discoversSets(t *testing.T) {
 				OverallEvalMetricResults: []models.EvalMetricResult{{
 					MetricName: models.MetricResponseMatchScore,
 					Threshold:  0.3,
-					Score:      ptrFloat(1.0),
+					Score:      new(1.0),
 					EvalStatus: models.EvalStatusPassed,
 				}},
 			}})

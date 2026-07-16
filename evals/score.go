@@ -23,6 +23,8 @@ func Rouge1F1(hypothesis, reference string) float64 {
 	return 2 * precision * recall / (precision + recall)
 }
 
+// rougeTokenize lowercases s and splits on whitespace for ROUGE unigram overlap.
+// rougeTokenize lowercases and splits on whitespace for ROUGE-1 scoring.
 func rougeTokenize(s string) []string {
 	fields := strings.Fields(strings.ToLower(s))
 	if len(fields) == 0 {
@@ -31,6 +33,9 @@ func rougeTokenize(s string) []string {
 	return fields
 }
 
+// rougeUnigramOverlap counts matched unigrams using multiset intersection
+// (each reference token can match at most once).
+// rougeUnigramOverlap counts matched unigrams with multiset semantics.
 func rougeUnigramOverlap(hyp, ref []string) int {
 	counts := make(map[string]int, len(ref))
 	for _, t := range ref {

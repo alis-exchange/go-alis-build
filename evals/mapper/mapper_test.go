@@ -75,7 +75,7 @@ func TestAgentEvalRun_mapsMetrics(t *testing.T) {
 				SessionID: "sess-1",
 				Metrics: []execution.Metric{
 					{ID: "latency", Status: evalspb.Status_PASSED},
-					{ID: "quality", Status: evalspb.Status_FAILED, Score: &score, Threshold: 0.8},
+					{ID: "quality", Status: evalspb.Status_FAILED, Score: new(score), Threshold: 0.8},
 				},
 			},
 		},
@@ -126,7 +126,7 @@ func TestAgentEvalRun_rubricRationaleRoundtrip(t *testing.T) {
 					{
 						ID:     "no_rationale",
 						Status: evalspb.Status_PASSED,
-						Score:  ptrFloat64(0.95),
+						Score:  new(0.95),
 					},
 				},
 			}},
@@ -252,8 +252,8 @@ func TestAgentEvalRun_goldenSnapshots(t *testing.T) {
 					Status:    evalspb.Status_PASSED,
 					SessionID: "sess-1",
 					Metrics: []execution.Metric{
-						{ID: "rubric_based_final_response_quality_v1", Status: evalspb.Status_PASSED, Threshold: 0.7, Score: ptrFloat64(0.85)},
-						{ID: "hallucinations_v1", Status: evalspb.Status_PASSED, Threshold: 0.8, Score: ptrFloat64(0.9)},
+						{ID: "rubric_based_final_response_quality_v1", Status: evalspb.Status_PASSED, Threshold: 0.7, Score: new(0.85)},
+						{ID: "hallucinations_v1", Status: evalspb.Status_PASSED, Threshold: 0.8, Score: new(0.9)},
 					},
 					Duration:       time.Second,
 					JudgeCallCount: 2,
@@ -302,8 +302,6 @@ func readGolden(t *testing.T, name string) []byte {
 	}
 	return b
 }
-
-func ptrFloat64(v float64) *float64 { return &v }
 
 func TestIntegrationRun_googleProjectID(t *testing.T) {
 	t.Setenv("ALIS_OS_PROJECT", "marvel-sm-dev-123")

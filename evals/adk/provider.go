@@ -8,11 +8,15 @@ import (
 	"go.alis.build/evals/suite"
 )
 
+// clientFactory constructs a [Client] for one provider run; overridden in tests
+// via [WithClientFactory] to inject mocks or authenticated transports.
 type clientFactory func(ctx context.Context, baseURL, pathPrefix string) (Client, error)
 
 // Provider runs agent evaluations by discovering eval sets from a deployed ADK agent.
 type Provider struct {
-	agent     Agent
+	// agent holds the deployed agent URL, app name, metrics, and filters.
+	agent Agent
+	// newClient is the client constructor; defaults to unauthenticated [NewHTTPClient].
 	newClient clientFactory
 }
 

@@ -9,6 +9,8 @@ import (
 	"go.alis.build/evals/suite"
 )
 
+// testRunsEnvironmentSetupFailed materializes setup-error results for every
+// integration-test case when shared environment setup fails.
 func (r *Runner) testRunsEnvironmentSetupFailed(
 	runs []suite.TestSuiteRun,
 	err error,
@@ -43,6 +45,7 @@ func (r *Runner) testRunsEnvironmentSetupFailed(
 	return out
 }
 
+// evalRunsEnvironmentSetupFailed is [testRunsEnvironmentSetupFailed] for agent-eval runs.
 func (r *Runner) evalRunsEnvironmentSetupFailed(
 	runs []suite.EvalSuiteRun,
 	err error,
@@ -77,6 +80,7 @@ func (r *Runner) evalRunsEnvironmentSetupFailed(
 	return out
 }
 
+// loadRunsEnvironmentSetupFailed is [testRunsEnvironmentSetupFailed] for load-test runs.
 func (r *Runner) loadRunsEnvironmentSetupFailed(
 	runs []suite.LoadSuiteRun,
 	err error,

@@ -6,6 +6,8 @@ import (
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 )
 
+// defaultPathPrefix is the path segment where the ADK evals sublauncher mounts
+// its HTTP handlers when callers do not override PathPrefix.
 const defaultPathPrefix = "/api"
 
 // Agent configures a deployed ADK agent for lazy eval-set discovery and scoring.
@@ -54,6 +56,8 @@ func (a Agent) MetricsFor(setID string) []models.EvalMetric {
 	return a.DefaultMetrics
 }
 
+// pathPrefix returns the effective sublauncher path prefix, substituting
+// defaultPathPrefix when PathPrefix is empty.
 func (a Agent) pathPrefix() string {
 	if a.PathPrefix == "" {
 		return defaultPathPrefix
@@ -98,6 +102,8 @@ func RubricBasedFinalResponseQualityV1(threshold float64, rubrics []models.Rubri
 	})
 }
 
+// metricFromJSON round-trips v through JSON so helper constructors can build
+// models.EvalMetric values without duplicating the launcher's wire shape.
 func metricFromJSON(v any) (models.EvalMetric, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {

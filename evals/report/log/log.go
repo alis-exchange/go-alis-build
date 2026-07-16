@@ -74,6 +74,7 @@ func judgeDriftDetected(run *evalspb.Run) bool {
 	return false
 }
 
+// formatRun renders a compact, grep-friendly one-line summary for alog output.
 func formatRun(run *evalspb.Run) string {
 	var b strings.Builder
 	b.WriteString(run.GetName())
@@ -115,6 +116,8 @@ func formatRun(run *evalspb.Run) string {
 	return b.String()
 }
 
+// runCounts tallies case outcomes from whichever oneof arm populates the run.
+// Returns zeros when the run has no case-bearing payload.
 func runCounts(run *evalspb.Run) (total, passed, failed, skipped int) {
 	switch d := run.GetData().(type) {
 	case *evalspb.Run_IntegrationTest:
@@ -132,10 +135,17 @@ func runCounts(run *evalspb.Run) (total, passed, failed, skipped int) {
 			total++
 			bumpCounts(c.GetStatus(), &passed, &failed, &skipped)
 		}
+	case *evalspb.Run_InfraObservation:
+		for _, c := range d.InfraObservation.GetCases() {
+			total++
+			bumpCounts(c.GetStatus(), &passed, &failed, &skipped)
+		}
 	}
 	return
 }
 
+// bumpCounts increments passed, failed, or skipped from a case status.
+// Any non-PASSED, non-NOT_EVALUATED status counts as failed.
 func bumpCounts(status evalspb.Status, passed, failed, skipped *int) {
 	switch status {
 	case evalspb.Status_PASSED:

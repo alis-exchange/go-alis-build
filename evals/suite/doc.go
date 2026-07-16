@@ -2,7 +2,8 @@
 // public authoring surface in [go.alis.build/evals].
 //
 // Three suite kinds share a common shape (name, environments, hooks,
-// erased cases) but differ in their case interface:
+// erased cases) but differ in their case interface. A fourth kind observes
+// infrastructure without generating load:
 //
 //   - [TestSuite]  — cases implement [TestCase] and return an
 //     [execution.CaseResult] with `Checks`.
@@ -10,6 +11,9 @@
 //   - [LoadSuite]  — cases implement [LoadCase] and receive a resolved
 //     `mode` + [loadgen.Profile]; results carry a `Summary` plus
 //     SLO checks.
+//   - [InfraObserveSuite] — cases implement [InfraObserveCase]; results
+//     carry Cloud Run and Spanner snapshots over a settled lookback.
+//     Cases run concurrently (read-only Monitoring fetches).
 //
 // All three qualify short case names ("upload") to "{suite}.{case}" at
 // registration and enforce uniqueness within a suite. Case names must not
@@ -52,6 +56,8 @@
 //   - [WithLoadEnvironment]                     — declare env dependencies
 //   - [WithLoadSetup] / [WithLoadTeardown]      — before/after-cases hooks
 //   - [WithLoadProfileOverride](mode, profile)  — per-mode profile override
+//   - [WithCloudRunTargets] / [WithSpannerTargets] — declare infra targets
+//   - [WithLookback] — default lookback for infra-observe cases
 //
 // Load suites deliberately have no per-suite [ContextDecorator]: load
 // tests should run under whatever the runner's default decorator installs

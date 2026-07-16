@@ -33,6 +33,11 @@ type Metrics struct {
 	// Stream holds aggregate streaming metrics when any target returned
 	// StreamSample data.
 	Stream *StreamSummary
+	// MeasurementStart is the inclusive start of the measurement window (UTC).
+	// Warmup samples before this time are excluded from all other fields.
+	MeasurementStart time.Time
+	// MeasurementEnd is the exclusive end of the measurement window (UTC).
+	MeasurementEnd time.Time
 }
 
 // StreamSummary aggregates streaming RPC metrics for one load window.

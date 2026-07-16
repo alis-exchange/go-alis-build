@@ -171,7 +171,7 @@ func (f *fakeProvisioner) createTable(_ context.Context, md *bigquery.TableMetad
 	}
 	// Copy to detach from caller mutations.
 	copied := *md
-	f.createdMD = &copied
+	f.createdMD = new(copied)
 	return nil
 }
 

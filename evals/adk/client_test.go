@@ -33,7 +33,7 @@ func TestHTTPClient_RunEval_legacyArrayResponse(t *testing.T) {
 		OverallEvalMetricResults: []models.EvalMetricResult{{
 			MetricName: "response_match_score",
 			Threshold:  0.5,
-			Score:      ptrFloat(1.0),
+			Score:      new(1.0),
 			EvalStatus: models.EvalStatusPassed,
 		}},
 	}}
@@ -115,5 +115,3 @@ func TestHTTPClient_RunEval_perRequestPathPrefixWins(t *testing.T) {
 		t.Fatalf("path = %q, want %q", gotPath, want)
 	}
 }
-
-func ptrFloat(v float64) *float64 { return &v }

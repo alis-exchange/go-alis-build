@@ -66,3 +66,16 @@ func RegisterLoad(s *LoadSuite) error {
 	defaultRegistry.RegisterLoadSuite(s.inner)
 	return nil
 }
+
+// RegisterInfraObserve publishes an infra observation suite to DefaultRegistry.
+// Returns [suite.ErrNilSuite] for a nil suite.
+func RegisterInfraObserve(s *InfraObserveSuite) error {
+	if s == nil {
+		return suite.ErrNilSuite{}
+	}
+	if err := s.inner.Validate(); err != nil {
+		return err
+	}
+	defaultRegistry.RegisterInfraObserveSuite(s.inner)
+	return nil
+}
