@@ -13,7 +13,7 @@ import (
 const (
 	defaultTopic          = "alis.evals.v1.Run"
 	defaultPublishTimeout = 10 * time.Second
-	projectEnvVar         = "ALIS_OS_PROJECT"
+	projectEnvVar         = "ALIS_OS_PRODUCT_PROJECT"
 )
 
 var marshalOptions = protojson.MarshalOptions{
@@ -48,10 +48,11 @@ func (p *realPublisher) Stop() {
 // google.golang.org/protobuf/encoding/protojson.
 //
 // The default topic is "alis.evals.v1.Run" (the proto full name of the
-// payload). Unlike "*Event"-suffixed messages, this topic is not
-// auto-provisioned by the Alis Build platform — callers must provision the
-// topic (and any Pub/Sub → BigQuery subscription) via Terraform. Override
-// with [WithTopic] when your platform provisions under a different name.
+// payload). On Alis Build products this topic (and its Pub/Sub → BigQuery
+// subscription) is provisioned in the product GCP project via Terraform;
+// unlike "*Event"-suffixed messages it is not created by the define step.
+// Override with [WithTopic] when your platform provisions under a different
+// name.
 //
 // See the package documentation for the JSON payload contract and wiring
 // examples.
@@ -80,7 +81,7 @@ type Option func(*config)
 
 // WithProject overrides the Google Cloud project used by [New] when
 // constructing the underlying *pubsub.Client. When not set, [New] resolves
-// the project from the ALIS_OS_PROJECT environment variable.
+// the project from the ALIS_OS_PRODUCT_PROJECT environment variable.
 //
 // This option is only meaningful with [New]; [NewWithClient] borrows a
 // client that already has a project bound to it, and passing WithProject
@@ -153,8 +154,8 @@ var newPubsubClient = func(ctx context.Context, projectID string) (*pubsub.Clien
 // [Reporter.Close] stops the publisher and closes the client.
 //
 // The project ID is taken from [WithProject] when set, otherwise from the
-// ALIS_OS_PROJECT environment variable. When neither is available, New
-// returns an error rather than silently constructing a client without a
+// ALIS_OS_PRODUCT_PROJECT environment variable. When neither is available,
+// New returns an error rather than silently constructing a client without a
 // project.
 func New(ctx context.Context, opts ...Option) (*Reporter, error) {
 	cfg := loadConfig(opts)

@@ -101,6 +101,12 @@ func setupReporters(ctx context.Context, bqClient *bigquery.Client, datasetID, t
 See [`report/bqschema`](/packages/report-bqschema.md) for schema export and
 [`report/pubsub`](/packages/report-pubsub.md) for the JSON payload contract.
 
+On Alis Build, the simplest path is **Pub/Sub only**: `pubsubreport.New(ctx)`
+resolves the product project from `ALIS_OS_PRODUCT_PROJECT` and publishes to
+the platform-provisioned topic; a Pub/Sub → BigQuery subscription lands rows
+in `evals.runs`. When also using the BigQuery reporter, construct
+`bqClient` against `ALIS_OS_PRODUCT_PROJECT` (not `ALIS_OS_PROJECT`).
+
 ## 4. Import the launcher
 
 ```go

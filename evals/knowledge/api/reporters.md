@@ -37,11 +37,20 @@ Not themselves `Reporter` implementations, but used by the reporters above:
 
 JSON (pubsub) and streaming-insert (bigquery) paths converge on `bqschema.Schema()`.
 
+On Alis Build, evals infrastructure lives in the **product** GCP project
+(`ALIS_OS_PRODUCT_PROJECT`): topic `alis.evals.v1.Run`, dataset `evals`,
+table `runs`, and a Pub/Sub → BigQuery subscription. Environment Terraform
+grants the env `alis-build` service account `pubsub.publisher` on the product
+topic. The Pub/Sub reporter resolves its project from `ALIS_OS_PRODUCT_PROJECT`
+automatically; pass the same value as `projectID` when using the BigQuery
+reporter directly.
+
 # Wiring
 
 ```go
 import (
     "context"
+    "os"
 
     "cloud.google.com/go/bigquery"
     "go.alis.build/evals/report"
@@ -52,6 +61,7 @@ import (
 )
 
 func setupReporters(ctx context.Context, bqClient *bigquery.Client, datasetID, tableID string) error {
+    // bqClient must target ALIS_OS_PRODUCT_PROJECT (not ALIS_OS_PROJECT).
     if err := bqschema.EnsureTable(ctx, bqClient, datasetID, tableID); err != nil {
         return err
     }

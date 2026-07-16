@@ -28,7 +28,7 @@ type Reporter interface {
 | ---- | ------- | ------- |
 | `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED`, `Warn` otherwise. Nil-safe on nil runs. |
 | `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table. |
-| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` on top of `cloud.google.com/go/pubsub/v2` (default topic `alis.evals.v1.Run`, not auto-provisioned). |
+| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` on top of `cloud.google.com/go/pubsub/v2` (default topic `alis.evals.v1.Run`; resolves project from `ALIS_OS_PRODUCT_PROJECT`). |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful in local tests. |
 | `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out to multiple reporters, in order. First error aborts. |
 
@@ -37,6 +37,7 @@ type Reporter interface {
 ```go
 import (
     "context"
+    "os"
 
     "go.alis.build/evals/report"
     logreport "go.alis.build/evals/report/log"
@@ -44,8 +45,9 @@ import (
     pubsubreport "go.alis.build/evals/report/pubsub"
 )
 
-func setupReporters(ctx context.Context, projectID string) error {
-    bq, err := bqreport.New(ctx, projectID, "evals", "runs")
+func setupReporters(ctx context.Context) error {
+    productProject := os.Getenv("ALIS_OS_PRODUCT_PROJECT")
+    bq, err := bqreport.New(ctx, productProject, "evals", "runs")
     if err != nil {
         return err
     }

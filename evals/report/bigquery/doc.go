@@ -17,6 +17,10 @@
 //
 // # Provisioning
 //
+// On Alis Build, pass the product GCP project (ALIS_OS_PRODUCT_PROJECT), not
+// the environment project where the neuron runs. Default dataset/table:
+// evals / runs.
+//
 // Prefer [go.alis.build/evals/report/bqschema] for table provisioning:
 //
 //	bqschema.EnsureTable(ctx, client, datasetID, tableID)
@@ -43,8 +47,8 @@
 //
 // Standalone:
 //
-//	func setupReporter(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
-//	    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	func setupReporter(ctx context.Context, datasetID, tableID string) (*bqreport.Reporter, error) {
+//	    r, err := bqreport.New(ctx, os.Getenv("ALIS_OS_PRODUCT_PROJECT"), datasetID, tableID)
 //	    if err != nil {
 //	        return nil, err
 //	    }
@@ -62,8 +66,8 @@
 //	    bqreport "go.alis.build/evals/report/bigquery"
 //	)
 //
-//	func setupReporters(ctx context.Context, projectID, datasetID, tableID string) (*bqreport.Reporter, error) {
-//	    r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	func setupReporters(ctx context.Context, datasetID, tableID string) (*bqreport.Reporter, error) {
+//	    r, err := bqreport.New(ctx, os.Getenv("ALIS_OS_PRODUCT_PROJECT"), datasetID, tableID)
 //	    if err != nil {
 //	        return nil, err
 //	    }

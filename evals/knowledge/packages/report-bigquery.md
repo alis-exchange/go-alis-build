@@ -18,11 +18,24 @@ Schema inference and table provisioning are delegated to
 
 # Usage
 
-```go
-import bqreport "go.alis.build/evals/report/bigquery"
+Pass the **product** GCP project ID — on Alis Build use
+`ALIS_OS_PRODUCT_PROJECT`, not `ALIS_OS_PROJECT` (the environment where the
+neuron runs). Default dataset/table on Alis Build products: `evals` / `runs`.
 
-r, err := bqreport.New(ctx, projectID, datasetID, tableID)
+```go
+import (
+    "os"
+
+    bqreport "go.alis.build/evals/report/bigquery"
+)
+
+r, err := bqreport.New(ctx, os.Getenv("ALIS_OS_PRODUCT_PROJECT"), "evals", "runs")
 ```
+
+On Alis Build, the platform-provisioned write path from environment neurons
+is Pub/Sub → BigQuery (see [`report/pubsub`](/packages/report-pubsub.md)).
+Direct streaming inserts require `roles/bigquery.dataEditor` on the product
+dataset, which is not granted to environment service accounts by default.
 
 `WithAutoCreateTable` delegates to `bqschema.EnsureTable`.
 

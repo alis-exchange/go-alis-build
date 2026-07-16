@@ -39,7 +39,8 @@
 //	    pubsubreport "go.alis.build/evals/report/pubsub"
 //	)
 //
-//	func setupReporters(ctx context.Context, bqClient *bigquery.Client, projectID, datasetID, tableID string) (io.Closer, error) {
+//	func setupReporters(ctx context.Context, bqClient *bigquery.Client, datasetID, tableID string) (io.Closer, error) {
+//	    // bqClient must target ALIS_OS_PRODUCT_PROJECT (not ALIS_OS_PROJECT).
 //	    if err := bqschema.EnsureTable(ctx, bqClient, datasetID, tableID); err != nil {
 //	        return nil, err
 //	    }

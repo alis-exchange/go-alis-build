@@ -14,11 +14,18 @@
 // # Default topic
 //
 // The default topic is "alis.evals.v1.Run", the proto full name of the
-// payload. Unlike "*Event"-suffixed messages, this topic is NOT
-// auto-provisioned by the Alis Build platform's define step. Callers must
-// provision the topic (and any Pub/Sub → BigQuery subscription) via
-// Terraform. Override with [WithTopic] when your platform provisions under
-// a different name.
+// payload. On Alis Build products this topic (and its Pub/Sub → BigQuery
+// subscription) is provisioned in the product GCP project via Terraform;
+// unlike "*Event"-suffixed messages it is not created by the define step.
+// Override with [WithTopic] when your platform provisions under a different
+// name.
+//
+// # Project resolution
+//
+// [New] resolves the Google Cloud project from [WithProject] when set,
+// otherwise from the ALIS_OS_PRODUCT_PROJECT environment variable. Evals
+// neurons run in an environment project (ALIS_OS_PROJECT) but publish to
+// the topic in the product project — do not use ALIS_OS_PROJECT here.
 //
 // # BigQuery integration
 //
@@ -65,8 +72,9 @@
 //	    pubsubreport "go.alis.build/evals/report/pubsub"
 //	)
 //
-//	func setupReporters(ctx context.Context, projectID, datasetID, tableID string) error {
-//	    bq, err := bqreport.New(ctx, projectID, datasetID, tableID)
+//	func setupReporters(ctx context.Context, datasetID, tableID string) error {
+//	    productProject := os.Getenv("ALIS_OS_PRODUCT_PROJECT")
+//	    bq, err := bqreport.New(ctx, productProject, datasetID, tableID)
 //	    if err != nil {
 //	        return err
 //	    }
