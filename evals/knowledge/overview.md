@@ -1,14 +1,14 @@
 ---
 type: Overview
 title: Framework overview
-description: The mental model for evals — three suite kinds, one authoring surface, one wire envelope.
+description: The mental model for evals — four suite kinds, one authoring surface, one wire envelope.
 tags: [overview, mental-model]
 timestamp: 2026-07-08T00:00:00Z
 ---
 
 # What the framework is
 
-`go.alis.build/evals` is a **single authoring surface** for three kinds
+`go.alis.build/evals` is a **single authoring surface** for four kinds
 of post-deploy test:
 
 | Kind | Constructor | Registration | Wire result |
@@ -16,10 +16,11 @@ of post-deploy test:
 | Integration | `evals.NewIntegrationSuite` | `evals.RegisterIntegration` | `IntegrationTestResults` |
 | Agent eval  | `evals.NewAgentEvalSuite` | `evals.RegisterEval` / `evals.RegisterAgent` | `AgentEvalResults` |
 | Load        | `evals.NewLoadSuite` | `evals.RegisterLoad` | `LoadTestResults` |
+| Infra observe | `evals.NewInfraObserveSuite` | `evals.RegisterInfraObserve` | `InfraObservationResults` |
 
 Each suite kind maps to one RPC on the deployed `TestService`:
-`RunIntegrationTest`, `RunAgentEval`, `RunLoadTest`. Every RPC returns
-a long-running operation; every completed suite becomes a `Run` proto
+`RunIntegrationTest`, `RunAgentEval`, `RunLoadTest`, `RunInfraObservation`.
+Every RPC returns a long-running operation; every completed suite becomes a `Run` proto
 published to whichever [reporters](/concepts/reporter.md) the neuron
 wires up.
 
@@ -65,9 +66,9 @@ For gRPC streaming RPCs, use [`CallServerStream`](/api/helpers.md#streaming-help
 and [`CallClientStream`](/api/helpers.md#streaming-helpers) instead of
 unary `Call`.
 
-# Why three kinds under one framework
+# Why four kinds under one framework
 
-The three kinds share far more than they differ:
+The four kinds share far more than they differ:
 
 - Same [registry](/concepts/registry.md) and filter grammar.
 - Same [environment](/concepts/environment.md) activation model.
@@ -86,6 +87,7 @@ kind of run.
   contracts.
 * [Agent-eval suite](/suites/agent-eval-suite.md) — LLM output grading.
 * [Load suite](/suites/load-suite.md) — traffic generation and SLOs.
+* [Infra observe suite](/suites/infra-observe-suite.md) — Cloud Monitoring snapshots.
 * [End-to-end lifecycle](/operations/lifecycle.md) — the detailed
   timeline of a single RPC.
 

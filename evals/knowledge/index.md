@@ -8,7 +8,7 @@ timestamp: 2026-07-08T00:00:00Z
 
 # go.alis.build/evals
 
-`evals` is a Go framework for writing three kinds of post-deploy test
+`evals` is a Go framework for writing four kinds of post-deploy test
 against live services:
 
 - **Integration tests** — behavioural contracts on the gRPC surface.
@@ -16,6 +16,8 @@ against live services:
   evaluation.
 - **Agent evaluations** — deterministic scorers, LLM-as-judge scores,
   and rubric dimensions against agent transcripts.
+- **Infra observation** — Cloud Run and Spanner Monitoring snapshots
+  over a settled lookback window (standalone) or attached to load cases.
 
 Suites are authored in Go, registered once at `init()`, and exposed via
 three LRO-backed RPCs on the deployed `TestService`. Each completed
@@ -29,7 +31,7 @@ follow the section indexes below for depth.
 
 # Contents
 
-* [Overview](/overview.md) — mental model, three suite kinds, and how a run flows through the framework.
+* [Overview](/overview.md) — mental model, four suite kinds, and how a run flows through the framework.
 * [Concepts](/concepts/) — the reusable abstractions: suite, case, T recorder, environment, registry, reporter, run, status.
 * [Suites](/suites/) — the three suite kinds and how to author each one.
 * [API reference](/api/) — every exported type, function, and option.
