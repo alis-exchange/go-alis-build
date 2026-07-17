@@ -17,6 +17,7 @@
 //   - Enums                     → STRING
 //   - Regular messages          → RECORD (recurse)
 //   - Repeated fields           → mode REPEATED
+//   - Repeated entry lists      → REPEATED RECORD{key, value} (tags, errors_by_code)
 //   - Oneof arms                → sibling NULLABLE RECORD columns at parent level
 //
 // google.rpc.Status.details (repeated google.protobuf.Any) is deliberately

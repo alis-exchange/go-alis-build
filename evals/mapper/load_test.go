@@ -71,7 +71,7 @@ func TestLoadRun_maps(t *testing.T) {
 	if c.GetId() != "files-v2-load.list-files" || c.GetStatus() != evalspb.Status_PASSED {
 		t.Fatalf("case=%+v", c)
 	}
-	if c.GetTags()["rpc"] != "ListFiles" {
+	if got, ok := StringEntryValue(c.GetTags(), "rpc"); !ok || got != "ListFiles" {
 		t.Fatalf("Tags=%v", c.GetTags())
 	}
 	summary := c.GetSummary()
@@ -93,7 +93,7 @@ func TestLoadRun_maps(t *testing.T) {
 	if summary.GetLatency().GetP99Ms() != 120 {
 		t.Fatalf("P99=%v", summary.GetLatency().GetP99Ms())
 	}
-	if got := summary.GetErrorsByCode()["UNAVAILABLE"]; got != 2 {
+	if got, ok := Int64EntryValue(summary.GetErrorsByCode(), "UNAVAILABLE"); !ok || got != 2 {
 		t.Fatalf("ErrorsByCode[UNAVAILABLE]=%d", got)
 	}
 	if summary.GetStream().GetStreamCount() != 10 || summary.GetStream().GetMessagesSentTotal() != 40 {

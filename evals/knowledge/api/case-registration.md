@@ -20,7 +20,7 @@ timestamp: 2026-07-08T00:00:00Z
 
 | Option | Effect |
 | ------ | ------ |
-| `evals.WithLoadCaseTags(map[string]string)` | Attach labels to the case wire result (`Case.tags`). |
+| `evals.WithLoadCaseTags(map[string]string)` | Attach labels to the case wire result. On the wire these become repeated `{key, value}` entries in `Case.tags`. |
 | `evals.WithLoadCaseData(data ...any)` | Round-robin payloads rotated by request number. |
 | `evals.WithLoadCaseDataProvider(p DataProvider)` | Programmatic per-request data. |
 

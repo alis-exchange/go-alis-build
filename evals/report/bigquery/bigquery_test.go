@@ -494,6 +494,51 @@ func TestBqreportRow_matchesBqschema(t *testing.T) {
 	}
 }
 
+// TestBqreportRow_loadEntriesMatchSchema exercises tags and errors_by_code
+// through the protobq streaming-insert path.
+func TestBqreportRow_loadEntriesMatchSchema(t *testing.T) {
+	t.Parallel()
+	run := &evalspb.Run{
+		Name:   "runs/load-bq",
+		Type:   evalspb.Run_LOAD_TEST,
+		Status: evalspb.Status_PASSED,
+		Data: &evalspb.Run_LoadTest{
+			LoadTest: &evalspb.LoadTestResults{
+				Cases: []*evalspb.LoadTestResults_Case{
+					{
+						Id: "load-1", Status: evalspb.Status_PASSED,
+						Tags: []*evalspb.LoadTestResults_StringEntry{
+							{Key: "rpc", Value: "ListFiles"},
+						},
+						Summary: &evalspb.LoadTestResults_Summary{
+							ErrorsByCode: []*evalspb.LoadTestResults_Int64Entry{
+								{Key: "UNAVAILABLE", Value: 2},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	ins := &recordingInserter{}
+	r := newReporterWithInserter(ins)
+	if err := r.ReportRun(context.Background(), run); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	saver := ins.rows[0].(interface {
+		Save() (map[string]bigquery.Value, string, error)
+	})
+	row, _, err := saver.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if diffs := diffRowAgainstSchema(row, bqschema.Schema(), ""); len(diffs) > 0 {
+		for _, d := range diffs {
+			t.Errorf("row/schema mismatch: %s", d)
+		}
+	}
+}
+
 // diffRowAgainstSchema walks a saver row alongside a bqschema.Schema and
 // returns a list of type mismatches. It flags:
 //   - a scalar value whose Go kind cannot fit into the declared BigQuery type

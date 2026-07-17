@@ -29,7 +29,7 @@ const (
 //   - Regular messages          → RECORD (recurse)
 //   - Repeated fields           → mode REPEATED
 //   - Oneof arms                → sibling NULLABLE at parent level
-//   - Map fields                → REPEATED RECORD{key, value}
+//   - Repeated entry lists      → REPEATED RECORD{key, value} (tags, errors_by_code)
 //
 // All fields are NULLABLE (BigQuery does not enforce proto3 required semantics).
 // Column names use the proto field name (already snake_case in evalspb).

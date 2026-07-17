@@ -12,12 +12,22 @@ timestamp: 2026-07-08T00:00:00Z
 message LoadTestResults {
   repeated Case cases = 1;
 
+  message StringEntry {
+    string key = 1;
+    string value = 2;
+  }
+
+  message Int64Entry {
+    string key = 1;
+    int64 value = 2;
+  }
+
   message Case {
     string  id      = 1;
     Status  status  = 2;
     Summary summary = 3;
     repeated SloCheck checks = 4;
-    map<string, string> tags = 5;
+    repeated StringEntry tags = 5;
   }
 
   message Summary {
@@ -29,7 +39,7 @@ message LoadTestResults {
     int64                   error_count     = 6;
     double                  actual_qps      = 7;
     LatencyPercentiles      latency         = 8;
-    map<string,int64>       errors_by_code  = 9;
+    repeated Int64Entry     errors_by_code  = 9;
     int64                   dropped_count   = 10;
     int64                   check_passed_count = 11;
     int64                   check_failed_count = 12;
@@ -73,8 +83,9 @@ message LoadTestResults {
   the framework emits an `alog.Warnf` — you are measuring the
   generator, not the SUT.
 - `errors_by_code` — canonical gRPC status code names (`UNAVAILABLE`,
-  `DEADLINE_EXCEEDED`, …). Non-gRPC errors are grouped under
-  `UNKNOWN`.
+  `DEADLINE_EXCEEDED`, …) as repeated `{key, value}` entries (BigQuery-
+  compatible JSON arrays on the Pub/Sub path). Non-gRPC errors are
+  grouped under `UNKNOWN`.
 - `qps_stages`, `concurrency_stages` — resolved staged profile config
   (empty when constant rate/concurrency).
 - `stream` — populated when the case exercised streaming RPCs.

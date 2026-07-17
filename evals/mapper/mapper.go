@@ -61,10 +61,10 @@ func loadTestData(sr execution.LoadSuiteResult) *evalspb.LoadTestResults {
 	cases := make([]*evalspb.LoadTestResults_Case, 0, len(sr.Cases))
 	for _, c := range sr.Cases {
 		cases = append(cases, &evalspb.LoadTestResults_Case{
-			Id:        c.Name,
-			Status:    c.Status,
-			Tags:      c.Tags,
-			Summary:   mapLoadSummary(c.Summary),
+			Id:          c.Name,
+			Status:      c.Status,
+			Tags:        stringMapToEntries(c.Tags),
+			Summary:     mapLoadSummary(c.Summary),
 			Checks:    mapSloChecks(c.Checks),
 			CloudRun:  c.CloudRun,
 			Spanner:   c.Spanner,
@@ -135,7 +135,7 @@ func mapLoadSummary(s execution.LoadCaseSummary) *evalspb.LoadTestResults_Summar
 			MeanMs: s.Latency.MeanMs,
 			MaxMs:  s.Latency.MaxMs,
 		},
-		ErrorsByCode:        s.ErrorsByCode,
+		ErrorsByCode:        int64MapToEntries(s.ErrorsByCode),
 		QpsStages:           mapLoadStages(s.QPSStages),
 		ConcurrencyStages:   mapLoadStages(s.ConcurrencyStages),
 		Stream:              mapLoadStreamSummary(s.Stream),

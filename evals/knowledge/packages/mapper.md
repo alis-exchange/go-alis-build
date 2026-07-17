@@ -19,6 +19,8 @@ types and the wire types in `evalspb`. It:
 - Fills in resource names (`runs/{run_id}`, `operations/{op_id}`).
 - Populates `start_time`, `end_time`, `duration`, and any
   `google_project_id` from context.
+- Converts load-test maps (`tags`, `errors_by_code`) into repeated
+  `{key, value}` wire entries via `entries.go`.
 
 # Why the boundary exists
 
@@ -31,8 +33,9 @@ This makes the wire types swappable without touching authoring code.
 | File | Purpose |
 | ---- | ------- |
 | `mapper.go` | Main translation logic. |
+| `entries.go` | Map → repeated `{key, value}` wire entry conversion for load results. |
 | `doc.go` | Package documentation. |
-| `mapper_test.go`, `load_test.go` | Tests. |
+| `mapper_test.go`, `load_test.go`, `entries_test.go` | Tests. |
 
 # Related
 

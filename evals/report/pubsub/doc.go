@@ -8,8 +8,11 @@
 // Marshaling is locked to protojson with UseProtoNames=true and
 // EmitUnpopulated=true. Timestamps are RFC 3339 strings, Durations are
 // protojson-native strings (e.g. "1.500s"), enums are proto names, and only
-// the set oneof arm is emitted. The payload is a bare evalspb.Run — no
-// RunPublishedEvent envelope.
+// the set oneof arm is emitted. Load-test tags and errors_by_code are
+// repeated {key, value} entry messages (JSON arrays), not proto map objects,
+// so Pub/Sub → BigQuery table-schema subscriptions ingest them without
+// transformation. The payload is a bare evalspb.Run — no RunPublishedEvent
+// envelope.
 //
 // # Default topic
 //

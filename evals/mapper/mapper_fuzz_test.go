@@ -103,7 +103,7 @@ func FuzzLoadRunProtoRoundtrip(f *testing.F) {
 				t.Fatalf("MessagesSentTotal=%d, want %d", got.GetStream().GetMessagesSentTotal(), messagesTotal)
 			}
 		}
-		if c.GetTags()["env"] != "fuzz" {
+		if got, ok := StringEntryValue(c.GetTags(), "env"); !ok || got != "fuzz" {
 			t.Fatalf("tags=%v", c.GetTags())
 		}
 	})

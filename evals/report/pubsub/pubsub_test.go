@@ -135,6 +135,52 @@ func TestReporter_ReportRun_marshalsJSONMatchesGolden(t *testing.T) {
 	}
 }
 
+func TestReporter_ReportRun_loadEntriesAreJSONArray(t *testing.T) {
+	t.Parallel()
+	run := &evalspb.Run{
+		Name: "runs/load-entries", Type: evalspb.Run_LOAD_TEST, Status: evalspb.Status_PASSED,
+		Data: &evalspb.Run_LoadTest{
+			LoadTest: &evalspb.LoadTestResults{
+				Cases: []*evalspb.LoadTestResults_Case{
+					{
+						Id: "load-1", Status: evalspb.Status_PASSED,
+						Tags: []*evalspb.LoadTestResults_StringEntry{
+							{Key: "rpc", Value: "ListFiles"},
+						},
+						Summary: &evalspb.LoadTestResults_Summary{
+							ErrorsByCode: []*evalspb.LoadTestResults_Int64Entry{
+								{Key: "UNAVAILABLE", Value: 2},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	fake := &recordingPublisher{}
+	r := newReporterWithPublisher(fake)
+	if err := r.ReportRun(context.Background(), run); err != nil {
+		t.Fatalf("ReportRun: %v", err)
+	}
+	got := string(fake.lastData())
+	for _, fragment := range []string{
+		`"tags":[`,
+		`"key":"rpc"`,
+		`"value":"ListFiles"`,
+		`"errors_by_code":[`,
+		`"key":"UNAVAILABLE"`,
+		`"value":"2"`,
+	} {
+		if !strings.Contains(got, fragment) {
+			t.Fatalf("payload missing %q\n got: %s", fragment, got)
+		}
+	}
+	// Pub/Sub → BigQuery requires array entries, not protojson map objects.
+	if strings.Contains(got, `"tags":{`) || strings.Contains(got, `"errors_by_code":{`) {
+		t.Fatalf("payload uses object-form maps; want repeated entry arrays\n got: %s", got)
+	}
+}
+
 func TestReporter_ReportRun_syncBlocksOnAck(t *testing.T) {
 	delay := 50 * time.Millisecond
 	fake := &blockingPublisher{delay: delay}

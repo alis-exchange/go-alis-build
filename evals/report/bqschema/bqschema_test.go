@@ -189,15 +189,15 @@ func TestSchema_omitsStatusDetails(t *testing.T) {
 	}
 }
 
-// TestSchema_mapAsRepeatedRecord asserts that proto map fields become
-// REPEATED RECORD{key, value} — matching go.einride.tech/protobuf-bigquery's
+// TestSchema_mapAsRepeatedRecord asserts that load-test entry-list fields
+// become REPEATED RECORD{key, value} — matching go.einride.tech/protobuf-bigquery's
 // convention so the JSON path (bqschema) and streaming-insert path
 // (bqreport) stay in lockstep on schema shape.
 func TestSchema_mapAsRepeatedRecord(t *testing.T) {
 	t.Parallel()
 	f := lookupField(Schema(), []string{"load_test", "cases", "summary", "errors_by_code"})
 	if f == nil {
-		t.Fatal("errors_by_code map field missing from schema")
+		t.Fatal("errors_by_code entry-list field missing from schema")
 	}
 	if f.Type != bigquery.RecordFieldType {
 		t.Errorf("type = %v, want RECORD", f.Type)

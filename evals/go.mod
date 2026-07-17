@@ -9,9 +9,9 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	go.alis.build/adk/launchers v1.0.9
 	go.alis.build/alog v0.1.0
-	go.alis.build/common v1.1.13
+	go.alis.build/common v1.1.14
 	go.einride.tech/protobuf-bigquery v0.29.0
-	google.golang.org/api v0.288.0
+	google.golang.org/api v0.289.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
@@ -56,12 +56,12 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260710170516-c325552849a7 // indirect
+	golang.org/x/telemetry v0.0.0-20260717140457-bdb89881bb75 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/genai v1.63.0 // indirect
+	google.golang.org/genai v1.64.0 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d // indirect
 )
