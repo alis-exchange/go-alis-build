@@ -9,15 +9,25 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
+	"github.com/google/uuid"
+	"github.com/googleapis/gax-go/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+type cloudTasksClient interface {
+	CreateTask(context.Context, *cloudtaskspb.CreateTaskRequest, ...gax.CallOption) (*cloudtaskspb.Task, error)
+	Close() error
+}
+
 type queue struct {
 	name                string
 	serviceAccountEmail string
-	client              *cloudtasks.Client
+	client              cloudTasksClient
 	taskDeadline        time.Duration
+	retryBackoff        gax.Backoff
 }
 
 var supportedCloudTasksLocations = map[string]struct{}{
@@ -63,14 +73,24 @@ func newQueue(ctx context.Context, cfg Config) (*queue, error) {
 		serviceAccountEmail: cfg.CloudTasksServiceAccount,
 		client:              tasksClient,
 		taskDeadline:        30 * time.Minute,
+		retryBackoff: gax.Backoff{
+			Initial:    100 * time.Millisecond,
+			Max:        5 * time.Second,
+			Multiplier: 2,
+		},
 	}, nil
 }
 
 // scheduleCloudTask creates a Cloud Tasks HTTP task for the supplied callback URL.
 func (q *queue) scheduleCloudTask(ctx context.Context, url string, scheduleTime time.Time) error {
+	// Supplying a task name makes CreateTask idempotent. If Cloud Tasks accepts a
+	// request but its response is lost, the retry receives AlreadyExists instead
+	// of creating a duplicate callback.
+	taskName := q.name + "/tasks/" + uuid.NewString()
 	req := &cloudtaskspb.CreateTaskRequest{
 		Parent: q.name,
 		Task: &cloudtaskspb.Task{
+			Name: taskName,
 			MessageType: &cloudtaskspb.Task_HttpRequest{
 				HttpRequest: &cloudtaskspb.HttpRequest{
 					Url:        url,
@@ -87,7 +107,21 @@ func (q *queue) scheduleCloudTask(ctx context.Context, url string, scheduleTime 
 		},
 	}
 
-	_, err := q.client.CreateTask(ctx, req)
+	err := gax.Invoke(ctx, func(ctx context.Context, _ gax.CallSettings) error {
+		_, err := q.client.CreateTask(ctx, req)
+		return err
+	}, gax.WithRetry(func() gax.Retryer {
+		return gax.OnCodes([]codes.Code{
+			codes.Aborted,
+			codes.DeadlineExceeded,
+			codes.Internal,
+			codes.ResourceExhausted,
+			codes.Unavailable,
+		}, q.retryBackoff)
+	}))
+	if status.Code(err) == codes.AlreadyExists {
+		return nil
+	}
 	return err
 }
 
