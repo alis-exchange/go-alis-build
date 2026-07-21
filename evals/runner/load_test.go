@@ -7,6 +7,7 @@ import (
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
@@ -54,7 +55,7 @@ func TestRunLoadSuites_AllPassed(t *testing.T) {
 		stubLoadCase{name: "s.a", result: passedLoad("s.a")},
 		stubLoadCase{name: "s.b", result: passedLoad("s.b")},
 	)
-	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil)
+	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestRunLoadSuites_MixedRollupFailed(t *testing.T) {
 		stubLoadCase{name: "s.a", result: passedLoad("s.a")},
 		stubLoadCase{name: "s.b", result: failedLoad("s.b")},
 	)
-	got, _ := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil)
+	got, _ := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
 	if RollupLoadSuiteStatus(got[0]) != evalspb.Status_FAILED {
 		t.Fatal("expected FAILED rollup")
 	}
@@ -88,7 +89,7 @@ func TestRunLoadSuites_UnresolvedProfileFailsCase(t *testing.T) {
 	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL,
 		func(suite.LoadSuiteRun, evalspb.RunLoadTestRequest_Mode) (loadgen.Profile, bool) {
 			return loadgen.Profile{}, false
-		}, nil)
+		}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestRunLoadSuites_PanicRecovered(t *testing.T) {
 		stubLoadCase{name: "s.a", panicWith: "boom"},
 		stubLoadCase{name: "s.b", result: passedLoad("s.b")},
 	)
-	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil)
+	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestRunLoadSuites_SetupFailureRecordsAllCases(t *testing.T) {
 			stubLoadCase{name: "s.b", result: passedLoad("s.b")},
 		},
 	}}
-	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil)
+	got, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
 	if err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestRunLoadSuites_NilResolver(t *testing.T) {
 	t.Parallel()
 
 	runner := New()
-	_, err := runner.RunLoadSuites(context.Background(), nil, evalspb.RunLoadTestRequest_MINIMAL, nil, nil)
+	_, err := runner.RunLoadSuites(context.Background(), nil, evalspb.RunLoadTestRequest_MINIMAL, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for nil resolver")
 	}
@@ -167,7 +168,7 @@ func TestRunLoadSuites_ProgressCallback(t *testing.T) {
 		completed = c
 		total = tot
 	}
-	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), progress); err != nil {
+	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), progress, nil); err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
 	if completed != 2 || total != 2 {
@@ -193,10 +194,143 @@ func TestRunLoadSuites_AbortOnSLOFailureContext(t *testing.T) {
 	c := &abortCtxLoadCase{name: "s.a"}
 	runner := New(WithAbortOnSLOFailure())
 	runs := loadSuiteRun(c)
-	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil); err != nil {
+	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil); err != nil {
 		t.Fatalf("RunLoadSuites: %v", err)
 	}
 	if !c.saw {
 		t.Fatal("expected abort-on-SLO-failure marker on case ctx")
+	}
+}
+
+type recordingLoadSuiteHook struct {
+	names []string
+	errOn func(name string) error
+}
+
+func (h *recordingLoadSuiteHook) hook() LoadSuiteCompleteHook {
+	return func(_ context.Context, sr execution.LoadSuiteResult) error {
+		h.names = append(h.names, sr.SuiteName)
+		if h.errOn != nil {
+			return h.errOn(sr.SuiteName)
+		}
+		return nil
+	}
+}
+
+func TestLoadSuiteCompleteHook_calledPerSuiteInOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingLoadSuiteHook{}
+	runs := []suite.LoadSuiteRun{
+		{Name: "suite-a", Cases: []suite.LoadCase{stubLoadCase{name: "a", result: passedLoad("a")}}},
+		{Name: "suite-b", Cases: []suite.LoadCase{stubLoadCase{name: "b", result: passedLoad("b")}}},
+	}
+	if _, err := New().RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, rec.hook()); err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	want := []string{"suite-a", "suite-b"}
+	if len(rec.names) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", rec.names, want)
+	}
+}
+
+func TestLoadSuiteCompleteHook_errorDoesNotAbort(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingLoadSuiteHook{
+		errOn: func(name string) error {
+			if name == "suite-a" {
+				return errors.New("hook error")
+			}
+			return nil
+		},
+	}
+	runs := []suite.LoadSuiteRun{
+		{Name: "suite-a", Cases: []suite.LoadCase{stubLoadCase{name: "a", result: passedLoad("a")}}},
+		{Name: "suite-b", Cases: []suite.LoadCase{stubLoadCase{name: "b", result: passedLoad("b")}}},
+	}
+	if _, err := New().RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, rec.hook()); err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	if len(rec.names) != 2 {
+		t.Fatalf("hook calls = %v, want both suites", rec.names)
+	}
+}
+
+func TestLoadSuiteCompleteHook_suiteSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingLoadSuiteHook{}
+	setupErr := errors.New("suite setup failed")
+	runs := []suite.LoadSuiteRun{{
+		Name:  "suite-a",
+		Setup: func(context.Context) error { return setupErr },
+		Cases: []suite.LoadCase{stubLoadCase{name: "a", result: passedLoad("a")}},
+	}}
+	got, err := New().RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, rec.hook())
+	if err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	if len(rec.names) != 1 || rec.names[0] != "suite-a" {
+		t.Fatalf("hook calls = %v, want [suite-a]", rec.names)
+	}
+	if RollupLoadSuiteStatus(got[0]) != evalspb.Status_FAILED {
+		t.Fatalf("status = %v, want FAILED", RollupLoadSuiteStatus(got[0]))
+	}
+}
+
+func TestLoadSuiteCompleteHook_contextCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var hookCalls int
+	runs := []suite.LoadSuiteRun{
+		{Name: "suite-a", Cases: []suite.LoadCase{stubLoadCase{name: "a", result: passedLoad("a")}}},
+		{Name: "suite-b", Cases: []suite.LoadCase{stubLoadCase{name: "b", result: passedLoad("b")}}},
+	}
+	hook := func(_ context.Context, sr execution.LoadSuiteResult) error {
+		hookCalls++
+		if sr.SuiteName == "suite-a" {
+			cancel()
+		}
+		return nil
+	}
+	_, err := New().RunLoadSuites(ctx, runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, hook)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunLoadSuites() error = %v, want context.Canceled", err)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("hook calls = %d, want 1", hookCalls)
+	}
+}
+
+func TestLoadSuiteCompleteHook_envSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	envName := "load-hook-env-fail-" + t.Name()
+	wantErr := errors.New("env init failed")
+	if err := env.Register(envName, env.WithSetup(func(context.Context) error { return wantErr })); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
+
+	s, err := suite.NewLoadSuite("suite-a", suite.WithLoadEnvironment(envName))
+	if err != nil {
+		t.Fatalf("NewLoadSuite: %v", err)
+	}
+	if err := s.AddCase(stubLoadCase{name: "a", result: passedLoad("suite-a.a")}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+
+	rec := &recordingLoadSuiteHook{}
+	runs := []suite.LoadSuiteRun{{
+		Name:         s.Name(),
+		Environments: s.Environments(),
+		Cases:        s.Cases(),
+	}}
+	if _, err := New().RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, rec.hook()); err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	if len(rec.names) != 1 || rec.names[0] != "suite-a" {
+		t.Fatalf("hook calls = %v, want [suite-a]", rec.names)
 	}
 }

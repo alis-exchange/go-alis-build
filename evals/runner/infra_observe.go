@@ -20,12 +20,15 @@ type InfraObserveRunParams struct {
 }
 
 // RunInfraObserveSuites executes infra observation suite runs. Cases within a
-// suite run concurrently; suites run sequentially.
+// suite run concurrently; suites run sequentially. When onSuiteComplete is
+// non-nil, it is invoked once per suite after that suite's result is
+// materialized; hook errors are ignored (best-effort).
 func (r *Runner) RunInfraObserveSuites(
 	ctx context.Context,
 	runs []suite.InfraObserveSuiteRun,
 	params InfraObserveRunParams,
 	progress func(completed, total int),
+	onSuiteComplete InfraObserveSuiteCompleteHook,
 ) ([]execution.InfraObserveSuiteResult, error) {
 	if r == nil {
 		return nil, ErrNilRunner{}
@@ -36,7 +39,7 @@ func (r *Runner) RunInfraObserveSuites(
 
 	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectInfraObserveEnvironmentNames(runs))
 	if err != nil {
-		return r.infraObserveRunsEnvironmentSetupFailed(runs, err, progress), nil
+		return r.infraObserveRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
 	defer envTeardown()
 
@@ -99,6 +102,7 @@ func (r *Runner) RunInfraObserveSuites(
 			StartTime: suiteStart,
 			EndTime:   time.Now(),
 		})
+		callInfraObserveSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out, nil
 }
@@ -175,9 +179,11 @@ func RollupInfraObserveSuiteStatus(sr execution.InfraObserveSuiteResult) evalspb
 // infraObserveRunsEnvironmentSetupFailed materializes FAILED results for every
 // case when shared environment setup fails, preserving LRO progress accounting.
 func (r *Runner) infraObserveRunsEnvironmentSetupFailed(
+	ctx context.Context,
 	runs []suite.InfraObserveSuiteRun,
 	err error,
 	progress func(completed, total int),
+	onSuiteComplete InfraObserveSuiteCompleteHook,
 ) []execution.InfraObserveSuiteResult {
 	total := suite.TotalInfraObserveCases(runs)
 	completed := 0
@@ -190,6 +196,7 @@ func (r *Runner) infraObserveRunsEnvironmentSetupFailed(
 	}
 	out := make([]execution.InfraObserveSuiteResult, 0, len(runs))
 	for _, run := range runs {
+		suiteStart := time.Now()
 		cases := make([]execution.InfraObserveCaseResult, 0, len(run.Cases))
 		for _, c := range run.Cases {
 			cases = append(cases, infraObserveFailedResult(c.Name(), err.Error()))
@@ -199,7 +206,10 @@ func (r *Runner) infraObserveRunsEnvironmentSetupFailed(
 		out = append(out, execution.InfraObserveSuiteResult{
 			SuiteName: suiteNameFromInfraObserveRun(run),
 			Cases:     cases,
+			StartTime: suiteStart,
+			EndTime:   time.Now(),
 		})
+		callInfraObserveSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out
 }

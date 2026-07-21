@@ -2,12 +2,14 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadinfra"
 	"go.alis.build/evals/suite"
@@ -46,7 +48,7 @@ func TestRunInfraObserveSuites_casesRunConcurrently(t *testing.T) {
 
 	start := time.Now()
 	r := New()
-	got, err := r.RunInfraObserveSuites(context.Background(), runs, InfraObserveRunParams{}, nil)
+	got, err := r.RunInfraObserveSuites(context.Background(), runs, InfraObserveRunParams{}, nil, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("RunInfraObserveSuites: %v", err)
@@ -88,7 +90,7 @@ func TestRunInfraObserveSuites_withFakeClient(t *testing.T) {
 	}}
 
 	ctx := loadinfra.WithClient(context.Background(), client)
-	got, err := New().RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{}, nil)
+	got, err := New().RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunInfraObserveSuites: %v", err)
 	}
@@ -128,7 +130,7 @@ func TestRunInfraObserveSuites_qualifiedCaseName(t *testing.T) {
 		Cases:    s.SelectInfraObserveCases(nil),
 	}}
 	ctx := loadinfra.WithClient(context.Background(), client)
-	got, err := New().RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{}, nil)
+	got, err := New().RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunInfraObserveSuites: %v", err)
 	}
@@ -157,7 +159,7 @@ func TestRunInfraObserveSuites_requestLookback(t *testing.T) {
 	ctx := loadinfra.WithClient(context.Background(), &loadinfra.FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{}})
 	got, err := New().RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{
 		RequestLookback: &requestLB,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunInfraObserveSuites: %v", err)
 	}
@@ -209,5 +211,81 @@ func (a *evalsInfraCase) Run(ctx context.Context, cfg suite.InfraObserveCaseConf
 		WindowStart: window.Start,
 		WindowEnd:   window.End,
 		CloudRun:    obs.CloudRun,
+	}
+}
+
+type recordingInfraObserveSuiteHook struct {
+	names []string
+	errOn func(name string) error
+}
+
+func (h *recordingInfraObserveSuiteHook) hook() InfraObserveSuiteCompleteHook {
+	return func(_ context.Context, sr execution.InfraObserveSuiteResult) error {
+		h.names = append(h.names, sr.SuiteName)
+		if h.errOn != nil {
+			return h.errOn(sr.SuiteName)
+		}
+		return nil
+	}
+}
+
+func TestInfraObserveSuiteCompleteHook_calledPerSuiteInOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingInfraObserveSuiteHook{}
+	runs := []suite.InfraObserveSuiteRun{
+		{Name: "suite-a", Cases: []suite.InfraObserveCase{slowInfraObserveCase{name: "a", delay: time.Millisecond, hits: new(int32)}}},
+		{Name: "suite-b", Cases: []suite.InfraObserveCase{slowInfraObserveCase{name: "b", delay: time.Millisecond, hits: new(int32)}}},
+	}
+	if _, err := New().RunInfraObserveSuites(context.Background(), runs, InfraObserveRunParams{}, nil, rec.hook()); err != nil {
+		t.Fatalf("RunInfraObserveSuites: %v", err)
+	}
+	want := []string{"suite-a", "suite-b"}
+	if len(rec.names) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", rec.names, want)
+	}
+}
+
+func TestInfraObserveSuiteCompleteHook_envSetupFailureTimestamps(t *testing.T) {
+	t.Parallel()
+
+	envName := "infra-hook-env-fail-" + t.Name()
+	setupErr := errors.New("env init failed")
+	if err := env.Register(envName, env.WithSetup(func(context.Context) error { return setupErr })); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
+
+	cloud := loadinfra.CloudRunTarget{
+		ID: "entry", Role: loadinfra.RoleEntry, ProjectID: "p", Region: "r", ServiceName: "svc",
+	}
+	s, err := suite.NewInfraObserveSuite("suite-a",
+		suite.WithLookback(time.Minute),
+		suite.WithInfraObserveEnvironment(envName),
+		suite.WithInfraObserveCloudRunTargets(cloud),
+	)
+	if err != nil {
+		t.Fatalf("NewInfraObserveSuite: %v", err)
+	}
+	if err := s.AddCase(slowInfraObserveCase{name: "a", delay: time.Millisecond, hits: new(int32)}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+
+	rec := &recordingInfraObserveSuiteHook{}
+	runs := []suite.InfraObserveSuiteRun{{
+		Name:         s.Name(),
+		Environments: s.Environments(),
+		Lookback:     time.Minute,
+		CloudRun:     []loadinfra.CloudRunTarget{cloud},
+		Cases:        s.SelectInfraObserveCases(nil),
+	}}
+	got, err := New().RunInfraObserveSuites(context.Background(), runs, InfraObserveRunParams{}, nil, rec.hook())
+	if err != nil {
+		t.Fatalf("RunInfraObserveSuites: %v", err)
+	}
+	if len(rec.names) != 1 || rec.names[0] != "suite-a" {
+		t.Fatalf("hook calls = %v, want [suite-a]", rec.names)
+	}
+	if got[0].StartTime.IsZero() || got[0].EndTime.IsZero() {
+		t.Fatalf("env failure result missing timestamps: %+v", got[0])
 	}
 }

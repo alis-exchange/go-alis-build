@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
@@ -12,9 +13,11 @@ import (
 // testRunsEnvironmentSetupFailed materializes setup-error results for every
 // integration-test case when shared environment setup fails.
 func (r *Runner) testRunsEnvironmentSetupFailed(
+	ctx context.Context,
 	runs []suite.TestSuiteRun,
 	err error,
 	progress func(completed, total int),
+	onSuiteComplete TestSuiteCompleteHook,
 ) []execution.SuiteResult {
 	total := suite.TotalTestCases(runs)
 	completed := 0
@@ -41,15 +44,18 @@ func (r *Runner) testRunsEnvironmentSetupFailed(
 			StartTime: suiteStart,
 			EndTime:   time.Now(),
 		})
+		callTestSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out
 }
 
 // evalRunsEnvironmentSetupFailed is [testRunsEnvironmentSetupFailed] for agent-eval runs.
 func (r *Runner) evalRunsEnvironmentSetupFailed(
+	ctx context.Context,
 	runs []suite.EvalSuiteRun,
 	err error,
 	progress func(completed, total int),
+	onSuiteComplete EvalSuiteCompleteHook,
 ) []execution.SuiteResult {
 	total := suite.TotalEvalCases(runs)
 	completed := 0
@@ -76,15 +82,18 @@ func (r *Runner) evalRunsEnvironmentSetupFailed(
 			StartTime: suiteStart,
 			EndTime:   time.Now(),
 		})
+		callEvalSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out
 }
 
 // loadRunsEnvironmentSetupFailed is [testRunsEnvironmentSetupFailed] for load-test runs.
 func (r *Runner) loadRunsEnvironmentSetupFailed(
+	ctx context.Context,
 	runs []suite.LoadSuiteRun,
 	err error,
 	progress func(completed, total int),
+	onSuiteComplete LoadSuiteCompleteHook,
 ) []execution.LoadSuiteResult {
 	total := suite.TotalLoadCases(runs)
 	completed := 0
@@ -119,6 +128,7 @@ func (r *Runner) loadRunsEnvironmentSetupFailed(
 			StartTime: suiteStart,
 			EndTime:   time.Now(),
 		})
+		callLoadSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out
 }

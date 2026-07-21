@@ -38,7 +38,7 @@ func TestRunner_TestSuite_recoversPanic(t *testing.T) {
 			stubTestCase{name: "next", result: passedCase("next")},
 		},
 	}}
-	out, err := New().RunTestSuites(context.Background(), runs, nil)
+	out, err := New().RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRunner_EvalSuite_recoversPanic(t *testing.T) {
 			stubEvalCase{name: "next", result: passedCase("next")},
 		},
 	}}
-	out, err := New().RunEvalSuites(context.Background(), runs, nil)
+	out, err := New().RunEvalSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestRunner_TestSuite_stopOnFailureMarksRemainingSkipped(t *testing.T) {
 		},
 	}}
 
-	out, err := New().RunTestSuites(context.Background(), runs, nil)
+	out, err := New().RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRunner_TestSuite_stopOnFailureCountsSkippedInProgress(t *testing.T) {
 	}}
 	_, err := New().RunTestSuites(context.Background(), runs, func(completed, total int) {
 		calls = append(calls, [2]int{completed, total})
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRunner_EvalSuite_stopOnFailureMarksRemainingSkipped(t *testing.T) {
 			stubEvalCase{name: "second", result: passedCase("second")},
 		},
 	}}
-	out, err := New().RunEvalSuites(context.Background(), runs, nil)
+	out, err := New().RunEvalSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites: %v", err)
 	}

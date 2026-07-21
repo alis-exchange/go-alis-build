@@ -13,6 +13,11 @@
 //     caller's context is used as-is.
 //   - Progress callbacks — the RPC layer wires these into LRO metadata
 //     so clients can poll `completed_case_count` / `completed_suite_count`.
+//   - Suite-completion hooks — optional per-call [TestSuiteCompleteHook],
+//     [EvalSuiteCompleteHook], [LoadSuiteCompleteHook], and
+//     [InfraObserveSuiteCompleteHook] callbacks fire once per suite after
+//     its result is materialized. Mapping to `evalspb.Run` and emission
+//     via [report.Reporter] is a caller concern wired through these hooks.
 //   - Panic recovery — a panic in one case is turned into a FAILED case
 //     result so a single bad case cannot take down the batch.
 //

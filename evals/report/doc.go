@@ -19,10 +19,14 @@
 //
 // # Wiring
 //
-// TestServiceServer holds a single [Reporter]. It is called once per
-// completed Run — one call per suite executed during a RunTest, RunEval, or
-// RunLoad LRO. Set TestServiceServer.Reporter to nil to silence emission
-// entirely, or wrap several sinks with [MultiReporter] to fan out.
+// TestServiceServer holds a single [Reporter]. Wire [Reporter.ReportRun]
+// inside the optional `onSuiteComplete` callback passed to
+// [go.alis.build/evals/runner.Runner] Run*Suites methods so each
+// `evalspb.Run` is emitted as soon as its suite finishes — the runner
+// provides per-suite timing; the service owns mapping and I/O.
+//
+// Set TestServiceServer.Reporter to nil to silence emission entirely, or
+// wrap several sinks with [MultiReporter] to fan out.
 //
 // Bootstrap the BigQuery table once, then fan out to log, BigQuery, and
 // Pub/Sub:

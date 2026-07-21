@@ -82,7 +82,7 @@ func TestRunner_RunTestSuites_allPassed(t *testing.T) {
 		stubTestCase{name: "b", result: passedCase("b")},
 	)
 
-	suites, err := runner.RunTestSuites(context.Background(), runs, nil)
+	suites, err := runner.RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestRunner_RunTestSuites_mixFailed(t *testing.T) {
 		stubTestCase{result: &execution.CaseResult{Status: evalspb.Status_FAILED}},
 	)
 
-	suites, err := runner.RunTestSuites(context.Background(), runs, nil)
+	suites, err := runner.RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRunner_RunTestSuites_mixFailed(t *testing.T) {
 func TestRunner_RunTestSuites_empty(t *testing.T) {
 	t.Parallel()
 
-	suites, err := New().RunTestSuites(context.Background(), nil, nil)
+	suites, err := New().RunTestSuites(context.Background(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -140,7 +140,7 @@ func TestRunner_RunTestSuites_withProgress(t *testing.T) {
 		stubTestCase{result: passedCase("")},
 	)
 
-	if _, err := New().RunTestSuites(context.Background(), runs, progress); err != nil {
+	if _, err := New().RunTestSuites(context.Background(), runs, progress, nil); err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
 	want := [][2]int{{1, 3}, {2, 3}, {3, 3}}
@@ -162,7 +162,7 @@ func TestRunner_RunTestSuites_cancelledContext(t *testing.T) {
 
 	_, err := New().RunTestSuites(ctx, testSuiteRun(
 		stubTestCase{result: passedCase("")},
-	), nil)
+	), nil, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
@@ -199,7 +199,7 @@ func TestRunner_RunTestSuites_suiteLifecycle(t *testing.T) {
 		Cases:    s.Cases(),
 	}}
 
-	suites, err := New().RunTestSuites(context.Background(), runs, nil)
+	suites, err := New().RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRunner_RunTestSuites_setupFailure(t *testing.T) {
 		},
 	}}
 
-	suites, err := New().RunTestSuites(context.Background(), runs, nil)
+	suites, err := New().RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestRunner_RunTestSuites_recordsDuration(t *testing.T) {
 	runs := testSuiteRun(stubTestCase{
 		result: passedCase("a"),
 	})
-	suites, err := New().RunTestSuites(context.Background(), runs, nil)
+	suites, err := New().RunTestSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestRunner_RunEvalSuites_allPassed(t *testing.T) {
 		stubEvalCase{result: passedCase("")},
 	)
 
-	suites, err := runner.RunEvalSuites(context.Background(), runs, nil)
+	suites, err := runner.RunEvalSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites() error = %v", err)
 	}
@@ -297,7 +297,7 @@ func TestRunner_RunEvalSuites_oneError(t *testing.T) {
 		stubEvalCase{result: &execution.CaseResult{Status: evalspb.Status_FAILED}},
 	)
 
-	suites, err := runner.RunEvalSuites(context.Background(), runs, nil)
+	suites, err := runner.RunEvalSuites(context.Background(), runs, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites() error = %v", err)
 	}
@@ -337,7 +337,7 @@ func TestRunner_appliesDecoratorToCases(t *testing.T) {
 	runner := New(WithContext(stampDecorator("runner-value")))
 	_, err := runner.RunTestSuites(context.Background(), []suite.TestSuiteRun{{
 		Cases: []suite.TestCase{ctxValueCapturingCase{name: "capture", seen: &seen}},
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -354,7 +354,7 @@ func TestRunner_suiteDecoratorOverridesRunner(t *testing.T) {
 	_, err := runner.RunTestSuites(context.Background(), []suite.TestSuiteRun{{
 		Decorate: stampDecorator("suite-value"),
 		Cases:    []suite.TestCase{ctxValueCapturingCase{name: "capture", seen: &seen}},
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestRunner_decoratorPreservesCallerCtxValues(t *testing.T) {
 	ctx := context.WithValue(context.Background(), callerCtxKey{}, "caller-value")
 	_, err := runner.RunTestSuites(ctx, []suite.TestSuiteRun{{
 		Cases: []suite.TestCase{callerValueCase{name: "capture", seenCaller: &seenCaller, seenStamp: &seenStamp}},
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites() error = %v", err)
 	}
@@ -429,7 +429,7 @@ func TestRunner_appliesDecoratorToEvalCases(t *testing.T) {
 	runner := New(WithContext(stampDecorator("runner-value")))
 	_, err := runner.RunEvalSuites(context.Background(), []suite.EvalSuiteRun{{
 		Cases: []suite.EvalCase{ctxValueCapturingEvalCase{name: "capture", seen: &seen}},
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites() error = %v", err)
 	}
@@ -446,7 +446,7 @@ func TestRunner_evalSuiteDecoratorOverridesRunner(t *testing.T) {
 	_, err := runner.RunEvalSuites(context.Background(), []suite.EvalSuiteRun{{
 		Decorate: stampDecorator("suite-value"),
 		Cases:    []suite.EvalCase{ctxValueCapturingEvalCase{name: "capture", seen: &seen}},
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunEvalSuites() error = %v", err)
 	}
@@ -479,7 +479,7 @@ func TestRunner_appliesDecoratorToLoadCases(t *testing.T) {
 	runs := []suite.LoadSuiteRun{{
 		Cases: []suite.LoadCase{ctxValueCapturingLoadCase{name: "capture", seen: &seen}},
 	}}
-	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil); err != nil {
+	if _, err := runner.RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil); err != nil {
 		t.Fatalf("RunLoadSuites() error = %v", err)
 	}
 	if seen != "runner-value" {
@@ -526,7 +526,7 @@ func TestRunner_environmentHooksReceiveDecorator(t *testing.T) {
 		Environments: s.Environments(),
 		Cases:        s.Cases(),
 	}}
-	if _, err := runner.RunTestSuites(context.Background(), runs, nil); err != nil {
+	if _, err := runner.RunTestSuites(context.Background(), runs, nil, nil); err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
 	if got := setupSeen.Load().(string); got != "runner-value" {
@@ -571,7 +571,7 @@ func TestRunner_envRunsOnceForTwoSuites(t *testing.T) {
 		{Name: s1.Name(), Environments: s1.Environments(), Cases: s1.Cases()},
 		{Name: s2.Name(), Environments: s2.Environments(), Cases: s2.Cases()},
 	}
-	if _, err := New().RunTestSuites(context.Background(), runs, nil); err != nil {
+	if _, err := New().RunTestSuites(context.Background(), runs, nil, nil); err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
 	if setupCalls.Load() != 1 {
@@ -603,7 +603,7 @@ func TestRunner_envSetupFailureMarksAllCases(t *testing.T) {
 		Name:         s.Name(),
 		Environments: s.Environments(),
 		Cases:        s.Cases(),
-	}}, nil)
+	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("RunTestSuites: %v", err)
 	}
@@ -614,5 +614,269 @@ func TestRunner_envSetupFailureMarksAllCases(t *testing.T) {
 		if len(sc.Checks) == 0 || sc.Checks[0].ID != result.SetupErrorCheckName {
 			t.Fatalf("case = %+v, want setup error", sc)
 		}
+	}
+}
+
+type recordingTestSuiteHook struct {
+	names []string
+	errOn func(name string) error
+}
+
+func (h *recordingTestSuiteHook) hook() TestSuiteCompleteHook {
+	return func(_ context.Context, sr execution.SuiteResult) error {
+		h.names = append(h.names, sr.SuiteName)
+		if h.errOn != nil {
+			return h.errOn(sr.SuiteName)
+		}
+		return nil
+	}
+}
+
+type recordingEvalSuiteHook struct {
+	names []string
+	errOn func(name string) error
+}
+
+func (h *recordingEvalSuiteHook) hook() EvalSuiteCompleteHook {
+	return func(_ context.Context, sr execution.SuiteResult) error {
+		h.names = append(h.names, sr.SuiteName)
+		if h.errOn != nil {
+			return h.errOn(sr.SuiteName)
+		}
+		return nil
+	}
+}
+
+func TestTestSuiteCompleteHook_calledPerSuiteInOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingTestSuiteHook{}
+	runs := []suite.TestSuiteRun{
+		{Name: "suite-a", Cases: []suite.TestCase{stubTestCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-b", Cases: []suite.TestCase{stubTestCase{name: "b", result: passedCase("b")}}},
+	}
+	if _, err := New().RunTestSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	want := []string{"suite-a", "suite-b"}
+	if len(rec.names) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", rec.names, want)
+	}
+	for i, w := range want {
+		if rec.names[i] != w {
+			t.Fatalf("hook[%d] = %q, want %q", i, rec.names[i], w)
+		}
+	}
+}
+
+func TestTestSuiteCompleteHook_nilSafe(t *testing.T) {
+	t.Parallel()
+
+	runs := testSuiteRun(stubTestCase{name: "a", result: passedCase("a")})
+	suites, err := New().RunTestSuites(context.Background(), runs, nil, nil)
+	if err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if len(suites) != 1 || RollupSuiteStatus(suites[0]) != evalspb.Status_PASSED {
+		t.Fatalf("unexpected result: %+v", suites)
+	}
+}
+
+func TestTestSuiteCompleteHook_emptyRunsNoHook(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingTestSuiteHook{}
+	suites, err := New().RunTestSuites(context.Background(), nil, nil, rec.hook())
+	if err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if len(suites) != 0 {
+		t.Fatalf("len(suites) = %d, want 0", len(suites))
+	}
+	if len(rec.names) != 0 {
+		t.Fatalf("hook calls = %v, want none on empty runs", rec.names)
+	}
+}
+
+func TestTestSuiteCompleteHook_errorDoesNotAbort(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingTestSuiteHook{
+		errOn: func(name string) error {
+			if name == "suite-a" {
+				return errors.New("hook error")
+			}
+			return nil
+		},
+	}
+	runs := []suite.TestSuiteRun{
+		{Name: "suite-a", Cases: []suite.TestCase{stubTestCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-b", Cases: []suite.TestCase{stubTestCase{name: "b", result: passedCase("b")}}},
+	}
+	if _, err := New().RunTestSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if len(rec.names) != 2 {
+		t.Fatalf("hook calls = %v, want both suites", rec.names)
+	}
+}
+
+func TestTestSuiteCompleteHook_envSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	envName := "hook-env-fail-" + t.Name()
+	wantErr := errors.New("env init failed")
+	if err := env.Register(envName, env.WithSetup(func(context.Context) error { return wantErr })); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
+
+	s1, err := suite.NewTestSuite("suite-a", suite.WithEnvironment(envName))
+	if err != nil {
+		t.Fatalf("NewTestSuite: %v", err)
+	}
+	if err := s1.AddCase(stubTestCase{name: "one", result: passedCase("suite-a.one")}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+	s2, err := suite.NewTestSuite("suite-b", suite.WithEnvironment(envName))
+	if err != nil {
+		t.Fatalf("NewTestSuite: %v", err)
+	}
+	if err := s2.AddCase(stubTestCase{name: "two", result: passedCase("suite-b.two")}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+
+	rec := &recordingTestSuiteHook{}
+	runs := []suite.TestSuiteRun{
+		{Name: s1.Name(), Environments: s1.Environments(), Cases: s1.Cases()},
+		{Name: s2.Name(), Environments: s2.Environments(), Cases: s2.Cases()},
+	}
+	if _, err := New().RunTestSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunTestSuites: %v", err)
+	}
+	want := []string{"suite-a", "suite-b"}
+	if len(rec.names) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", rec.names, want)
+	}
+}
+
+func TestTestSuiteCompleteHook_suiteSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingTestSuiteHook{}
+	setupErr := errors.New("suite setup failed")
+	runs := []suite.TestSuiteRun{{
+		Name: "suite-a",
+		Setup: func(context.Context) error {
+			return setupErr
+		},
+		Cases: []suite.TestCase{
+			stubTestCase{name: "a", result: passedCase("a")},
+		},
+	}}
+	suites, err := New().RunTestSuites(context.Background(), runs, nil, rec.hook())
+	if err != nil {
+		t.Fatalf("RunTestSuites() error = %v", err)
+	}
+	if len(rec.names) != 1 || rec.names[0] != "suite-a" {
+		t.Fatalf("hook calls = %v, want [suite-a]", rec.names)
+	}
+	if RollupSuiteStatus(suites[0]) != evalspb.Status_FAILED {
+		t.Fatalf("status = %v, want FAILED", RollupSuiteStatus(suites[0]))
+	}
+}
+
+func TestTestSuiteCompleteHook_contextCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var hookCalls int
+	runs := []suite.TestSuiteRun{
+		{Name: "suite-a", Cases: []suite.TestCase{stubTestCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-b", Cases: []suite.TestCase{stubTestCase{name: "b", result: passedCase("b")}}},
+	}
+	hook := func(_ context.Context, sr execution.SuiteResult) error {
+		hookCalls++
+		if sr.SuiteName == "suite-a" {
+			cancel()
+		}
+		return nil
+	}
+	_, err := New().RunTestSuites(ctx, runs, nil, hook)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunTestSuites() error = %v, want context.Canceled", err)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("hook calls = %d, want 1", hookCalls)
+	}
+}
+
+func TestEvalSuiteCompleteHook_calledPerSuiteInOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingEvalSuiteHook{}
+	runs := []suite.EvalSuiteRun{
+		{Name: "suite-a", Cases: []suite.EvalCase{stubEvalCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-b", Cases: []suite.EvalCase{stubEvalCase{name: "b", result: passedCase("b")}}},
+	}
+	if _, err := New().RunEvalSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunEvalSuites() error = %v", err)
+	}
+	want := []string{"suite-a", "suite-b"}
+	if len(rec.names) != len(want) {
+		t.Fatalf("hook calls = %v, want %v", rec.names, want)
+	}
+}
+
+func TestEvalSuiteCompleteHook_errorDoesNotAbort(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingEvalSuiteHook{
+		errOn: func(name string) error {
+			if name == "suite-a" {
+				return errors.New("hook error")
+			}
+			return nil
+		},
+	}
+	runs := []suite.EvalSuiteRun{
+		{Name: "suite-a", Cases: []suite.EvalCase{stubEvalCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-b", Cases: []suite.EvalCase{stubEvalCase{name: "b", result: passedCase("b")}}},
+	}
+	if _, err := New().RunEvalSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunEvalSuites() error = %v", err)
+	}
+	if len(rec.names) != 2 {
+		t.Fatalf("hook calls = %v, want both suites", rec.names)
+	}
+}
+
+func TestEvalSuiteCompleteHook_envSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	envName := "eval-hook-env-fail-" + t.Name()
+	wantErr := errors.New("env init failed")
+	if err := env.Register(envName, env.WithSetup(func(context.Context) error { return wantErr })); err != nil {
+		t.Fatalf("env.Register: %v", err)
+	}
+
+	s, err := suite.NewEvalSuite("suite-a", suite.WithEvalEnvironment(envName))
+	if err != nil {
+		t.Fatalf("NewEvalSuite: %v", err)
+	}
+	if err := s.AddCase(stubEvalCase{name: "one", result: passedCase("suite-a.one")}); err != nil {
+		t.Fatalf("AddCase: %v", err)
+	}
+
+	rec := &recordingEvalSuiteHook{}
+	runs := []suite.EvalSuiteRun{{
+		Name:         s.Name(),
+		Environments: s.Environments(),
+		Cases:        s.Cases(),
+	}}
+	if _, err := New().RunEvalSuites(context.Background(), runs, nil, rec.hook()); err != nil {
+		t.Fatalf("RunEvalSuites: %v", err)
+	}
+	if len(rec.names) != 1 || rec.names[0] != "suite-a" {
+		t.Fatalf("hook calls = %v, want [suite-a]", rec.names)
 	}
 }

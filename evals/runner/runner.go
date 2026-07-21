@@ -49,8 +49,8 @@ func New(opts ...Option) *Runner {
 
 // WithProgress installs a progress callback that fires once per completed
 // case as (completed, total). Callers of RunTestSuites/RunEvalSuites/
-// RunLoadSuites may pass a per-call progress func which takes precedence
-// over this default.
+// RunLoadSuites/RunInfraObserveSuites may pass a per-call progress func which
+// takes precedence over this default.
 func WithProgress(fn func(completed, total int)) Option {
 	return func(r *Runner) {
 		r.progress = fn
@@ -108,8 +108,54 @@ func (r *Runner) outgoingContext(ctx context.Context, suiteDecorate suite.Contex
 	return r.baseCtx(ctx)
 }
 
+// TestSuiteCompleteHook is called after each integration-test suite finishes.
+// Nil means no hook. Errors are ignored by the runner (best-effort).
+type TestSuiteCompleteHook func(ctx context.Context, sr execution.SuiteResult) error
+
+// EvalSuiteCompleteHook is called after each agent-eval suite finishes.
+// Nil means no hook. Errors are ignored by the runner (best-effort).
+type EvalSuiteCompleteHook func(ctx context.Context, sr execution.SuiteResult) error
+
+// LoadSuiteCompleteHook is called after each load-test suite finishes.
+// Nil means no hook. Errors are ignored by the runner (best-effort).
+type LoadSuiteCompleteHook func(ctx context.Context, sr execution.LoadSuiteResult) error
+
+// InfraObserveSuiteCompleteHook is called after each infra-observation suite finishes.
+// Nil means no hook. Errors are ignored by the runner (best-effort).
+type InfraObserveSuiteCompleteHook func(ctx context.Context, sr execution.InfraObserveSuiteResult) error
+
+func callTestSuiteComplete(ctx context.Context, hook TestSuiteCompleteHook, sr execution.SuiteResult) {
+	if hook == nil {
+		return
+	}
+	_ = hook(ctx, sr)
+}
+
+func callEvalSuiteComplete(ctx context.Context, hook EvalSuiteCompleteHook, sr execution.SuiteResult) {
+	if hook == nil {
+		return
+	}
+	_ = hook(ctx, sr)
+}
+
+func callLoadSuiteComplete(ctx context.Context, hook LoadSuiteCompleteHook, sr execution.LoadSuiteResult) {
+	if hook == nil {
+		return
+	}
+	_ = hook(ctx, sr)
+}
+
+func callInfraObserveSuiteComplete(ctx context.Context, hook InfraObserveSuiteCompleteHook, sr execution.InfraObserveSuiteResult) {
+	if hook == nil {
+		return
+	}
+	_ = hook(ctx, sr)
+}
+
 // RunTestSuites executes test suite runs sequentially and returns one SuiteResult per suite.
-func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, progress func(completed, total int)) ([]execution.SuiteResult, error) {
+// When onSuiteComplete is non-nil, it is invoked once per suite after that suite's
+// result is materialized; hook errors are ignored (best-effort).
+func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, progress func(completed, total int), onSuiteComplete TestSuiteCompleteHook) ([]execution.SuiteResult, error) {
 	if r == nil {
 		return nil, ErrNilRunner{}
 	}
@@ -119,7 +165,7 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 
 	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectTestEnvironmentNames(runs))
 	if err != nil {
-		return r.testRunsEnvironmentSetupFailed(runs, err, progress), nil
+		return r.testRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
 	defer envTeardown()
 
@@ -193,12 +239,15 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 			StartTime: suiteStart,
 			EndTime:   suiteEnd,
 		})
+		callTestSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out, nil
 }
 
 // RunEvalSuites executes eval suite runs sequentially and returns one SuiteResult per suite.
-func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, progress func(completed, total int)) ([]execution.SuiteResult, error) {
+// When onSuiteComplete is non-nil, it is invoked once per suite after that suite's
+// result is materialized; hook errors are ignored (best-effort).
+func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, progress func(completed, total int), onSuiteComplete EvalSuiteCompleteHook) ([]execution.SuiteResult, error) {
 	if r == nil {
 		return nil, ErrNilRunner{}
 	}
@@ -209,7 +258,7 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 
 	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectEvalEnvironmentNames(runs))
 	if err != nil {
-		return r.evalRunsEnvironmentSetupFailed(runs, err, progress), nil
+		return r.evalRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
 	defer envTeardown()
 
@@ -283,6 +332,7 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 			StartTime: suiteStart,
 			EndTime:   suiteEnd,
 		})
+		callEvalSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out, nil
 }
@@ -297,12 +347,15 @@ type LoadProfileResolver func(run suite.LoadSuiteRun, mode evalspb.RunLoadTestRe
 // RunLoadSuites executes load suite runs sequentially, one load case at a
 // time. Cases inside a suite are always sequential — concurrent load
 // windows against different targets would contaminate each other.
+// When onSuiteComplete is non-nil, it is invoked once per suite after that
+// suite's result is materialized; hook errors are ignored (best-effort).
 func (r *Runner) RunLoadSuites(
 	ctx context.Context,
 	runs []suite.LoadSuiteRun,
 	mode evalspb.RunLoadTestRequest_Mode,
 	resolve LoadProfileResolver,
 	progress func(completed, total int),
+	onSuiteComplete LoadSuiteCompleteHook,
 ) ([]execution.LoadSuiteResult, error) {
 	if r == nil {
 		return nil, ErrNilRunner{}
@@ -316,7 +369,7 @@ func (r *Runner) RunLoadSuites(
 
 	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectLoadEnvironmentNames(runs))
 	if err != nil {
-		return r.loadRunsEnvironmentSetupFailed(runs, err, progress), nil
+		return r.loadRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
 	defer envTeardown()
 
@@ -425,6 +478,7 @@ func (r *Runner) RunLoadSuites(
 			StartTime: suiteStart,
 			EndTime:   suiteEnd,
 		})
+		callLoadSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
 	}
 	return out, nil
 }
