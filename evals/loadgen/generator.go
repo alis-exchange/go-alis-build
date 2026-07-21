@@ -160,16 +160,19 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 			}
 			now := time.Now()
 			if inFlight.Load() >= maxConc {
-				// Drop when concurrency is saturated (open-loop).
+				// Drop when concurrency is saturated (open-loop). Advance sent so
+				// Pace schedules the next slot instead of spinning on wait==0.
 				dropped.Add(1)
+				sent++
 			} else {
 				select {
 				case ticks <- now:
 					sent++
 					inFlight.Add(1)
 				default:
-					// Drop when the tick channel is full; both paths count toward DroppedCount.
+					// Drop when the tick channel is full; advance sent like saturation.
 					dropped.Add(1)
+					sent++
 				}
 			}
 			select {

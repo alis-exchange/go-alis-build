@@ -26,9 +26,10 @@ type Metrics struct {
 	// (for example "UNAVAILABLE"). Non-gRPC errors are grouped under
 	// "UNKNOWN". Values sum to ErrorCount.
 	ErrorsByCode map[string]int64
-	// DroppedCount is ticks not executed: pacer-side backpressure when all
-	// workers were busy, plus worker-side skips when a tick arrived after the
-	// window ended.
+	// DroppedCount is scheduled ticks not dispatched: pacer-side drops when
+	// concurrency is saturated or the tick channel is full, plus worker-side
+	// skips when a tick is received after the window ended. It is not a spin
+	// or retry counter.
 	DroppedCount int64
 	// Stream holds aggregate streaming metrics when any target returned
 	// StreamSample data.

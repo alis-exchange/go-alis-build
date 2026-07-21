@@ -70,9 +70,10 @@
 // When the worker pool cannot keep up, [Metrics.ActualQPS] falls below
 // the target rate. The generator emits an alog warning when
 // `ActualQPS < 0.9 × target QPS` so users notice they are measuring the
-// generator rather than the SUT. [Metrics.DroppedCount] includes pacer
-// backpressure and worker-side skips for ticks that arrived after the
-// window ended.
+// generator rather than the SUT. [Metrics.DroppedCount] counts scheduled
+// ticks that were not dispatched (pacer saturation or a full tick channel),
+// plus worker-side skips for ticks received after the window ended. It is
+// not a spin or retry counter.
 //
 // # Error accounting
 //

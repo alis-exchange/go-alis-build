@@ -407,6 +407,90 @@ func TestInProcess_DroppedCountUnderSaturation(t *testing.T) {
 	if m.DroppedCount == 0 {
 		t.Fatalf("DroppedCount=0, want > 0 under saturation")
 	}
+	if m.DroppedCount >= 1_000_000 {
+		t.Fatalf("DroppedCount=%d, spin bug: want < 1_000_000", m.DroppedCount)
+	}
+}
+
+func TestInProcess_DroppedCountLongSaturation(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error {
+		time.Sleep(8 * time.Second)
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:            1,
+		Concurrency:    1,
+		Duration:       10 * time.Second,
+		Warmup:         0,
+		RequestTimeout: 30 * time.Second,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount != 1 {
+		t.Fatalf("RequestCount=%d, want 1", m.RequestCount)
+	}
+	// ~9 pacer-side drops over 10s at QPS=1, plus 0–1 worker-side.
+	if m.DroppedCount < 7 || m.DroppedCount > 12 {
+		t.Fatalf("DroppedCount=%d, want in [7, 12]", m.DroppedCount)
+	}
+}
+
+func TestInProcess_NoDropsWhenKeepingUp(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error {
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:            5,
+		Concurrency:    10,
+		Duration:       200 * time.Millisecond,
+		Warmup:         0,
+		RequestTimeout: 5 * time.Second,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.DroppedCount != 0 {
+		t.Fatalf("DroppedCount=%d, want 0", m.DroppedCount)
+	}
+}
+
+func TestInProcess_WorkerWindowEndDrops(t *testing.T) {
+	t.Parallel()
+
+	// High QPS with a slow target queues ticks before the window ends; workers
+	// count late receives as drops. Pacer-side saturation drops may also occur.
+	target := TransportTarget(func(context.Context) error {
+		time.Sleep(150 * time.Millisecond)
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:              100,
+		Concurrency:      1,
+		Duration:         50 * time.Millisecond,
+		Warmup:           0,
+		GracefulRampDown: 0,
+		RequestTimeout:   5 * time.Second,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.DroppedCount == 0 {
+		t.Fatal("DroppedCount=0, want > 0 from worker window-end drops")
+	}
+	if m.DroppedCount >= 100 {
+		t.Fatalf("DroppedCount=%d, want < 100 (bounded, not spin)", m.DroppedCount)
+	}
 }
 
 func TestInProcess_GracefulRampDownExcludesLateSamples(t *testing.T) {
