@@ -36,15 +36,16 @@ message Run {
 
 # Every case appears
 
-Whether a case passed, failed, or was skipped, it appears in the
+Whether a selected case passed, failed, or was skipped, it appears in the
 result. This lets dashboards compute pass rate, headroom, and trend
 without reconstructing what was intended to run.
 
 # Batch id
 
-A single RPC can complete multiple suites. Every `Run` from that RPC
-shares the same `batch_id`, so consumers can group them for aggregate
-dashboards.
+Integration, load, and infrastructure-observation RPCs can complete multiple
+suites. Every `Run` from one such RPC shares the same `batch_id`, so consumers
+can group them for aggregate dashboards. Agent-eval requests currently do not
+supply a batch identifier, so agent-eval runs omit this field.
 
 # The oneof
 

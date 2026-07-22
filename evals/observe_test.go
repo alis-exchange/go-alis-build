@@ -1,11 +1,13 @@
 package evals
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/registry"
+	"go.alis.build/evals/suite"
 )
 
 func TestNewInfraObserveSuite_WithLookbackAndTargets(t *testing.T) {
@@ -24,6 +26,20 @@ func TestNewInfraObserveSuite_WithLookbackAndTargets(t *testing.T) {
 	}
 }
 
+func TestInfraObserveCase_emptyName(t *testing.T) {
+	t.Parallel()
+	s := MustNewInfraObserveSuite("peak", WithLookback(time.Minute),
+		WithCloudRunTargets(CloudRunTarget{
+			ID: "entry", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "svc",
+		}),
+	)
+	err := s.InfraObserveCase("")
+	var invalid suite.ErrInvalidCaseName
+	if !errors.As(err, &invalid) {
+		t.Fatalf("InfraObserveCase() error = %v, want ErrInvalidCaseName", err)
+	}
+}
+
 func TestRegisterInfraObserve_selectsRuns(t *testing.T) {
 	t.Parallel()
 	reg := registry.New()
@@ -33,7 +49,9 @@ func TestRegisterInfraObserve_selectsRuns(t *testing.T) {
 		}),
 	)
 	s.MustInfraObserveCase("hourly")
-	reg.RegisterInfraObserveSuite(s.inner)
+	if err := reg.RegisterInfraObserveSuite(s.inner); err != nil {
+		t.Fatalf("RegisterInfraObserveSuite: %v", err)
+	}
 
 	runs, err := reg.SelectInfraObserveRuns([]string{"peak.hourly"})
 	if err != nil {

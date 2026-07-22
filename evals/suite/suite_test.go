@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 )
 
@@ -32,33 +31,23 @@ func mustTestSuite(t *testing.T, name string, cases ...TestCase) *TestSuite {
 	return s
 }
 
-func TestNewTestSuite_qualifiedNames(t *testing.T) {
+func TestNewTestSuite_emptyCaseName(t *testing.T) {
 	t.Parallel()
 
-	suite := mustTestSuite(t, "files-v2",
-		stubTestCase{name: "upload"},
-		stubTestCase{name: "delete"},
-	)
-	if suite.Cases()[0].Name() != "files-v2.upload" {
-		t.Fatalf("name = %q, want files-v2.upload", suite.Cases()[0].Name())
+	s, err := NewTestSuite("files-v2")
+	if err != nil {
+		t.Fatalf("NewTestSuite: %v", err)
 	}
-}
-
-func TestNewTestSuite_unknownEnvironment(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewTestSuite("files-v2", WithEnvironment("missing-"+t.Name()))
-	if err == nil {
-		t.Fatal("expected error for unknown environment")
+	err = s.AddCase(stubTestCase{name: ""})
+	var invalid ErrInvalidCaseName
+	if !errors.As(err, &invalid) {
+		t.Fatalf("AddCase() error = %v, want ErrInvalidCaseName", err)
 	}
 }
 
 func TestNewTestSuite_withEnvironment(t *testing.T) {
 	t.Parallel()
 
-	if err := env.Register("suite-test-env-" + t.Name()); err != nil {
-		t.Fatalf("env.Register: %v", err)
-	}
 	s, err := NewTestSuite("files-v2", WithEnvironment("suite-test-env-"+t.Name()))
 	if err != nil {
 		t.Fatalf("NewTestSuite: %v", err)

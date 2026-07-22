@@ -1,7 +1,7 @@
 ---
 type: Wire Type
 title: Run envelope
-description: The top-level `Run` proto — common to integration, load, and agent-eval results.
+description: The top-level `Run` proto — common to integration, load, agent-eval, and infra-observation results.
 resource: https://buf.build/googleapis/api-common-protos
 tags: [wire, proto, run]
 timestamp: 2026-07-08T00:00:00Z
@@ -14,18 +14,19 @@ enum Status {
   STATUS_UNSPECIFIED = 0;
   PASSED             = 1;   // executed and every check passed
   FAILED             = 2;   // executed and one or more checks failed
-  NOT_EVALUATED      = 3;   // skipped (StopOnFailure, setup fail, filter)
+  NOT_EVALUATED      = 3;   // selected but skipped (StopOnFailure or cancellation)
 }
 
 message Run {
   string      name        = 2;   // runs/{run_id}
   optional    string batch_id = 3;
-  Run.Type    type        = 4;   // INTEGRATION_TEST | LOAD_TEST | AGENT_EVAL
+  Run.Type    type        = 4;   // INTEGRATION_TEST | LOAD_TEST | AGENT_EVAL | INFRA_OBSERVATION
   Status      status      = 5;
   oneof data {
     IntegrationTestResults integration_test = 6;
     LoadTestResults        load_test        = 7;
     AgentEvalResults       agent_eval       = 8;
+    InfraObservationResults infra_observation = 9;
   }
   Timestamp   start_time  = 21;
   Timestamp   end_time    = 22;
@@ -40,19 +41,20 @@ message Run {
 
 - `name` — resource name `runs/{run_id}`. Consumers store runs under
   this key.
-- `batch_id` — shared across every run produced by one RPC. Groups a
-  single `RunIntegrationTest` invocation covering multiple suites.
+- `batch_id` — shared across runs produced by one integration, load, or
+  infrastructure-observation RPC. Agent-eval requests currently do not supply
+  a batch identifier, so their runs omit this field.
 - `type` — matches the RPC that produced this run.
-- `oneof data` — exactly one of the three result messages is set.
+- `oneof data` — exactly one of the four result messages is set.
   Switch on `type` rather than guessing from the `oneof` presence.
 - `operation` — resource name of the LRO that produced this run.
-- `error` — populated when the whole run failed before completion
-  (e.g. env setup failure across all suites). Individual case
-  failures do not populate this field.
+- `error` — part of the shared wire envelope but currently left unset by the
+  evals mappers. Setup and case failures are represented in the selected case
+  results; operation-level failures are returned by the RPC/LRO layer.
 
 # Every case appears
 
-Whether a case passed, failed, or was skipped, it appears in the
+Whether a selected case passed, failed, or was skipped, it appears in the
 appropriate `results` message. Dashboards can compute pass rate,
 headroom, and trend without reconstructing what was intended to run.
 

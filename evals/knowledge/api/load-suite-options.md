@@ -1,7 +1,7 @@
 ---
 type: API Reference
 title: Load-suite options
-description: Options accepted by `NewLoadSuite`. Kept separate from `SuiteOption` because several test/eval options have no sensible load-test semantics.
+description: Options accepted by `NewLoadSuite`, including lifecycle, context, failure propagation, profiles, and infrastructure targets.
 resource: https://github.com/alis-exchange/go-alis-build/blob/main/evals/load.go
 tags: [api, options, load]
 timestamp: 2026-07-08T00:00:00Z
@@ -12,8 +12,10 @@ timestamp: 2026-07-08T00:00:00Z
 | Option | Effect |
 | ------ | ------ |
 | `evals.WithLoadEnv(names ...string)` | Declare shared environments. Same semantics as `WithEnv` on test/eval suites. |
-| `evals.WithLoadSetup(hook suite.SuiteHook)` | Suite-level pre-cases hook. Failure fails every case with a `setup` marker. |
-| `evals.WithLoadTeardown(hook suite.SuiteHook)` | Suite-level post-cases hook. Errors logged, ignored. |
+| `evals.WithLoadSetup(hook suite.SuiteHook)` | Suite-level pre-cases hook. Failure fails every case with an `_evals.setup` marker. |
+| `evals.WithLoadTeardown(hook suite.SuiteHook)` | Suite-level post-cases hook. Failure marks every completed case failed with an `_evals.teardown` diagnostic. |
+| `evals.WithLoadContext(fn evals.ContextDecorator)` | Apply request-scoped identity, authentication, or tracing values to setup, teardown, and case traffic. |
+| `evals.WithLoadStopOnFailure()` | Stop after the first non-passing load case and emit `_evals.skipped` for remaining cases. |
 | `evals.WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile)` | Override the framework default profile for that specific mode. The override fully replaces the default; other modes keep theirs. Panics if `mode == MODE_UNSPECIFIED`. |
 | `evals.WithCloudRunTargets(...)` | Declare Cloud Run infra targets. After each case, server-side snapshots are fetched over the measurement window and attached to `LoadTestResults.Case.cloud_run`. |
 | `evals.WithSpannerTargets(...)` | Declare Spanner infra targets. Snapshots attach to `LoadTestResults.Case.spanner`. Role is always `DEPENDENCY` on the wire. |
@@ -31,14 +33,10 @@ in a suite. Each `WithCloudRunTargets` call must include exactly one
 
 # Why load has its own option set
 
-`StopOnFailure` and `WithContext` do not apply to load suites:
-
-- **No `StopOnFailure`**: load cases run sequentially and a failed
-  case does not invalidate the next case's measurement.
-- **No per-suite `ContextDecorator`**: load suites always run under
-  whatever context the runner-level decorator installs — the goal is
-  to measure the SUT under the same context production traffic uses.
-  Use runner-level context decoration for cross-suite defaults.
+Load suites use a distinct option type so load profiles and infrastructure
+targets cannot be attached to integration or eval suites. Lifecycle, context
+decoration, and StopOnFailure have load-specific constructors but retain the
+same runner semantics as the other suite kinds.
 
 # Override semantics
 

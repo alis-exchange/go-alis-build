@@ -8,6 +8,7 @@ import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
+	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
 )
 
@@ -171,5 +172,44 @@ func TestRunner_EvalSuite_stopOnFailureMarksRemainingSkipped(t *testing.T) {
 	}
 	if len(skipped.Metrics) == 0 || skipped.Metrics[0].ID != result.SkippedCheckName {
 		t.Fatalf("skipped eval marker = %+v", skipped.Metrics)
+	}
+}
+
+type stubLoadStatusCase struct {
+	name   string
+	status evalspb.Status
+}
+
+func (c stubLoadStatusCase) Name() string { return c.name }
+
+func (c stubLoadStatusCase) Run(context.Context, evalspb.RunLoadTestRequest_Mode, loadgen.Profile) *execution.LoadCaseResult {
+	return &execution.LoadCaseResult{Name: c.name, Status: c.status}
+}
+
+func TestRunner_LoadSuite_stopOnFailureMarksRemainingSkipped(t *testing.T) {
+	t.Parallel()
+
+	runs := []suite.LoadSuiteRun{{
+		StopOnFailure: true,
+		Cases: []suite.LoadCase{
+			stubLoadStatusCase{name: "first", status: evalspb.Status_PASSED},
+			stubLoadStatusCase{name: "second", status: evalspb.Status_FAILED},
+			stubLoadStatusCase{name: "third", status: evalspb.Status_PASSED},
+		},
+	}}
+
+	out, err := New().RunLoadSuites(context.Background(), runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
+	if err != nil {
+		t.Fatalf("RunLoadSuites: %v", err)
+	}
+	cases := out[0].Cases
+	if len(cases) != 3 {
+		t.Fatalf("cases = %d, want 3", len(cases))
+	}
+	if cases[2].Status != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("case[2] = %v, want NOT_EVALUATED", cases[2].Status)
+	}
+	if len(cases[2].Checks) == 0 || cases[2].Checks[0].ID != result.SkippedCheckName {
+		t.Fatalf("case[2] skip marker = %+v", cases[2].Checks)
 	}
 }

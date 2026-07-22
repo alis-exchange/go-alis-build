@@ -18,6 +18,11 @@ func DefaultRegistry() *registry.Registry {
 	return defaultRegistry
 }
 
+// Freeze validates and seals DefaultRegistry against further registration.
+func Freeze() error {
+	return defaultRegistry.Freeze()
+}
+
 // RegisterIntegration publishes an integration-test suite to
 // DefaultRegistry. Returns [suite.ErrNilSuite] for a nil suite or
 // [ErrWrongSuiteKind] when the suite is not KindTest.
@@ -28,8 +33,7 @@ func RegisterIntegration(s *Suite) error {
 	if s.kind != KindTest {
 		return ErrWrongSuiteKind{Suite: s.Name(), Want: KindTest, Got: s.kind}
 	}
-	defaultRegistry.RegisterIntegrationSuite(s.test)
-	return nil
+	return defaultRegistry.RegisterIntegrationSuite(s.test)
 }
 
 // RegisterEval publishes an agent-eval suite to DefaultRegistry. Returns
@@ -42,8 +46,7 @@ func RegisterEval(s *Suite) error {
 	if s.kind != KindEval {
 		return ErrWrongSuiteKind{Suite: s.Name(), Want: KindEval, Got: s.kind}
 	}
-	defaultRegistry.RegisterAgentEvalSuite(s.eval)
-	return nil
+	return defaultRegistry.RegisterAgentEvalSuite(s.eval)
 }
 
 // RegisterAgent publishes a lazy agent-eval provider (for example one
@@ -53,8 +56,7 @@ func RegisterAgent(p registry.AgentEvalProvider) error {
 	if p == nil {
 		return ErrNilProvider{}
 	}
-	defaultRegistry.RegisterAgentEvalProvider(p)
-	return nil
+	return defaultRegistry.RegisterAgentEvalProvider(p)
 }
 
 // RegisterLoad publishes a load-test suite to DefaultRegistry. Returns
@@ -63,8 +65,7 @@ func RegisterLoad(s *LoadSuite) error {
 	if s == nil {
 		return suite.ErrNilSuite{}
 	}
-	defaultRegistry.RegisterLoadSuite(s.inner)
-	return nil
+	return defaultRegistry.RegisterLoadSuite(s.inner)
 }
 
 // RegisterInfraObserve publishes an infra observation suite to DefaultRegistry.
@@ -76,6 +77,5 @@ func RegisterInfraObserve(s *InfraObserveSuite) error {
 	if err := s.inner.Validate(); err != nil {
 		return err
 	}
-	defaultRegistry.RegisterInfraObserveSuite(s.inner)
-	return nil
+	return defaultRegistry.RegisterInfraObserveSuite(s.inner)
 }

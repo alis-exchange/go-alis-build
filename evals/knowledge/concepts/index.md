@@ -6,7 +6,7 @@ Reusable abstractions that appear throughout the framework.
 * [Case](/concepts/case.md) - the unit of execution — a `func(ctx, *T)` (test/eval) or a `ResultTarget` + SLOs (load).
 * [T recorder](/concepts/t-recorder.md) - per-case handle that records assertion leaves for test and eval cases.
 * [Environment](/concepts/environment.md) - shared setup/teardown identified by name and activated once per LRO.
-* [Registry](/concepts/registry.md) - process-global publish point that RPCs consume, mirroring `http.DefaultServeMux`.
+* [Registry](/concepts/registry.md) - default or isolated publish point for suites and lazy providers.
 * [Reporter](/concepts/reporter.md) - sink that receives each completed `Run` proto.
-* [Run](/concepts/run.md) - the top-level wire envelope covering all three suite kinds.
+* [Run](/concepts/run.md) - the top-level wire envelope covering all four suite kinds.
 * [Status](/concepts/status.md) - the four-value enum (`STATUS_UNSPECIFIED`, `PASSED`, `FAILED`, `NOT_EVALUATED`) used everywhere.

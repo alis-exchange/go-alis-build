@@ -26,7 +26,8 @@
 // provides per-suite timing; the service owns mapping and I/O.
 //
 // Set TestServiceServer.Reporter to nil to silence emission entirely, or
-// wrap several sinks with [MultiReporter] to fan out.
+// wrap several sinks with [All] or [FailFast] (or the [MultiReporter] alias
+// for fail-fast) to fan out.
 //
 // Bootstrap the BigQuery table once, then fan out to log, BigQuery, and
 // Pub/Sub:
@@ -43,6 +44,19 @@
 //	    pubsubreport "go.alis.build/evals/report/pubsub"
 //	)
 //
+//	type multiCloser struct{ closers []io.Closer }
+//
+//	func (m multiCloser) Close() error {
+//	    var err error
+//	    for _, c := range m.closers {
+//	        if c == nil {
+//	            continue
+//	        }
+//	        err = errors.Join(err, c.Close())
+//	    }
+//	    return err
+//	}
+//
 //	func setupReporters(ctx context.Context, bqClient *bigquery.Client, datasetID, tableID string) (io.Closer, error) {
 //	    // bqClient must target ALIS_OS_PRODUCT_PROJECT (not ALIS_OS_PROJECT).
 //	    if err := bqschema.EnsureTable(ctx, bqClient, datasetID, tableID); err != nil {
@@ -57,13 +71,28 @@
 //	        _ = bq.Close()
 //	        return nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = report.MultiReporter{
+//	    services.TestServiceServer.Reporter = report.All{
 //	        logreport.Reporter{},
 //	        bq,
 //	        ps,
 //	    }
-//	    return multiCloser{bq, ps}, nil
+//	    return multiCloser{closers: []io.Closer{bq, ps}}, nil
 //	}
+//
+// Call the returned [io.Closer] during server drain so Pub/Sub and BigQuery
+// clients flush cleanly.
+//
+// # Fan-out semantics
+//
+// [All] invokes every non-nil reporter and returns [errors.Join] of all
+// failures. [FailFast] and [MultiReporter] stop at the first error. Nil
+// entries in either slice are skipped.
+//
+// Reporters run **serially**. Bundled non-log sinks default to a 10s
+// per-call timeout, so [All] worst-case latency is the **sum** of each sink's
+// timeout — a log + BigQuery + Pub/Sub stack can add ~20s per suite on top of
+// log I/O. Prefer [FailFast] when one durable sink is authoritative, or keep
+// [All] when every sink must be attempted and accept the cumulative delay.
 //
 // # Contract
 //
@@ -77,8 +106,8 @@
 //     A nil receiver should also be a no-op — this keeps caller code free of
 //     `if r != nil` guards when a reporter slot is optional.
 //   - Best-effort. Returning an error is fine — the caller logs it and
-//     continues. A failing reporter must not prevent the LRO from completing
-//     or block other reporters wired into the same [MultiReporter].
+//     continues. Under [All], one failing sink does not prevent later sinks
+//     from running; under [FailFast], later sinks are skipped for that run.
 //
 // The log reporter satisfies all three; use it as a reference when writing
 // your own.

@@ -43,11 +43,11 @@ message IntegrationTestResults {
 
 # Sentinel leaves
 
-- `duplicate-check-id` (id `evals.DuplicateCheckIDName`) — recorded
+- `_evals.duplicate-check-id` (id `evals.DuplicateCheckIDName`) — recorded
   once per case when the same id is reused.
-- `panic` — recorded when the case function panics; the message
+- `_evals.case` — recorded when the case function panics; the message
   contains the panic value and a truncated stack.
-- `setup` — recorded on every case in a suite whose `WithSetup`
+- `_evals.setup` — recorded on every case in a suite whose `WithSetup`
   hook returned an error.
 
 # Related

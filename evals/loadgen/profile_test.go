@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -40,6 +41,23 @@ func TestProfile_Validate(t *testing.T) {
 				Concurrency: 2,
 				Duration:    200 * time.Millisecond,
 				QPSStages:   []Stage{{Duration: 100 * time.Millisecond, Target: 10}},
+			},
+			true,
+		},
+		{
+			"nan qps",
+			Profile{QPS: math.NaN(), Concurrency: 2, Duration: time.Second},
+			true,
+		},
+		{
+			"fractional concurrency stage target",
+			Profile{
+				Concurrency: 2,
+				Duration:    200 * time.Millisecond,
+				ConcurrencyStages: []Stage{
+					{Duration: 100 * time.Millisecond, Target: 1.5},
+					{Duration: 100 * time.Millisecond, Target: 2},
+				},
 			},
 			true,
 		},

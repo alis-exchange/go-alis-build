@@ -2,6 +2,7 @@ package loadinfra
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -66,23 +67,60 @@ type FakeMetricClient struct {
 	Err error
 	// Calls counts how many QueryTimeSeries invocations were made.
 	Calls int
+	// CloseCalls counts how many Close invocations were made.
+	CloseCalls int
+	// BlockDelay sleeps on each QueryTimeSeries call when non-zero.
+	BlockDelay time.Duration
+	// PeakInFlight records the maximum concurrent QueryTimeSeries calls.
+	PeakInFlight int
 	// LastIntervalEnd records the EndTime from the most recent request.
 	LastIntervalEnd time.Time
+
+	mu       sync.Mutex
+	inFlight int
 }
 
 // QueryTimeSeries returns canned series from ByFilter or Err when configured.
 func (f *FakeMetricClient) QueryTimeSeries(ctx context.Context, projectID string, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error) {
+	f.mu.Lock()
 	f.Calls++
+	f.inFlight++
+	if f.inFlight > f.PeakInFlight {
+		f.PeakInFlight = f.inFlight
+	}
+	delay := f.BlockDelay
+	f.mu.Unlock()
+
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			f.mu.Lock()
+			f.inFlight--
+			f.mu.Unlock()
+			return nil, ctx.Err()
+		}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if req.Interval != nil && req.Interval.EndTime != nil {
 		f.LastIntervalEnd = req.Interval.EndTime.AsTime()
 	}
 	if f.Err != nil {
+		f.inFlight--
 		return nil, f.Err
 	}
 	if f.ByFilter == nil {
+		f.inFlight--
 		return nil, nil
 	}
-	return f.ByFilter[req.Filter], nil
+	series := f.ByFilter[req.Filter]
+	f.inFlight--
+	return series, nil
 }
 
-func (f *FakeMetricClient) Close() error { return nil } // no-op for tests.
+func (f *FakeMetricClient) Close() error {
+	f.CloseCalls++
+	return nil
+}

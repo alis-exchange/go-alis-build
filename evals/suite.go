@@ -84,8 +84,7 @@ func (a configApplier) applyEval(s *suite.EvalSuite) error {
 }
 
 // WithEnv declares one or more shared environments the suite requires.
-// Environments must have been registered with env.Register before the suite
-// is constructed.
+// Environment names are validated at [Freeze], not at suite construction.
 func WithEnv(names ...string) SuiteOption {
 	return configApplier{
 		test: func(s *suite.TestSuite) error {
@@ -152,6 +151,9 @@ func NewIntegrationSuite(name string, opts ...SuiteOption) (*Suite, error) {
 		return nil, err
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, suite.ErrNilOption{}
+		}
 		if err := opt.applyTest(s); err != nil {
 			return nil, err
 		}
@@ -179,6 +181,9 @@ func NewAgentEvalSuite(name string, opts ...SuiteOption) (*Suite, error) {
 		return nil, err
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, suite.ErrNilOption{}
+		}
 		if err := opt.applyEval(s); err != nil {
 			return nil, err
 		}

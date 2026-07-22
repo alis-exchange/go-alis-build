@@ -6,6 +6,7 @@ import (
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/verdict"
 )
 
 func TestT_Check_recordsPassAndFail(t *testing.T) {
@@ -93,6 +94,36 @@ func TestT_Score(t *testing.T) {
 	}
 }
 
+func TestT_ReservedUserCheckIDRejected(t *testing.T) {
+	t.Parallel()
+	rec := newT()
+	if rec.Check("_evals.mine", true) {
+		t.Fatal("reserved user check id returned true")
+	}
+	checks, status := rec.checksAndStatus()
+	if len(checks) != 1 {
+		t.Fatalf("checks = %d, want 1 reserved marker", len(checks))
+	}
+	if checks[0].ID != verdict.IDReservedCheckID || checks[0].Status != evalspb.Status_FAILED {
+		t.Fatalf("reserved marker = %+v", checks[0])
+	}
+	if status != evalspb.Status_FAILED {
+		t.Fatalf("status = %v, want FAILED", status)
+	}
+}
+
+func TestT_FrameworkCheckIDRejected(t *testing.T) {
+	t.Parallel()
+	rec := newT()
+	if rec.Check(verdict.IDTeardown, true) {
+		t.Fatal("framework check id should be reserved for internal emitters")
+	}
+	checks, _ := rec.checksAndStatus()
+	if len(checks) != 1 || checks[0].ID != verdict.IDReservedCheckID {
+		t.Fatalf("checks = %+v", checks)
+	}
+}
+
 func TestT_DuplicateID(t *testing.T) {
 	t.Parallel()
 	rec := newT()
@@ -120,14 +151,32 @@ func TestT_DuplicateID(t *testing.T) {
 	}
 }
 
-func TestT_emptyPassesRollup(t *testing.T) {
+func TestT_emptyFailsRollup(t *testing.T) {
 	t.Parallel()
 	rec := newT()
 	checks, status := rec.checksAndStatus()
-	if checks != nil {
-		t.Fatalf("checks = %v, want nil", checks)
+	if len(checks) != 1 {
+		t.Fatalf("checks = %v, want synthetic no-checks leaf", checks)
 	}
+	if checks[0].ID != verdict.IDNoChecksRecorded {
+		t.Fatalf("check id = %q, want %q", checks[0].ID, verdict.IDNoChecksRecorded)
+	}
+	if status != evalspb.Status_FAILED {
+		t.Fatalf("empty status = %v, want FAILED", status)
+	}
+}
+
+func TestT_PassEscapeHatch(t *testing.T) {
+	t.Parallel()
+	rec := newT()
+	if !rec.Pass("smoke") {
+		t.Fatal("Pass returned false")
+	}
+	checks, status := rec.checksAndStatus()
 	if status != evalspb.Status_PASSED {
-		t.Fatalf("empty status = %v, want PASSED", status)
+		t.Fatalf("status = %v, want PASSED", status)
+	}
+	if len(checks) != 1 || checks[0].ID != "smoke" {
+		t.Fatalf("checks = %+v", checks)
 	}
 }

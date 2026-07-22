@@ -59,7 +59,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	if target == nil {
 		return nil, ErrNilTarget{}
 	}
-	if err := p.validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -221,9 +221,19 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	return m, nil
 }
 
-// runAbortWatcher polls AbortCheck every 2s and cancels the run when it returns true.
+// abortPollInterval controls how often [Profile.AbortCheck] is evaluated.
+// Tests may shorten it via setAbortPollIntervalForTest.
+var abortPollInterval = 2 * time.Second
+
+func setAbortPollIntervalForTest(d time.Duration) func() {
+	prev := abortPollInterval
+	abortPollInterval = d
+	return func() { abortPollInterval = prev }
+}
+
+// runAbortWatcher polls AbortCheck every abortPollInterval and cancels the run when it returns true.
 func runAbortWatcher(ctx context.Context, cancel context.CancelFunc, check AbortCheck, agg *aggregator) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(abortPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -357,8 +367,9 @@ func (a *aggregator) record(s sample) {
 
 // buildMetrics assembles the full Metrics snapshot from aggregator state.
 func (a *aggregator) buildMetrics() *Metrics {
+	elapsed := a.measurementElapsed()
 	m := &Metrics{
-		Duration:          a.measureFor,
+		Duration:          elapsed,
 		RequestCount:      a.count,
 		ErrorCount:        a.errCount,
 		CheckPassedCount:  a.checkPassed,
@@ -368,8 +379,8 @@ func (a *aggregator) buildMetrics() *Metrics {
 		MeasurementStart:  a.measurementStart,
 		MeasurementEnd:    a.measurementEnd,
 	}
-	if a.measureFor > 0 {
-		m.ActualQPS = float64(a.count) / a.measureFor.Seconds()
+	if elapsed > 0 {
+		m.ActualQPS = float64(a.count) / elapsed.Seconds()
 	}
 	if a.count > 0 {
 		m.Latency = latencyFromHist(a.hist, a.latencySumUs, a.count)
@@ -388,13 +399,14 @@ func (a *aggregator) buildMetrics() *Metrics {
 
 // buildAbortMetrics assembles the reduced Metrics snapshot used by AbortCheck.
 func (a *aggregator) buildAbortMetrics() *Metrics {
+	elapsed := a.measurementElapsed()
 	m := &Metrics{
-		Duration:     a.measureFor,
+		Duration:     elapsed,
 		RequestCount: a.count,
 		ErrorCount:   a.errCount,
 	}
-	if a.measureFor > 0 {
-		m.ActualQPS = float64(a.count) / a.measureFor.Seconds()
+	if elapsed > 0 {
+		m.ActualQPS = float64(a.count) / elapsed.Seconds()
 	}
 	if a.count > 0 {
 		m.Latency = latencyPercentilesFromHist(a.hist)
@@ -407,6 +419,18 @@ func (a *aggregator) buildAbortMetrics() *Metrics {
 		}
 	}
 	return m
+}
+
+func (a *aggregator) measurementElapsed() time.Duration {
+	end := time.Now()
+	if !a.measurementEnd.IsZero() && end.After(a.measurementEnd) {
+		end = a.measurementEnd
+	}
+	d := end.Sub(a.measurementStart)
+	if d <= 0 {
+		return time.Nanosecond
+	}
+	return d
 }
 
 // recordDurationHist records d into h, clamping to the shared HDR value range.
@@ -511,6 +535,7 @@ func concurrencyAt(elapsed time.Duration, stages []Stage) int {
 func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sample, target ResultTarget, reqTimeout, windowTotal time.Duration, inFlight *atomic.Int32, reqNum *atomic.Uint64, dropped *atomic.Int64, workerID int) {
 	for sentAt := range ticks {
 		if err := parent.Err(); err != nil {
+			dropped.Add(1)
 			inFlight.Add(-1)
 			return
 		}

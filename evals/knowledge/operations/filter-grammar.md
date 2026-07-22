@@ -8,7 +8,8 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Grammar
 
-Every RPC (`RunIntegrationTest`, `RunAgentEval`, `RunLoadTest`) accepts
+Every RPC (`RunIntegrationTest`, `RunAgentEval`, `RunLoadTest`,
+`RunInfraObservation`) accepts
 a `case_ids` list. Each entry is either a suite name or a
 `suite.case` pair:
 

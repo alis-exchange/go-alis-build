@@ -1,14 +1,20 @@
 // Package execution defines the in-process result types the runner emits
 // and the mapper serialises onto `evalspb.Run`.
 //
-// These types are deliberately proto-free: they are the boundary between
-// the case-facing world (leaves recorded on [T], SLO checks on load
-// cases) and the wire-facing world in [mapper]. Two properties matter:
+// These types are the in-process result vocabulary between case execution
+// and wire mapping. They are not proto-free: the package imports
+// [evalspb.Status], load [evalspb.RunLoadTestRequest_Mode], and passes
+// Cloud Run / Spanner snapshot protos through on load and infra-observe
+// cases. See Decision 0001 in the repository Conductor context for the
+// full classification.
 //
-//   - Case adapters (in [suite]) and reporters can consume them without
-//     importing generated proto packages.
-//   - The runner can rearrange fields (skipped, panicked, setup-error
-//     cases) without editing proto structs.
+// What this layer still isolates:
+//
+//   - Wall-clock suite timing before timestamp conversion
+//   - Case [time.Duration] before durationpb mapping
+//   - Judge provenance roll-ups ([JudgeInfo], [JudgeCallCount])
+//   - Synthetic skipped/failure cases assembled in [go.alis.build/evals/internal/result]
+//   - Registration-only metadata not yet on the wire
 //
 // # Shapes
 //

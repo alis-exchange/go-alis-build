@@ -37,7 +37,7 @@ func (r *Runner) RunInfraObserveSuites(
 		return nil, nil
 	}
 
-	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectInfraObserveEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), firstInfraObserveEnvRegistry(runs), collectInfraObserveEnvironmentNames(runs))
 	if err != nil {
 		return r.infraObserveRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
@@ -45,22 +45,27 @@ func (r *Runner) RunInfraObserveSuites(
 
 	total := suite.TotalInfraObserveCases(runs)
 	completed := 0
-	notify := func() {
+	var progressMu sync.Mutex
+	markComplete := func() {
+		progressMu.Lock()
+		completed++
 		if progress != nil {
 			progress(completed, total)
 		} else if r.progress != nil {
 			r.progress(completed, total)
 		}
+		progressMu.Unlock()
 	}
 
 	out := make([]execution.InfraObserveSuiteResult, 0, len(runs))
 	for _, run := range runs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return out, err
 		}
 		suiteStart := time.Now()
-		runCtx := r.outgoingContext(ctx, nil)
+		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.InfraObserveCaseResult, 0, len(run.Cases))
+		var cancelErr error
 
 		setupOK := true
 		if run.Setup != nil {
@@ -68,31 +73,56 @@ func (r *Runner) RunInfraObserveSuites(
 				setupOK = false
 				for _, c := range run.Cases {
 					cases = append(cases, infraObserveFailedResult(c.Name(), err.Error()))
-					completed++
-					notify()
+					markComplete()
 				}
 			}
 		}
 
 		if setupOK {
-			runCtx, closeInfra, infraErr := attachInfraClient(runCtx, run.CloudRun, run.Spanner)
+			runCtx, closeInfra, infraErr := attachInfraClient(runCtx, run.CloudRun, run.Spanner, r.metricClientFactory)
 			if infraErr != nil {
 				for _, c := range run.Cases {
 					cases = append(cases, infraObserveFailedResult(c.Name(), infraErr.Error()))
-					completed++
-					notify()
+					markComplete()
 				}
 			} else {
-				caseResults := runInfraObserveCasesConcurrently(runCtx, run, params)
-				for _, cr := range caseResults {
-					cases = append(cases, *cr)
-					completed++
-					notify()
-				}
-				closeInfra()
+				func() {
+					defer closeInfra()
+					cfg := suite.InfraObserveCaseConfig{
+						SuiteLookback: run.Lookback,
+						CloudRun:      run.CloudRun,
+						Spanner:       run.Spanner,
+					}
+					if params.RequestLookback != nil {
+						cfg.RequestLookback = *params.RequestLookback
+						cfg.HasRequest = true
+					}
+					caseResults, err := Execute(ctx, run.Cases,
+						func(caseCtx context.Context, c suite.InfraObserveCase) execution.InfraObserveCaseResult {
+							cr := runInfraObserveCaseWithRecovery(caseCtx, c, cfg)
+							if cr == nil {
+								failed := infraObserveFailedResult(c.Name(), "nil case result")
+								return failed
+							}
+							return *cr
+						},
+						ExecuteOptions{
+							Decorate:      func(c context.Context) context.Context { return runCtx },
+							StopOnFailure: run.StopOnFailure,
+							Sequential:    run.StopOnFailure,
+							Concurrency:   r.infraObserveConcurrencyLimit(),
+							OnCaseComplete: func(_, _ int) {
+								markComplete()
+							},
+						},
+						infraObserveCaseExecuteHooks(),
+					)
+					cases = append(cases, caseResults...)
+					cancelErr = err
+				}()
 			}
-			if run.Teardown != nil {
-				_ = run.Teardown(runCtx)
+			if err := runSuiteTeardown(runCtx, run.Teardown); err != nil {
+				applyInfraObserveTeardownFailure(cases, err)
 			}
 		}
 
@@ -103,6 +133,9 @@ func (r *Runner) RunInfraObserveSuites(
 			EndTime:   time.Now(),
 		})
 		callInfraObserveSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
+		if cancelErr != nil {
+			return out, cancelErr
+		}
 	}
 	return out, nil
 }
@@ -115,33 +148,6 @@ func infraObserveFailedResult(name, message string) execution.InfraObserveCaseRe
 		Status:   evalspb.Status_FAILED,
 		CloudRun: []*evalspb.CloudRunTargetSnapshot{loadinfra.ConfigFailureSnapshot(message)},
 	}
-}
-
-// runInfraObserveCasesConcurrently executes all cases in one suite run.
-// All cases share one MetricClient on ctx; concurrent fetches are safe because
-// Observe uses per-target timeouts.
-func runInfraObserveCasesConcurrently(ctx context.Context, run suite.InfraObserveSuiteRun, params InfraObserveRunParams) []*execution.InfraObserveCaseResult {
-	cfg := suite.InfraObserveCaseConfig{
-		SuiteLookback: run.Lookback,
-		CloudRun:      run.CloudRun,
-		Spanner:       run.Spanner,
-	}
-	if params.RequestLookback != nil {
-		cfg.RequestLookback = *params.RequestLookback
-		cfg.HasRequest = true
-	}
-
-	results := make([]*execution.InfraObserveCaseResult, len(run.Cases))
-	var wg sync.WaitGroup
-	for i, c := range run.Cases {
-		wg.Add(1)
-		go func(i int, c suite.InfraObserveCase) {
-			defer wg.Done()
-			results[i] = runInfraObserveCaseWithRecovery(ctx, c, cfg)
-		}(i, c)
-	}
-	wg.Wait()
-	return results
 }
 
 // runInfraObserveCaseWithRecovery invokes one infra-observe case with panic recovery.

@@ -2,10 +2,13 @@ package evals
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/env"
+	"go.alis.build/evals/registry"
+	"go.alis.build/evals/suite"
 )
 
 func TestNewIntegrationSuite_errorsOnEmptyName(t *testing.T) {
@@ -122,19 +125,47 @@ func TestSuite_EvalCase_assemblesMetrics(t *testing.T) {
 	}
 }
 
-func TestSuite_UnknownEnvironmentErrors(t *testing.T) {
+func TestSuite_Case_emptyName(t *testing.T) {
 	t.Parallel()
-	if _, err := NewIntegrationSuite("env-"+t.Name(), WithEnv("missing-"+t.Name())); err == nil {
-		t.Fatal("expected error for unknown environment")
+	s, err := NewIntegrationSuite("empty-case-" + t.Name())
+	if err != nil {
+		t.Fatalf("NewIntegrationSuite: %v", err)
+	}
+	err = s.Case("", func(_ context.Context, _ *T) {})
+	var invalid suite.ErrInvalidCaseName
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Case() error = %v, want ErrInvalidCaseName", err)
+	}
+}
+
+func TestSuite_UnknownEnvironmentErrorsAtFreeze(t *testing.T) {
+	t.Parallel()
+	missing := "missing-" + t.Name()
+	s, err := NewIntegrationSuite("env-"+t.Name(), WithEnv(missing))
+	if err != nil {
+		t.Fatalf("NewIntegrationSuite: %v", err)
+	}
+	reg := registry.New()
+	envReg := env.New()
+	if err := reg.SetEnvRegistry(envReg); err != nil {
+		t.Fatalf("SetEnvRegistry: %v", err)
+	}
+	if err := reg.RegisterIntegrationSuite(s.test); err != nil {
+		t.Fatalf("RegisterIntegrationSuite: %v", err)
+	}
+	err = reg.Freeze()
+	var unknown registry.ErrUnknownEnvironments
+	if !errors.As(err, &unknown) {
+		t.Fatalf("Freeze() error = %v, want ErrUnknownEnvironments", err)
+	}
+	if len(unknown.Names) != 1 || unknown.Names[0] != missing {
+		t.Fatalf("unknown names = %v, want [%q]", unknown.Names, missing)
 	}
 }
 
 func TestSuite_WithEnvSucceeds(t *testing.T) {
 	t.Parallel()
 	name := "env-known-" + t.Name()
-	if err := env.Register(name); err != nil {
-		t.Fatalf("env.Register: %v", err)
-	}
 	s, err := NewIntegrationSuite("uses-env-"+t.Name(), WithEnv(name))
 	if err != nil {
 		t.Fatalf("NewIntegrationSuite: %v", err)

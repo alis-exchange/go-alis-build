@@ -2,6 +2,7 @@ package evals
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
@@ -27,6 +28,52 @@ type SLO struct {
 	pass func(observed, limit float64) bool
 	// failMessage formats a helpful triage message when pass returns false.
 	failMessage func(observed, limit float64) string
+}
+
+// validateUniqueSLOIDs rejects duplicate SLO ids within one load case.
+func validateUniqueSLOIDs(caseName string, slos []SLO) error {
+	seen := make(map[string]struct{}, len(slos))
+	for _, s := range slos {
+		id := s.id
+		if _, ok := seen[id]; ok {
+			return ErrDuplicateSLOID{Case: caseName, ID: id}
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
+func validateSLOValues(caseName string, slos []SLO) error {
+	if isNoSLOs(slos) {
+		return nil
+	}
+	for _, s := range slos {
+		if err := s.validateLimit(); err != nil {
+			return ErrInvalidSLO{Case: caseName, ID: s.id, Reason: err.Error()}
+		}
+	}
+	return nil
+}
+
+func (s SLO) validateLimit() error {
+	if math.IsNaN(s.limit) || math.IsInf(s.limit, 0) {
+		return fmt.Errorf("limit must be finite")
+	}
+	switch s.id {
+	case "latency.p50_ms", "latency.p95_ms", "latency.p99_ms", "stream.ttfb_p99_ms":
+		if s.limit <= 0 {
+			return fmt.Errorf("limit must be positive")
+		}
+	case "error_rate":
+		if s.limit < 0 || s.limit > 100 {
+			return fmt.Errorf("error rate must be in [0, 1]")
+		}
+	case "actual_qps", "stream.messages_per_sec":
+		if s.limit < 0 {
+			return fmt.Errorf("floor must be non-negative")
+		}
+	}
+	return nil
 }
 
 // SLOLatencyP50 asserts that measured p50 latency stays at or below max.

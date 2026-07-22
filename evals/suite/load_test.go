@@ -103,6 +103,16 @@ func TestLoadSuite_ProfileOverride_rejectsUnspecified(t *testing.T) {
 	}
 }
 
+func TestNewLoadSuite_nilOption(t *testing.T) {
+	t.Parallel()
+
+	var nilOpt LoadSuiteOption
+	_, err := NewLoadSuite("s", nilOpt)
+	if !errors.Is(err, ErrNilOption{}) {
+		t.Fatalf("NewLoadSuite() error = %v, want ErrNilOption", err)
+	}
+}
+
 func TestLoadSuite_SelectLoadCases(t *testing.T) {
 	t.Parallel()
 

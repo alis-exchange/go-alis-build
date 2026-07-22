@@ -11,11 +11,16 @@ import (
 // ErrInvalidProfile is returned when a [Profile] fails validation.
 type ErrInvalidProfile struct {
 	Field string
+	Want  string
+	Got   string
 }
 
 func (e ErrInvalidProfile) Error() string {
 	if e.Field == "" {
 		return "loadgen: invalid profile"
+	}
+	if e.Want != "" || e.Got != "" {
+		return fmt.Sprintf("loadgen: invalid profile field %s: got %s, want %s", e.Field, e.Got, e.Want)
 	}
 	return fmt.Sprintf("loadgen: invalid profile field %s", e.Field)
 }

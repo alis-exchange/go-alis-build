@@ -199,8 +199,8 @@ type LoadSuiteResult struct {
 type InfraObserveCaseResult struct {
 	// Name is the qualified case id (`{suite}.{case}`).
 	Name string
-	// Status is PASSED when observation completes in v1; FAILED only on
-	// runner or configuration errors.
+	// Status is PASSED only when every target fetch succeeds; fetch, runner,
+	// configuration, and teardown failures produce FAILED.
 	Status evalspb.Status
 	// Tags are optional labels attached at case registration.
 	Tags map[string]string

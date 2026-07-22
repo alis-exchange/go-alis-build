@@ -42,9 +42,11 @@ still appear on the wire with status `NOT_EVALUATED`.
 - **Independent cases.** If your suite is a set of unrelated checks
   against the same env, don't skip on the first failure — you want
   the whole failure surface, not one leaf.
-- **Load suites.** `StopOnFailure` is not available for load suites;
-  load cases run sequentially anyway but one case failing does not
-  invalidate the next case's measurement.
+- **Load suites.** Use `WithLoadStopOnFailure` when later load windows depend
+  on an earlier one. Load cases remain sequential whether this option is set.
+- **Infra-observe suites.** `WithInfraObserveStopOnFailure` switches case
+  execution from concurrent to sequential so later observations can be
+  skipped deterministically.
 - **Eval suites.** Available in principle (eval suites use the same
   `SuiteOption`) but usually not what you want: eval cases are meant
   to be graded independently.
@@ -52,8 +54,9 @@ still appear on the wire with status `NOT_EVALUATED`.
 # Wire behavior
 
 - The failing case surfaces with `FAILED` and its full check list.
-- Every subsequent case surfaces as one `Case` with status
-  `NOT_EVALUATED` and no `Check`/`Metric` leaves.
+- Every subsequent integration, eval, or load case surfaces with status
+  `NOT_EVALUATED` and an `_evals.skipped` check or metric. Infra-observe has no
+  generic check collection, so only its case status carries the skip.
 - Suite/run status rolls up to `FAILED` — the run is not "half-run",
   it's a definitively failed sequence.
 

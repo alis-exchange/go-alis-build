@@ -1,25 +1,39 @@
 ---
 type: Concept
 title: Registry
-description: Process-global publish point for suites and agent-eval providers. Mirrors `http.DefaultServeMux`.
+description: Default or isolated publish point for suites, environments, and agent-eval providers.
 tags: [registry, publish, filter]
 timestamp: 2026-07-08T00:00:00Z
 ---
 
 # Definition
 
-The **registry** is a process-global map of suites and lazy providers.
-It mirrors `http.DefaultServeMux` — anywhere in the binary can publish
-into it at `init()`, and the RPC server reads from it at request time.
+The root package exposes one process-global default registry, mirroring
+`http.DefaultServeMux`: case packages can publish during startup and the RPC
+server reads it at request time. `registry.New()` creates an isolated registry
+for tests or embedders.
 
-Registration happens through four functions:
+Registration into the default registry happens through five functions:
 
 - `evals.RegisterIntegration(*Suite)`
 - `evals.RegisterEval(*Suite)`
 - `evals.RegisterLoad(*LoadSuite)`
+- `evals.RegisterInfraObserve(*InfraObserveSuite)`
 - `evals.RegisterAgent(registry.AgentEvalProvider)`
 
-All four target `evals.DefaultRegistry()`.
+All five target `evals.DefaultRegistry()` and return errors that callers must
+check.
+
+# Freeze
+
+After registration completes, call `evals.Freeze()` (or `Registry.Freeze()`
+for an isolated registry) before serving requests. Freeze validates duplicate
+suite names, environment references, and load profile overrides, then rejects
+later registration with `ErrRegistryFrozen`.
+
+`Registry.SetEnvRegistry` selects the isolated environment registry used both
+for Freeze validation and for runs selected from that registry. Call it before
+Freeze; changing it afterward returns `ErrRegistryFrozen`.
 
 # Selection
 
@@ -46,10 +60,11 @@ runtime. See [ADK agent eval](/suites/adk-agent-eval.md).
 
 # Errors
 
-- `registry.ErrNoTestSuites`, `ErrNoEvalSuites`, `ErrNoLoadSuites` —
-  filter matches nothing.
-- `registry.ErrUnknownSuite`, `ErrUnknownCase` — unknown ids in the
-  filter.
+- `registry.ErrNoSuites`, `ErrNoEvalSuites`, `ErrNoLoadSuites`, and
+  `ErrNoInfraObserveSuites` — no suites exist for the requested run type.
+- `registry.ErrUnknownCase` — a filter does not match a registered case.
+- `registry.ErrDuplicateSuite`, `ErrUnknownEnvironments`, and
+  `ErrRegistryFrozen` — startup registration or Freeze validation failed.
 
 All implement [`EvalError`](/concepts/reporter.md#errors) and translate
 cleanly to gRPC statuses at the RPC boundary.

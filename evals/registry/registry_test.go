@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
@@ -43,6 +44,46 @@ func mustTestSuite(t *testing.T, name string, cases ...suite.TestCase) *suite.Te
 	return s
 }
 
+func mustEvalSuite(t *testing.T, name string, cases ...suite.EvalCase) *suite.EvalSuite {
+	t.Helper()
+	s, err := suite.NewEvalSuite(name)
+	if err != nil {
+		t.Fatalf("NewEvalSuite: %v", err)
+	}
+	if err := s.AddCases(cases...); err != nil {
+		t.Fatalf("AddCases: %v", err)
+	}
+	return s
+}
+
+func mustRegisterIntegrationSuite(t *testing.T, reg *Registry, s *suite.TestSuite) {
+	t.Helper()
+	if err := reg.RegisterIntegrationSuite(s); err != nil {
+		t.Fatalf("RegisterIntegrationSuite: %v", err)
+	}
+}
+
+func mustRegisterEvalSuite(t *testing.T, reg *Registry, s *suite.EvalSuite) {
+	t.Helper()
+	if err := reg.RegisterAgentEvalSuite(s); err != nil {
+		t.Fatalf("RegisterAgentEvalSuite: %v", err)
+	}
+}
+
+func mustRegisterAgentEvalProvider(t *testing.T, reg *Registry, p AgentEvalProvider) {
+	t.Helper()
+	if err := reg.RegisterAgentEvalProvider(p); err != nil {
+		t.Fatalf("RegisterAgentEvalProvider: %v", err)
+	}
+}
+
+func mustRegisterLoadSuite(t *testing.T, reg *Registry, s *suite.LoadSuite) {
+	t.Helper()
+	if err := reg.RegisterLoadSuite(s); err != nil {
+		t.Fatalf("RegisterLoadSuite: %v", err)
+	}
+}
+
 func TestRegistry_SelectTestRuns_wholeSuite(t *testing.T) {
 	t.Parallel()
 
@@ -51,7 +92,7 @@ func TestRegistry_SelectTestRuns_wholeSuite(t *testing.T) {
 		stubTestCase{name: "a"},
 		stubTestCase{name: "b"},
 	)
-	reg.RegisterIntegrationSuite(s)
+	mustRegisterIntegrationSuite(t, reg, s)
 
 	runs, err := reg.SelectTestRuns(evalspb.Run_INTEGRATION_TEST, []string{"files-v2"})
 	if err != nil {
@@ -66,7 +107,7 @@ func TestRegistry_SelectTestRuns_casePath(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "files-v2",
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "files-v2",
 		stubTestCase{name: "upload"},
 		stubTestCase{name: "delete"},
 	))
@@ -84,7 +125,7 @@ func TestRegistry_SelectTestRuns_partialCasesShareSuite(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "files-v2",
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "files-v2",
 		stubTestCase{name: "upload"},
 		stubTestCase{name: "delete"},
 		stubTestCase{name: "list"},
@@ -103,8 +144,8 @@ func TestRegistry_SelectTestRuns_allWhenEmptyFilter(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "a", stubTestCase{name: "one"}))
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "b", stubTestCase{name: "two"}))
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "a", stubTestCase{name: "one"}))
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "b", stubTestCase{name: "two"}))
 
 	runs, err := reg.SelectTestRuns(evalspb.Run_INTEGRATION_TEST, nil)
 	if err != nil {
@@ -119,7 +160,7 @@ func TestRegistry_SelectTestRuns_invalidFilter(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "a", stubTestCase{name: "one"}))
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "a", stubTestCase{name: "one"}))
 
 	_, err := reg.SelectTestRuns(evalspb.Run_INTEGRATION_TEST, []string{"a.b.c"})
 	if err == nil {
@@ -131,7 +172,7 @@ func TestRegistry_SelectTestRuns_unknownSuite(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "a", stubTestCase{name: "one"}))
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "a", stubTestCase{name: "one"}))
 
 	runs, err := reg.SelectTestRuns(evalspb.Run_INTEGRATION_TEST, []string{"missing"})
 	if err != nil {
@@ -146,7 +187,7 @@ func TestRegistry_ValidateSelection(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterIntegrationSuite(mustTestSuite(t, "files-v2",
+	mustRegisterIntegrationSuite(t, reg, mustTestSuite(t, "files-v2",
 		stubTestCase{name: "list-files"},
 		stubTestCase{name: "get-root"},
 	))
@@ -179,7 +220,7 @@ func TestRegistry_ValidateSelection_agentEval(t *testing.T) {
 		t.Fatalf("AddCase: %v", err)
 	}
 	reg := New()
-	reg.RegisterAgentEvalSuite(s)
+	mustRegisterEvalSuite(t, reg, s)
 
 	if err := reg.ValidateSelection(evalspb.Run_AGENT_EVAL, []string{"core"}); err != nil {
 		t.Fatalf("suite filter: %v", err)
@@ -193,7 +234,7 @@ func TestRegistry_ValidateSelection_agentEvalProviderOnly(t *testing.T) {
 	t.Parallel()
 
 	reg := New()
-	reg.RegisterAgentEvalProvider(AgentEvalProviderFunc(func(context.Context, []string) ([]execution.SuiteResult, error) {
+	mustRegisterAgentEvalProvider(t, reg, AgentEvalProviderFunc(func(context.Context, []string) ([]execution.SuiteResult, error) {
 		return nil, nil
 	}))
 
@@ -202,6 +243,21 @@ func TestRegistry_ValidateSelection_agentEvalProviderOnly(t *testing.T) {
 	}
 	if err := reg.ValidateSelection(evalspb.Run_AGENT_EVAL, []string{"unknown"}); err != nil {
 		t.Fatalf("unknown filter with provider should defer validation: %v", err)
+	}
+}
+
+func TestRegistry_ValidateSelection_agentEvalProviderAndStaticFilter(t *testing.T) {
+	t.Parallel()
+
+	reg := New()
+	mustRegisterAgentEvalProvider(t, reg, AgentEvalProviderFunc(func(context.Context, []string) ([]execution.SuiteResult, error) {
+		return nil, nil
+	}))
+	mustRegisterEvalSuite(t, reg, mustEvalSuite(t, "core", stubEvalCase{name: "one"}))
+
+	err := reg.ValidateSelection(evalspb.Run_AGENT_EVAL, []string{"static-suite.bogus"})
+	if !errors.As(err, new(ErrUnknownCase)) {
+		t.Fatalf("ValidateSelection() error = %v, want ErrUnknownCase", err)
 	}
 }
 
@@ -215,7 +271,7 @@ func TestRegistry_AgentEvalProviders(t *testing.T) {
 	p := AgentEvalProviderFunc(func(context.Context, []string) ([]execution.SuiteResult, error) {
 		return nil, nil
 	})
-	reg.RegisterAgentEvalProvider(p)
+	mustRegisterAgentEvalProvider(t, reg, p)
 	if len(reg.AgentEvalProviders()) != 1 {
 		t.Fatalf("providers = %d", len(reg.AgentEvalProviders()))
 	}
@@ -232,7 +288,7 @@ func TestRegistry_SelectEvalRuns(t *testing.T) {
 		t.Fatalf("AddCase: %v", err)
 	}
 	reg := New()
-	reg.RegisterAgentEvalSuite(s)
+	mustRegisterEvalSuite(t, reg, s)
 
 	runs, err := reg.SelectEvalRuns([]string{"evals.one"})
 	if err != nil {

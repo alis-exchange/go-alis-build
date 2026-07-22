@@ -17,8 +17,12 @@
 //
 // Each stamps common fields (name, type, status via
 // [runner.RollupSuiteStatus] / [runner.RollupLoadSuiteStatus], start/end
-// times, operation name, batch id, `ALIS_OS_PROJECT`) so the reporter
+// times, operation name, batch id, [Config.GoogleProjectID]) so the reporter
 // receives a fully-formed Run ready to persist.
+//
+// Set [Config] once at bootstrap — typically from `ALIS_OS_PROJECT` on Alis
+// Build neurons. When [Config.GoogleProjectID] is empty, mapping falls back
+// to `ALIS_OS_PROJECT` until all products call [SetConfig] explicitly.
 //
 // # Judge sidecar emission
 //

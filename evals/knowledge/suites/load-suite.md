@@ -117,11 +117,10 @@ rerun.
 # What you cannot do
 
 - No `T` recorder. Load assertions are SLOs, not per-request checks.
-- No `StopOnFailure`. Load cases run sequentially and a failed case
-  does not invalidate the next case's measurement.
-- No per-case identity. Load suites always run under system identity —
-  the goal is to measure the SUT under the same identity production
-  traffic uses.
+- Load cases always run sequentially. Add `WithLoadStopOnFailure` only when a
+  failed case invalidates the remaining measurements.
+- No per-case identity option. Use `WithLoadContext` for one suite or the
+  runner-level decorator for a cross-suite default.
 
 # Wire shape
 

@@ -20,7 +20,7 @@ grouped by purpose.
 # Registration and wiring
 
 * [Environment API](/api/environment.md) - `env.Register`, `env.WithSetup`, `env.WithTeardown`, `env.Get`.
-* [Registration functions](/api/registration.md) - `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterAgent`, `DefaultRegistry`.
+* [Registration functions](/api/registration.md) - `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterInfraObserve`, `RegisterAgent`, `Freeze`, `DefaultRegistry`.
 * [Reporters](/api/reporters.md) - `Reporter` interface and bundled implementations.
 
 # Errors

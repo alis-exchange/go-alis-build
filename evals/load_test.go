@@ -8,6 +8,7 @@ import (
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/loadgen"
+	"go.alis.build/evals/verdict"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -52,14 +53,51 @@ func TestLoadSuite_LoadCase_ErrorsOnBadInput(t *testing.T) {
 	if err := s.LoadCase("case", nil, nil); err == nil {
 		t.Fatal("nil target: expected error")
 	}
-	if err := s.LoadCase("case", TransportTarget(func(context.Context) error { return nil }), nil); err != nil {
+	target := TransportTarget(func(context.Context) error { return nil })
+	if err := s.LoadCase("case", target, NoSLOs()); err != nil {
 		t.Fatalf("first LoadCase: %v", err)
 	}
-	if err := s.LoadCase("case", TransportTarget(func(context.Context) error { return nil }), nil); err == nil {
+	if err := s.LoadCase("case", target, NoSLOs()); err == nil {
 		t.Fatal("duplicate: expected error")
 	}
-	if err := s.LoadCase("a.b", TransportTarget(func(context.Context) error { return nil }), nil); err == nil {
+	if err := s.LoadCase("case", target, nil); err == nil {
+		t.Fatal("empty SLO slice: expected error")
+	}
+	if err := s.LoadCase("a.b", target, NoSLOs()); err == nil {
 		t.Fatal("dotted case name: expected error")
+	}
+	if err := s.LoadCase("", target, NoSLOs()); err == nil {
+		t.Fatal("empty case name: expected error")
+	}
+}
+
+func TestLoadSuite_LoadCase_duplicateSLOID(t *testing.T) {
+	t.Parallel()
+
+	s := MustNewLoadSuite("dup-slo-" + t.Name())
+	target := TransportTarget(func(context.Context) error { return nil })
+	err := s.LoadCase("c", target, []SLO{
+		SLOLatencyP99(50 * time.Millisecond),
+		SLOLatencyP99(100 * time.Millisecond),
+	})
+	var dup ErrDuplicateSLOID
+	if !errors.As(err, &dup) {
+		t.Fatalf("LoadCase() error = %v, want ErrDuplicateSLOID", err)
+	}
+}
+
+func TestLoadSuite_LoadCase_dualDataSourcesRejected(t *testing.T) {
+	t.Parallel()
+
+	s := MustNewLoadSuite("dual-data-" + t.Name())
+	target := TransportTarget(func(context.Context) error { return nil })
+	err := s.LoadCase("c", target, NoSLOs(),
+		WithLoadCaseData("a"),
+		WithLoadCaseDataProvider(func(_ CallData) (any, error) { return "b", nil }),
+	)
+	var dual ErrDualLoadCaseData
+	if !errors.As(err, &dual) {
+		t.Fatalf("LoadCase() error = %v, want ErrDualLoadCaseData", err)
 	}
 }
 
@@ -129,7 +167,7 @@ func TestLoadCaseAdapter_GeneratorErrorSurfacesAsFailed(t *testing.T) {
 	}
 	s := MustNewLoadSuite("s")
 	s.setGenerator(fake)
-	s.MustLoadCase("c", TransportTarget(func(context.Context) error { return nil }), nil)
+	s.MustLoadCase("c", TransportTarget(func(context.Context) error { return nil }), NoSLOs())
 
 	result := s.Inner().Cases()[0].Run(context.Background(),
 		evalspb.RunLoadTestRequest_MINIMAL,
@@ -237,7 +275,7 @@ func TestLoadCase_TagsAndData(t *testing.T) {
 			seenNums = append(seenNums, d.RequestNumber)
 			return TargetResult{}
 		},
-		nil,
+		NoSLOs(),
 		WithLoadCaseTags(map[string]string{"model": "gpt-4"}),
 		WithLoadCaseData("a", "b"),
 	)
@@ -269,7 +307,7 @@ func TestLoadCase_CheckErrSeparateFromTransport(t *testing.T) {
 	s.setGenerator(fake)
 	s.MustLoadCase("c", func(context.Context, CallData) TargetResult {
 		return TargetResult{CheckErr: errors.New("bad score")}
-	}, nil)
+	}, NoSLOs())
 
 	result := s.Inner().Cases()[0].Run(context.Background(), evalspb.RunLoadTestRequest_MINIMAL,
 		loadgen.Profile{QPS: 1, Concurrency: 1, Duration: time.Millisecond})
@@ -315,14 +353,14 @@ func TestLoadCase_AbortOnSLOFailure(t *testing.T) {
 	if result.Status != evalspb.Status_FAILED {
 		t.Fatalf("status=%v, want FAILED", result.Status)
 	}
-	foundGenerator := false
+	foundAborted := false
 	for _, c := range result.Checks {
-		if c.ID == "generator" {
-			foundGenerator = true
+		if c.ID == verdict.IDAborted {
+			foundAborted = true
 		}
 	}
-	if !foundGenerator {
-		t.Fatalf("expected generator cancellation check, got %+v", result.Checks)
+	if !foundAborted {
+		t.Fatalf("expected %s check, got %+v", verdict.IDAborted, result.Checks)
 	}
 }
 

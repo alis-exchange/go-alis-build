@@ -33,6 +33,10 @@ type Runner struct {
 	decorate suite.ContextDecorator
 	// abortOnSLOFailure enables mid-load cancellation when partial metrics breach an SLO.
 	abortOnSLOFailure bool
+	// metricClientFactory overrides client construction for infra-backed suite runs.
+	metricClientFactory MetricClientFactory
+	// infraObserveConcurrency bounds concurrent infra-observe cases per suite.
+	infraObserveConcurrency int
 }
 
 // Option configures a [Runner] at construction time.
@@ -87,6 +91,35 @@ func WithAbortOnSLOFailure() Option {
 	return func(r *Runner) {
 		r.abortOnSLOFailure = true
 	}
+}
+
+// WithMetricClientFactory installs a factory used when a suite declares infra
+// targets and no client is already on the context. The runner closes only
+// clients it constructs; caller-supplied context clients are never closed.
+func WithMetricClientFactory(factory MetricClientFactory) Option {
+	return func(r *Runner) {
+		r.metricClientFactory = factory
+	}
+}
+
+const defaultInfraObserveConcurrency = 8
+
+// WithInfraObserveConcurrency sets the maximum number of infra-observe cases
+// that run concurrently within one suite. Non-positive values are ignored;
+// the default is 8.
+func WithInfraObserveConcurrency(n int) Option {
+	return func(r *Runner) {
+		if n > 0 {
+			r.infraObserveConcurrency = n
+		}
+	}
+}
+
+func (r *Runner) infraObserveConcurrencyLimit() int {
+	if r == nil || r.infraObserveConcurrency <= 0 {
+		return defaultInfraObserveConcurrency
+	}
+	return r.infraObserveConcurrency
 }
 
 // baseCtx applies the runner-level decorator, if any. It is used for env
@@ -163,7 +196,7 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 		return nil, err
 	}
 
-	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectTestEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), firstTestEnvRegistry(runs), collectTestEnvironmentNames(runs))
 	if err != nil {
 		return r.testRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
@@ -182,11 +215,12 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 	out := make([]execution.SuiteResult, 0, len(runs))
 	for _, run := range runs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return out, err
 		}
 		suiteStart := time.Now()
 		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.CaseResult, 0, len(run.Cases))
+		var cancelErr error
 
 		setupOK := true
 		if run.Setup != nil {
@@ -201,34 +235,32 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 		}
 
 		if setupOK {
-			stopped := false
-			var stoppedBy string
-			for _, c := range run.Cases {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if stopped {
-					cases = append(cases, *result.SkippedResult(c.Name(), skipReason(stoppedBy)))
-					completed++
-					notify()
-					continue
-				}
-				caseStart := time.Now()
-				caseResult := runTestCaseWithRecovery(runCtx, c)
-				if caseResult == nil {
-					caseResult = result.SetupErrorResult(c.Name(), ErrNilResult{})
-				}
-				caseResult.Duration = time.Since(caseStart)
-				cases = append(cases, *caseResult)
-				completed++
-				notify()
-				if run.StopOnFailure && caseResult.Status != evalspb.Status_PASSED {
-					stopped = true
-					stoppedBy = caseResult.Name
-				}
-			}
-			if run.Teardown != nil {
-				_ = run.Teardown(runCtx)
+			caseResults, err := Execute(ctx, run.Cases,
+				func(caseCtx context.Context, c suite.TestCase) execution.CaseResult {
+					caseStart := time.Now()
+					caseResult := runTestCaseWithRecovery(caseCtx, c)
+					if caseResult == nil {
+						caseResult = result.SetupErrorResult(c.Name(), ErrNilResult{})
+					}
+					cr := *caseResult
+					cr.Duration = time.Since(caseStart)
+					return cr
+				},
+				ExecuteOptions{
+					Decorate:      func(c context.Context) context.Context { return runCtx },
+					StopOnFailure: run.StopOnFailure,
+					Sequential:    true,
+					OnCaseComplete: func(_, _ int) {
+						completed++
+						notify()
+					},
+				},
+				testCaseExecuteHooks(),
+			)
+			cases = append(cases, caseResults...)
+			cancelErr = err
+			if err := runSuiteTeardown(runCtx, run.Teardown); err != nil {
+				applyTestTeardownFailure(cases, err)
 			}
 		}
 
@@ -240,6 +272,9 @@ func (r *Runner) RunTestSuites(ctx context.Context, runs []suite.TestSuiteRun, p
 			EndTime:   suiteEnd,
 		})
 		callTestSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
+		if cancelErr != nil {
+			return out, cancelErr
+		}
 	}
 	return out, nil
 }
@@ -256,7 +291,7 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 		return nil, err
 	}
 
-	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectEvalEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), firstEvalEnvRegistry(runs), collectEvalEnvironmentNames(runs))
 	if err != nil {
 		return r.evalRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
@@ -275,11 +310,12 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 	out := make([]execution.SuiteResult, 0, len(runs))
 	for _, run := range runs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return out, err
 		}
 		suiteStart := time.Now()
 		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.CaseResult, 0, len(run.Cases))
+		var cancelErr error
 
 		setupOK := true
 		if run.Setup != nil {
@@ -294,34 +330,32 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 		}
 
 		if setupOK {
-			stopped := false
-			var stoppedBy string
-			for _, c := range run.Cases {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if stopped {
-					cases = append(cases, *result.EvalSkippedResult(c.Name(), skipReason(stoppedBy)))
-					completed++
-					notify()
-					continue
-				}
-				caseStart := time.Now()
-				caseResult := runEvalCaseWithRecovery(runCtx, c)
-				if caseResult == nil {
-					caseResult = result.EvalSetupErrorResult(c.Name(), ErrNilResult{})
-				}
-				caseResult.Duration = time.Since(caseStart)
-				cases = append(cases, *caseResult)
-				completed++
-				notify()
-				if run.StopOnFailure && caseResult.Status != evalspb.Status_PASSED {
-					stopped = true
-					stoppedBy = caseResult.Name
-				}
-			}
-			if run.Teardown != nil {
-				_ = run.Teardown(runCtx)
+			caseResults, err := Execute(ctx, run.Cases,
+				func(caseCtx context.Context, c suite.EvalCase) execution.CaseResult {
+					caseStart := time.Now()
+					caseResult := runEvalCaseWithRecovery(caseCtx, c)
+					if caseResult == nil {
+						caseResult = result.EvalSetupErrorResult(c.Name(), ErrNilResult{})
+					}
+					cr := *caseResult
+					cr.Duration = time.Since(caseStart)
+					return cr
+				},
+				ExecuteOptions{
+					Decorate:      func(c context.Context) context.Context { return runCtx },
+					StopOnFailure: run.StopOnFailure,
+					Sequential:    true,
+					OnCaseComplete: func(_, _ int) {
+						completed++
+						notify()
+					},
+				},
+				evalCaseExecuteHooks(),
+			)
+			cases = append(cases, caseResults...)
+			cancelErr = err
+			if err := runSuiteTeardown(runCtx, run.Teardown); err != nil {
+				applyEvalTeardownFailure(cases, err)
 			}
 		}
 
@@ -333,6 +367,9 @@ func (r *Runner) RunEvalSuites(ctx context.Context, runs []suite.EvalSuiteRun, p
 			EndTime:   suiteEnd,
 		})
 		callEvalSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
+		if cancelErr != nil {
+			return out, cancelErr
+		}
 	}
 	return out, nil
 }
@@ -367,7 +404,7 @@ func (r *Runner) RunLoadSuites(
 		return nil, ErrNilLoadProfileResolver{}
 	}
 
-	envTeardown, err := setupEnvironments(r.baseCtx(ctx), collectLoadEnvironmentNames(runs))
+	envTeardown, err := setupEnvironments(r.baseCtx(ctx), firstLoadEnvRegistry(runs), collectLoadEnvironmentNames(runs))
 	if err != nil {
 		return r.loadRunsEnvironmentSetupFailed(ctx, runs, err, progress, onSuiteComplete), nil
 	}
@@ -386,11 +423,12 @@ func (r *Runner) RunLoadSuites(
 	out := make([]execution.LoadSuiteResult, 0, len(runs))
 	for _, run := range runs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return out, err
 		}
 		suiteStart := time.Now()
-		runCtx := r.outgoingContext(ctx, nil)
+		runCtx := r.outgoingContext(ctx, run.Decorate)
 		cases := make([]execution.LoadCaseResult, 0, len(run.Cases))
+		var cancelErr error
 
 		profile, profileOK := resolve(run, mode)
 
@@ -415,7 +453,7 @@ func (r *Runner) RunLoadSuites(
 		}
 
 		if setupOK {
-			runCtx, closeInfra, infraErr := attachInfraClient(runCtx, run.CloudRun, run.Spanner)
+			runCtx, closeInfra, infraErr := attachInfraClient(runCtx, run.CloudRun, run.Spanner, r.metricClientFactory)
 			if infraErr != nil {
 				for _, c := range run.Cases {
 					cases = append(cases, execution.LoadCaseResult{
@@ -431,43 +469,51 @@ func (r *Runner) RunLoadSuites(
 					notify()
 				}
 			} else {
-				for _, c := range run.Cases {
-					if err := ctx.Err(); err != nil {
-						return nil, err
-					}
-					if !profileOK {
-						cases = append(cases, execution.LoadCaseResult{
-							Name:   c.Name(),
-							Status: evalspb.Status_FAILED,
-							Checks: []execution.SloCheckResult{{
-								ID:      "profile",
-								Status:  evalspb.Status_FAILED,
-								Message: fmt.Sprintf("no profile resolved for mode %v", mode),
-							}},
-						})
-						completed++
-						notify()
-						continue
-					}
-					caseCtx := runCtx
-					if r.abortOnSLOFailure {
-						caseCtx = loadgen.ContextWithAbortOnSLOFailure(runCtx)
-					}
-					caseResult := runLoadCaseWithRecovery(caseCtx, c, mode, profile)
-					if caseResult == nil {
-						caseResult = &execution.LoadCaseResult{
-							Name:   c.Name(),
-							Status: evalspb.Status_FAILED,
-						}
-					}
-					cases = append(cases, *caseResult)
-					completed++
-					notify()
-				}
-				closeInfra()
+				func() {
+					defer closeInfra()
+					caseResults, err := Execute(ctx, run.Cases,
+						func(caseCtx context.Context, c suite.LoadCase) execution.LoadCaseResult {
+							if !profileOK {
+								return execution.LoadCaseResult{
+									Name:   c.Name(),
+									Status: evalspb.Status_FAILED,
+									Checks: []execution.SloCheckResult{{
+										ID:      "profile",
+										Status:  evalspb.Status_FAILED,
+										Message: fmt.Sprintf("no profile resolved for mode %v", mode),
+									}},
+								}
+							}
+							loadCtx := caseCtx
+							if r.abortOnSLOFailure {
+								loadCtx = loadgen.ContextWithAbortOnSLOFailure(caseCtx)
+							}
+							caseResult := runLoadCaseWithRecovery(loadCtx, c, mode, profile)
+							if caseResult == nil {
+								caseResult = &execution.LoadCaseResult{
+									Name:   c.Name(),
+									Status: evalspb.Status_FAILED,
+								}
+							}
+							return *caseResult
+						},
+						ExecuteOptions{
+							Decorate:      func(c context.Context) context.Context { return runCtx },
+							StopOnFailure: run.StopOnFailure,
+							Sequential:    true,
+							OnCaseComplete: func(_, _ int) {
+								completed++
+								notify()
+							},
+						},
+						loadCaseExecuteHooks(),
+					)
+					cases = append(cases, caseResults...)
+					cancelErr = err
+				}()
 			}
-			if run.Teardown != nil {
-				_ = run.Teardown(runCtx)
+			if err := runSuiteTeardown(runCtx, run.Teardown); err != nil {
+				applyLoadTeardownFailure(cases, err)
 			}
 		}
 
@@ -479,6 +525,9 @@ func (r *Runner) RunLoadSuites(
 			EndTime:   suiteEnd,
 		})
 		callLoadSuiteComplete(ctx, onSuiteComplete, out[len(out)-1])
+		if cancelErr != nil {
+			return out, cancelErr
+		}
 	}
 	return out, nil
 }

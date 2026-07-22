@@ -8,6 +8,7 @@ import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
+	"go.alis.build/evals/suite"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -47,11 +48,15 @@ func (j JudgeContext) isZero() bool {
 }
 
 // CaseFromRunEvalResult maps one ADK case result to an internal case result.
+// suiteName qualifies the wire case id as "{suite}.{case}".
+//
+// Migration note: suiteName became required when eval case IDs were aligned
+// with the package-wide qualified-ID contract.
 //
 // JudgeCallCount is populated as the count of LLM-as-judge metric result
 // entries in r.OverallEvalMetricResults (per [isJudgeMetric]); see
 // [execution.CaseResult.JudgeCallCount] for the lower-bound caveat.
-func CaseFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *execution.CaseResult {
+func CaseFromRunEvalResult(suiteName string, r models.RunEvalResult, duration time.Duration) *execution.CaseResult {
 	metrics := make([]execution.Metric, len(r.OverallEvalMetricResults))
 	var judgeCalls int64
 	for i, mr := range r.OverallEvalMetricResults {
@@ -61,7 +66,7 @@ func CaseFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *exec
 		}
 	}
 	return &execution.CaseResult{
-		Name:           r.EvalID,
+		Name:           suite.QualifiedName(suiteName, r.EvalID),
 		Status:         statusFromADK(r.FinalEvalStatus),
 		SessionID:      r.SessionID,
 		Metrics:        metrics,
@@ -71,19 +76,20 @@ func CaseFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *exec
 }
 
 // AgentEvalResultsFromRunEvalResults maps ADK results to a wire AgentEvalResults branch.
+// suiteName qualifies each emitted case ID as "{suite}.{case}".
 //
 // The returned message has a non-nil Judge sidecar iff the JudgeContext
 // is non-zero on any of Model, ModelVersion, CallCount, or ErrorCount.
 // A fully zero-valued JudgeContext yields a nil Judge (no wire sidecar),
 // which is the correct signal for a non-judge run.
-func AgentEvalResultsFromRunEvalResults(results []models.RunEvalResult, durations []time.Duration, judge JudgeContext) *evalspb.AgentEvalResults {
+func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEvalResult, durations []time.Duration, judge JudgeContext) *evalspb.AgentEvalResults {
 	cases := make([]*evalspb.AgentEvalResults_Case, len(results))
 	for i, r := range results {
 		d := time.Duration(0)
 		if i < len(durations) {
 			d = durations[i]
 		}
-		cases[i] = caseProtoFromRunEvalResult(r, d)
+		cases[i] = caseProtoFromRunEvalResult(suiteName, r, d)
 	}
 	out := &evalspb.AgentEvalResults{Cases: cases}
 	if !judge.isZero() {
@@ -148,8 +154,8 @@ func countJudgeCalls(results []models.RunEvalResult) int64 {
 
 // caseProtoFromRunEvalResult maps one ADK case into the wire AgentEvalResults
 // case shape, reusing [CaseFromRunEvalResult] for status and metric conversion.
-func caseProtoFromRunEvalResult(r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
-	internalCase := CaseFromRunEvalResult(r, duration)
+func caseProtoFromRunEvalResult(suiteName string, r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
+	internalCase := CaseFromRunEvalResult(suiteName, r, duration)
 	return &evalspb.AgentEvalResults_Case{
 		Id:        internalCase.Name,
 		Status:    internalCase.Status,

@@ -8,6 +8,7 @@ import (
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadinfra"
 	"go.alis.build/evals/suite"
+	"go.alis.build/evals/verdict"
 )
 
 // InfraObserveSuite runs standalone infrastructure observation over a lookback
@@ -57,8 +58,28 @@ func WithLookback(d time.Duration) InfraObserveSuiteOption {
 	})
 }
 
+// WithInfraObserveContext installs a [ContextDecorator] on the infra observe suite.
+func WithInfraObserveContext(fn ContextDecorator) InfraObserveSuiteOption {
+	return infraObserveOption(func(s *suite.InfraObserveSuite) error {
+		return suite.WithInfraObserveContext(fn)(s)
+	})
+}
+
+// WithInfraObserveStopOnFailure marks the suite so remaining cases are recorded
+// NOT_EVALUATED after the first non-PASSED case.
+func WithInfraObserveStopOnFailure() InfraObserveSuiteOption {
+	return infraObserveOption(func(s *suite.InfraObserveSuite) error {
+		return suite.WithInfraObserveStopOnFailure()(s)
+	})
+}
+
 // NewInfraObserveSuite constructs an infra observation suite.
 func NewInfraObserveSuite(name string, opts ...InfraObserveSuiteOption) (*InfraObserveSuite, error) {
+	for _, opt := range opts {
+		if opt == nil {
+			return nil, suite.ErrNilOption{}
+		}
+	}
 	suiteOpts := make([]suite.InfraObserveSuiteOption, len(opts))
 	for i, opt := range opts {
 		suiteOpts[i] = func(s *suite.InfraObserveSuite) error {
@@ -113,9 +134,9 @@ func (s *InfraObserveSuite) InfraObserveCase(name string, opts ...InfraObserveCa
 		return suite.ErrNilSuite{}
 	}
 	adapter := &infraObserveCaseAdapter{
-		name:      name,
-		cloudRun:  s.inner.CloudRunTargets(),
-		spanner:   s.inner.SpannerTargets(),
+		name:     name,
+		cloudRun: s.inner.CloudRunTargets(),
+		spanner:  s.inner.SpannerTargets(),
 	}
 	for _, opt := range opts {
 		opt.applyInfraObserveCase(adapter)
@@ -212,12 +233,12 @@ func (a *infraObserveCaseAdapter) Run(ctx context.Context, cfg suite.InfraObserv
 
 	settle := loadinfra.SettleDuration(len(cloud) > 0, len(spanner) > 0)
 	window := loadinfra.WindowLookback(lookback, time.Now(), settle)
-	// Infra fetch failures are recorded per-target on the snapshot; they do not fail the case in v1.
-	obs, _ := loadinfra.Observe(ctx, client, cloud, spanner, window, false)
+	// Infra fetch failures are recorded per target and fail the case rollup.
+	obs, _ := loadinfra.Observe(ctx, client, cloud, spanner, window, false, 0)
 
 	return &execution.InfraObserveCaseResult{
 		Name:        a.name,
-		Status:      evalspb.Status_PASSED,
+		Status:      rollupStandaloneInfraObserve(obs.CloudRun, obs.Spanner),
 		Tags:        cloneStringMap(a.tags),
 		Lookback:    lookback,
 		WindowStart: window.Start,
@@ -225,4 +246,40 @@ func (a *infraObserveCaseAdapter) Run(ctx context.Context, cfg suite.InfraObserv
 		CloudRun:    obs.CloudRun,
 		Spanner:     obs.Spanner,
 	}
+}
+
+func rollupStandaloneInfraObserve(cloud []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) evalspb.Status {
+	leaves := infraObserveLeaves(cloud, spanner)
+	status, _ := verdict.Case(verdict.Evidence{Leaves: leaves}, verdict.StandaloneInfraObservePolicy())
+	return status
+}
+
+func infraObserveLeaves(cloud []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) []verdict.Leaf {
+	out := make([]verdict.Leaf, 0, len(cloud)+len(spanner))
+	for _, snap := range cloud {
+		if snap == nil {
+			continue
+		}
+		out = append(out, verdict.Leaf{
+			ID:     snap.GetId(),
+			Status: infraFetchToStatus(snap.GetFetchStatus()),
+		})
+	}
+	for _, snap := range spanner {
+		if snap == nil {
+			continue
+		}
+		out = append(out, verdict.Leaf{
+			ID:     snap.GetId(),
+			Status: infraFetchToStatus(snap.GetFetchStatus()),
+		})
+	}
+	return out
+}
+
+func infraFetchToStatus(st evalspb.InfraFetchStatus) evalspb.Status {
+	if st == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK {
+		return evalspb.Status_PASSED
+	}
+	return evalspb.Status_FAILED
 }

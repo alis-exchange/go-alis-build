@@ -158,6 +158,9 @@ func NewTestSuite(name string, opts ...TestSuiteOption) (*TestSuite, error) {
 	}
 	s := &TestSuite{name: name}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption{}
+		}
 		if err := opt(s); err != nil {
 			return nil, err
 		}
@@ -172,6 +175,9 @@ func NewEvalSuite(name string, opts ...EvalSuiteOption) (*EvalSuite, error) {
 	}
 	s := &EvalSuite{name: name}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption{}
+		}
 		if err := opt(s); err != nil {
 			return nil, err
 		}
@@ -200,12 +206,10 @@ func (s *TestSuite) AddCases(cases ...TestCase) error {
 	return nil
 }
 
-// addEnvironments appends registered environment names to dst, rejecting unknown names.
+// addEnvironments appends declared environment names to dst. Names are
+// validated against the environment registry at registry.Freeze(), not here.
 func addEnvironments(dst *[]string, names []string) error {
 	for _, name := range names {
-		if env.Get(name) == nil {
-			return ErrUnknownEnvironment{Name: name}
-		}
 		if !containsString(*dst, name) {
 			*dst = append(*dst, name)
 		}
@@ -265,8 +269,8 @@ func (s *EvalSuite) addEvalCase(c EvalCase) error {
 // qualifyTestCase wraps c with a suite-qualified name and rejects duplicates.
 func qualifyTestCase(suiteName string, c TestCase, existing []TestCase) (TestCase, error) {
 	short := c.Name()
-	if strings.Contains(short, ".") {
-		return nil, ErrInvalidCaseName{Name: short}
+	if err := validateCaseName(short); err != nil {
+		return nil, err
 	}
 	qualified := QualifiedName(suiteName, short)
 	for _, e := range existing {
@@ -280,8 +284,8 @@ func qualifyTestCase(suiteName string, c TestCase, existing []TestCase) (TestCas
 // qualifyEvalCase is [qualifyTestCase] for eval cases.
 func qualifyEvalCase(suiteName string, c EvalCase, existing []EvalCase) (EvalCase, error) {
 	short := c.Name()
-	if strings.Contains(short, ".") {
-		return nil, ErrInvalidCaseName{Name: short}
+	if err := validateCaseName(short); err != nil {
+		return nil, err
 	}
 	qualified := QualifiedName(suiteName, short)
 	for _, e := range existing {
@@ -304,8 +308,11 @@ func containsString(ss []string, want string) bool {
 
 // TestSuiteRun is a filtered suite ready for runner execution.
 type TestSuiteRun struct {
-	Name          string
-	Environments  []string
+	Name         string
+	Environments []string
+	// EnvRegistry is the registry that validated the environment names. Nil
+	// makes the runner use env.DefaultRegistry for manually assembled runs.
+	EnvRegistry   *env.Registry
 	Setup         SuiteHook
 	Teardown      SuiteHook
 	Cases         []TestCase
@@ -315,8 +322,11 @@ type TestSuiteRun struct {
 
 // EvalSuiteRun is a filtered eval suite ready for runner execution.
 type EvalSuiteRun struct {
-	Name          string
-	Environments  []string
+	Name         string
+	Environments []string
+	// EnvRegistry is the registry that validated the environment names. Nil
+	// makes the runner use env.DefaultRegistry for manually assembled runs.
+	EnvRegistry   *env.Registry
 	Setup         SuiteHook
 	Teardown      SuiteHook
 	Cases         []EvalCase
@@ -441,6 +451,17 @@ func (s *EvalSuite) StopOnFailure() bool {
 // QualifiedName returns the canonical filter/result name for a case in a suite.
 func QualifiedName(suite, short string) string {
 	return suite + "." + short
+}
+
+// validateCaseName rejects empty names and names containing '.'.
+func validateCaseName(name string) error {
+	if name == "" {
+		return ErrInvalidCaseName{}
+	}
+	if strings.Contains(name, ".") {
+		return ErrInvalidCaseName{Name: name}
+	}
+	return nil
 }
 
 // validateSuiteName rejects empty names and names containing '.'.
@@ -627,6 +648,10 @@ type LoadSuite struct {
 	cloudRun []loadinfra.CloudRunTarget
 	// spanner holds declared Spanner infra targets for post-load observation.
 	spanner []loadinfra.SpannerTarget
+	// decorate is applied to the context passed to setup, teardown, and cases.
+	decorate ContextDecorator
+	// stopOnFailure skips remaining cases after the first non-PASSED case.
+	stopOnFailure bool
 }
 
 // LoadSuiteOption configures a LoadSuite at construction time.
@@ -655,6 +680,23 @@ func WithLoadTeardown(h SuiteHook) LoadSuiteOption {
 	}
 }
 
+// WithLoadContext installs a [ContextDecorator] on the load suite.
+func WithLoadContext(fn ContextDecorator) LoadSuiteOption {
+	return func(s *LoadSuite) error {
+		s.decorate = fn
+		return nil
+	}
+}
+
+// WithLoadStopOnFailure marks the suite so remaining load cases are skipped
+// after the first non-PASSED case result.
+func WithLoadStopOnFailure() LoadSuiteOption {
+	return func(s *LoadSuite) error {
+		s.stopOnFailure = true
+		return nil
+	}
+}
+
 // WithLoadProfileOverride records a per-mode profile override. When the suite
 // runs at the given mode the override replaces the framework defaults.
 func WithLoadProfileOverride(mode evalspb.RunLoadTestRequest_Mode, p loadgen.Profile) LoadSuiteOption {
@@ -666,7 +708,7 @@ func WithLoadProfileOverride(mode evalspb.RunLoadTestRequest_Mode, p loadgen.Pro
 			s.profileOverrides = make(map[evalspb.RunLoadTestRequest_Mode]loadgen.Profile)
 		}
 		s.profileOverrides[mode] = p
-		return nil
+		return p.Validate()
 	}
 }
 
@@ -677,6 +719,9 @@ func NewLoadSuite(name string, opts ...LoadSuiteOption) (*LoadSuite, error) {
 	}
 	s := &LoadSuite{name: name}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption{}
+		}
 		if err := opt(s); err != nil {
 			return nil, err
 		}
@@ -711,8 +756,8 @@ func (s *LoadSuite) addLoadCase(c LoadCase) error {
 // qualifyLoadCase is [qualifyTestCase] for load cases.
 func qualifyLoadCase(suiteName string, c LoadCase, existing []LoadCase) (LoadCase, error) {
 	short := c.Name()
-	if strings.Contains(short, ".") {
-		return nil, ErrInvalidCaseName{Name: short}
+	if err := validateCaseName(short); err != nil {
+		return nil, err
 	}
 	qualified := QualifiedName(suiteName, short)
 	for _, e := range existing {
@@ -773,13 +818,32 @@ func (s *LoadSuite) ProfileOverride(mode evalspb.RunLoadTestRequest_Mode) (loadg
 	return p, ok
 }
 
+// Decorator returns the suite [ContextDecorator], or nil when unset.
+func (s *LoadSuite) Decorator() ContextDecorator {
+	if s != nil {
+		return s.decorate
+	}
+	return nil
+}
+
+// StopOnFailure reports whether remaining load cases should be skipped after
+// the first non-PASSED case.
+func (s *LoadSuite) StopOnFailure() bool {
+	return s != nil && s.stopOnFailure
+}
+
 // LoadSuiteRun is a filtered load suite ready for runner execution.
 type LoadSuiteRun struct {
-	Name             string
-	Environments     []string
+	Name         string
+	Environments []string
+	// EnvRegistry is the registry that validated the environment names. Nil
+	// makes the runner use env.DefaultRegistry for manually assembled runs.
+	EnvRegistry      *env.Registry
 	Setup            SuiteHook
 	Teardown         SuiteHook
 	Cases            []LoadCase
+	Decorate         ContextDecorator
+	StopOnFailure    bool
 	ProfileOverrides map[evalspb.RunLoadTestRequest_Mode]loadgen.Profile
 	// CloudRun is the suite's declared Cloud Run targets copied at selection time.
 	CloudRun []loadinfra.CloudRunTarget

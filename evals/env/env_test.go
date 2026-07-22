@@ -2,8 +2,17 @@ package env
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+func TestRegister_nilOption(t *testing.T) {
+	t.Parallel()
+
+	if err := Register("nil-opt-"+t.Name(), nil); !errors.Is(err, ErrNilOption{}) {
+		t.Fatalf("Register() error = %v, want ErrNilOption", err)
+	}
+}
 
 func TestRegister_andGet(t *testing.T) {
 	t.Parallel()
@@ -56,6 +65,36 @@ func TestGet_unknownReturnsNil(t *testing.T) {
 
 	if e := Get("does-not-exist-" + t.Name()); e != nil {
 		t.Fatalf("Get = %v, want nil", e)
+	}
+}
+
+func TestRegistry_isolatedFromDefault(t *testing.T) {
+	t.Parallel()
+
+	regA := New()
+	regB := New()
+	name := "isolated-" + t.Name()
+	if err := regA.Register(name); err != nil {
+		t.Fatalf("regA Register: %v", err)
+	}
+	if regB.Get(name) != nil {
+		t.Fatal("regB should not see regA environments")
+	}
+	if regA.Get(name) == nil {
+		t.Fatal("regA should see its own environment")
+	}
+}
+
+func TestDefaultRegistry_returnsProcessWideRegistry(t *testing.T) {
+	t.Parallel()
+
+	resetDefaultRegistryForTest(t)
+	name := "default-" + t.Name()
+	if err := Register(name); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if DefaultRegistry().Get(name) == nil {
+		t.Fatal("DefaultRegistry should see registered environment")
 	}
 }
 

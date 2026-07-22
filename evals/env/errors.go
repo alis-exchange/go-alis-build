@@ -8,6 +8,34 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// ErrNotConfigured is returned when registry methods are called on a nil receiver.
+type ErrNotConfigured struct{}
+
+func (e ErrNotConfigured) Error() string { return "environment registry not configured" }
+
+func (e ErrNotConfigured) Is(target error) bool {
+	var err ErrNotConfigured
+	return errors.As(target, &err)
+}
+
+func (e ErrNotConfigured) GRPCStatus() *status.Status {
+	return status.New(codes.FailedPrecondition, e.Error())
+}
+
+// ErrNilOption is returned when Register is called with a nil option.
+type ErrNilOption struct{}
+
+func (e ErrNilOption) Error() string { return "nil option" }
+
+func (e ErrNilOption) Is(target error) bool {
+	var err ErrNilOption
+	return errors.As(target, &err)
+}
+
+func (e ErrNilOption) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // ErrDuplicateRegistration is returned when Register is called with a
 // name that is already registered.
 type ErrDuplicateRegistration struct {

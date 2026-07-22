@@ -20,9 +20,9 @@ against live services:
   over a settled lookback window (standalone) or attached to load cases.
 
 Suites are authored in Go, registered once at `init()`, and exposed via
-three LRO-backed RPCs on the deployed `TestService`. Each completed
+four LRO-backed RPCs on the deployed `TestService`. Each completed
 suite becomes a `Run` proto that fans out to whichever reporters
-(Pub/Sub, BigQuery, Spanner, log) the neuron wires up.
+(Pub/Sub, BigQuery, log) the neuron wires up.
 
 # Getting oriented
 
@@ -33,7 +33,7 @@ follow the section indexes below for depth.
 
 * [Overview](/overview.md) — mental model, four suite kinds, and how a run flows through the framework.
 * [Concepts](/concepts/) — the reusable abstractions: suite, case, T recorder, environment, registry, reporter, run, status.
-* [Suites](/suites/) — the three suite kinds and how to author each one.
+* [Suites](/suites/) — the four suite kinds and how to author each one.
 * [API reference](/api/) — every exported type, function, and option.
 * [Wire types](/wire-types/) — proto messages consumers receive from reporters.
 * [Operations](/operations/) — quickstart, filter grammar, authentication, lifecycle, load-mode presets.

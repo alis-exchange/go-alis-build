@@ -304,7 +304,8 @@ func readGolden(t *testing.T, name string) []byte {
 }
 
 func TestIntegrationRun_googleProjectID(t *testing.T) {
-	t.Setenv("ALIS_OS_PROJECT", "marvel-sm-dev-123")
+	t.Cleanup(resetConfigForTest)
+	SetConfig(Config{GoogleProjectID: "marvel-sm-dev-123"})
 
 	run := IntegrationRun(execution.SuiteResult{}, "operations/op-1", "run-abc", "")
 	if run.GetGoogleProjectId() != "marvel-sm-dev-123" {
@@ -312,11 +313,23 @@ func TestIntegrationRun_googleProjectID(t *testing.T) {
 	}
 }
 
-func TestIntegrationRun_googleProjectID_unset(t *testing.T) {
-	t.Setenv("ALIS_OS_PROJECT", "")
+func TestIntegrationRun_googleProjectID_fromConfigIgnoresEnv(t *testing.T) {
+	t.Cleanup(resetConfigForTest)
+	t.Setenv("ALIS_OS_PROJECT", "from-env-should-not-win")
+	SetConfig(Config{GoogleProjectID: "from-config"})
 
 	run := IntegrationRun(execution.SuiteResult{}, "operations/op-1", "run-abc", "")
-	if run.GetGoogleProjectId() != "" {
-		t.Fatalf("google_project_id = %q, want empty when ALIS_OS_PROJECT unset", run.GetGoogleProjectId())
+	if run.GetGoogleProjectId() != "from-config" {
+		t.Fatalf("google_project_id = %q, want from-config", run.GetGoogleProjectId())
+	}
+}
+
+func TestIntegrationRun_googleProjectID_envFallback(t *testing.T) {
+	t.Cleanup(resetConfigForTest)
+	t.Setenv("ALIS_OS_PROJECT", "marvel-sm-dev-123")
+
+	run := IntegrationRun(execution.SuiteResult{}, "operations/op-1", "run-abc", "")
+	if run.GetGoogleProjectId() != "marvel-sm-dev-123" {
+		t.Fatalf("google_project_id = %q, want marvel-sm-dev-123", run.GetGoogleProjectId())
 	}
 }

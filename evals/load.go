@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
@@ -9,6 +10,7 @@ import (
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/loadinfra"
 	"go.alis.build/evals/suite"
+	"go.alis.build/evals/verdict"
 )
 
 // ResultTarget executes exactly one load request.
@@ -93,6 +95,21 @@ func WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile) LoadSuiteO
 	})
 }
 
+// WithLoadContext installs a [ContextDecorator] on the load suite.
+func WithLoadContext(fn ContextDecorator) LoadSuiteOption {
+	return loadOption(func(s *suite.LoadSuite) error {
+		return suite.WithLoadContext(fn)(s)
+	})
+}
+
+// WithLoadStopOnFailure marks the suite so remaining load cases are recorded
+// NOT_EVALUATED after the first non-PASSED case.
+func WithLoadStopOnFailure() LoadSuiteOption {
+	return loadOption(func(s *suite.LoadSuite) error {
+		return suite.WithLoadStopOnFailure()(s)
+	})
+}
+
 // WithCloudRunTargets declares Cloud Run infrastructure targets. Valid on load
 // suites ([LoadSuiteOption]) and infra observation suites ([InfraObserveSuiteOption]).
 func WithCloudRunTargets(targets ...CloudRunTarget) interface {
@@ -153,6 +170,9 @@ func NewLoadSuite(name string, opts ...LoadSuiteOption) (*LoadSuite, error) {
 		return nil, err
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, suite.ErrNilOption{}
+		}
 		if err := opt.applyLoad(s); err != nil {
 			return nil, err
 		}
@@ -177,34 +197,58 @@ type DataProvider func(CallData) (any, error)
 
 // LoadCaseOption configures an individual load case.
 type LoadCaseOption interface {
-	applyLoadCase(*loadCaseAdapter)
+	applyLoadCase(*loadCaseAdapter) error
 }
 
 // loadCaseOption is a functional [LoadCaseOption] applied at case registration.
-type loadCaseOption func(*loadCaseAdapter)
+type loadCaseOption func(*loadCaseAdapter) error
 
 // applyLoadCase mutates the adapter before it is registered on the suite.
-func (o loadCaseOption) applyLoadCase(a *loadCaseAdapter) { o(a) }
+func (o loadCaseOption) applyLoadCase(a *loadCaseAdapter) error { return o(a) }
 
 // WithLoadCaseTags attaches labels to the case wire result.
 func WithLoadCaseTags(tags map[string]string) LoadCaseOption {
-	return loadCaseOption(func(a *loadCaseAdapter) {
+	return loadCaseOption(func(a *loadCaseAdapter) error {
 		a.tags = cloneStringMap(tags)
+		return nil
 	})
 }
 
 // WithLoadCaseData sets round-robin payloads rotated by request number.
 func WithLoadCaseData(data ...any) LoadCaseOption {
-	return loadCaseOption(func(a *loadCaseAdapter) {
+	return loadCaseOption(func(a *loadCaseAdapter) error {
 		a.data = append([]any(nil), data...)
+		return nil
 	})
 }
 
 // WithLoadCaseDataProvider sets a programmatic data provider.
 func WithLoadCaseDataProvider(p DataProvider) LoadCaseOption {
-	return loadCaseOption(func(a *loadCaseAdapter) {
+	return loadCaseOption(func(a *loadCaseAdapter) error {
 		a.provider = p
+		return nil
 	})
+}
+
+// NoSLOs marks a load case as deliberately measure-only. The case still fails
+// when transport errors are not covered by an error-rate SLO.
+func NoSLOs() []SLO {
+	return append([]SLO(nil), noSLOsSentinel...)
+}
+
+var noSLOsSentinel = []SLO{{id: "__evals_no_slos_sentinel__"}}
+
+func isNoSLOs(slos []SLO) bool {
+	return len(slos) == 1 && slos[0].id == noSLOsSentinel[0].id
+}
+
+func hasErrorRateSLO(slos []SLO) bool {
+	for _, s := range slos {
+		if s.id == "error_rate" {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadCase registers a load case under the suite.
@@ -220,6 +264,18 @@ func (s *LoadSuite) loadCase(name string, target ResultTarget, opts []LoadCaseOp
 	if target == nil {
 		return ErrNilTarget{Case: name}
 	}
+	if len(slos) == 0 {
+		return ErrEmptySLOs{Case: name}
+	}
+	if isNoSLOs(slos) {
+		slos = nil
+	}
+	if err := validateUniqueSLOIDs(name, slos); err != nil {
+		return err
+	}
+	if err := validateSLOValues(name, slos); err != nil {
+		return err
+	}
 	adapter := &loadCaseAdapter{
 		name:      name,
 		target:    target,
@@ -229,7 +285,15 @@ func (s *LoadSuite) loadCase(name string, target ResultTarget, opts []LoadCaseOp
 		spanner:   s.inner.SpannerTargets(),
 	}
 	for _, opt := range opts {
-		opt.applyLoadCase(adapter)
+		if opt == nil {
+			return suite.ErrNilOption{}
+		}
+		if err := opt.applyLoadCase(adapter); err != nil {
+			return err
+		}
+	}
+	if len(adapter.data) > 0 && adapter.provider != nil {
+		return ErrDualLoadCaseData{Case: name}
 	}
 	return s.inner.AddCase(adapter)
 }
@@ -303,16 +367,25 @@ func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestReque
 		Summary: summaryFromMetrics(mode, profile, m),
 	}
 	if err != nil {
-		// Generator failure (invalid profile, ctx cancelled) — surface as a
-		// synthetic failed check so the case rolls up FAILED even if no SLOs
-		// were declared. SLO checks still evaluate against whatever partial
-		// metrics we got.
-		result.Checks = append(result.Checks, execution.SloCheckResult{
-			ID:      "generator",
-			Status:  evalspb.Status_FAILED,
-			Message: err.Error(),
-			Unit:    "",
-		})
+		if errors.Is(err, context.Canceled) && loadgen.AbortOnSLOFailure(ctx) {
+			if chk, ok := abortedSLOCheck(a.slos, m); ok {
+				result.Checks = append(result.Checks, chk)
+			} else {
+				result.Checks = append(result.Checks, execution.SloCheckResult{
+					ID:      "generator",
+					Status:  evalspb.Status_FAILED,
+					Message: err.Error(),
+					Unit:    "",
+				})
+			}
+		} else {
+			result.Checks = append(result.Checks, execution.SloCheckResult{
+				ID:      "generator",
+				Status:  evalspb.Status_FAILED,
+				Message: err.Error(),
+				Unit:    "",
+			})
+		}
 	}
 	if m.CheckFailedCount > 0 {
 		result.Checks = append(result.Checks, execution.SloCheckResult{
@@ -325,11 +398,21 @@ func (a *loadCaseAdapter) Run(ctx context.Context, mode evalspb.RunLoadTestReque
 		})
 	}
 	result.Checks = append(result.Checks, evaluateSLOs(a.slos, m)...)
+	if m.ErrorCount > 0 && !hasErrorRateSLO(a.slos) {
+		result.Checks = append(result.Checks, execution.SloCheckResult{
+			ID:       verdict.IDTransportErrors,
+			Status:   evalspb.Status_FAILED,
+			Message:  fmt.Sprintf("%d transport error(s) with no error-rate SLO declared", m.ErrorCount),
+			Observed: float64(m.ErrorCount),
+			Limit:    0,
+			Unit:     "count",
+		})
+	}
 	result.Status = rollupLoadCaseStatus(result.Checks)
 	if client := loadinfra.ClientFromContext(ctx); client != nil && (len(a.cloudRun) > 0 || len(a.spanner) > 0) {
 		// Infra fetch failures are recorded per-target on the snapshot
 		// (FetchStatus/FetchMessage); they do not fail the load case in v1.
-		obs, _ := loadinfra.Observe(ctx, client, a.cloudRun, a.spanner, loadinfra.WindowFromMetrics(m), true)
+		obs, _ := loadinfra.Observe(ctx, client, a.cloudRun, a.spanner, loadinfra.WindowFromMetrics(m), true, 0)
 		result.CloudRun = obs.CloudRun
 		result.Spanner = obs.Spanner
 	}
@@ -472,4 +555,25 @@ func (s *LoadSuite) setGenerator(g loadgen.Generator) {
 	if s != nil && g != nil {
 		s.generator = g
 	}
+}
+
+func abortedSLOCheck(slos []SLO, m *loadgen.Metrics) (execution.SloCheckResult, bool) {
+	if m == nil || m.RequestCount == 0 || len(slos) == 0 {
+		return execution.SloCheckResult{}, false
+	}
+	for _, s := range slos {
+		observed := s.extract(m)
+		if !s.pass(observed, s.limit) {
+			msg := s.failMessage(observed, s.limit)
+			return execution.SloCheckResult{
+				ID:       verdict.IDAborted,
+				Status:   evalspb.Status_FAILED,
+				Message:  fmt.Sprintf("abort-on-SLO: %s (%s)", s.id, msg),
+				Observed: observed,
+				Limit:    s.limit,
+				Unit:     s.unit,
+			}, true
+		}
+	}
+	return execution.SloCheckResult{}, false
 }

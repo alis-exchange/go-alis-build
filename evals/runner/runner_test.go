@@ -13,6 +13,7 @@ import (
 	"go.alis.build/evals/internal/result"
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
+	"go.alis.build/evals/verdict"
 )
 
 type stubTestCase struct {
@@ -62,6 +63,9 @@ func TestRollupRunStatus(t *testing.T) {
 		{"one failed", []evalspb.Status{evalspb.Status_PASSED, evalspb.Status_FAILED}, evalspb.Status_FAILED},
 		{"failed wins", []evalspb.Status{evalspb.Status_FAILED, evalspb.Status_FAILED}, evalspb.Status_FAILED},
 		{"unspecified counts as failed", []evalspb.Status{evalspb.Status_PASSED, evalspb.Status_STATUS_UNSPECIFIED}, evalspb.Status_FAILED},
+		{"passed and not evaluated", []evalspb.Status{evalspb.Status_PASSED, evalspb.Status_NOT_EVALUATED}, evalspb.Status_PASSED},
+		{"all not evaluated", []evalspb.Status{evalspb.Status_NOT_EVALUATED, evalspb.Status_NOT_EVALUATED}, evalspb.Status_NOT_EVALUATED},
+		{"failed with not evaluated", []evalspb.Status{evalspb.Status_FAILED, evalspb.Status_NOT_EVALUATED}, evalspb.Status_FAILED},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -165,6 +169,91 @@ func TestRunner_RunTestSuites_cancelledContext(t *testing.T) {
 	), nil, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunner_RunTestSuites_cancelBetweenSuitesPartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var hookCalls int
+	runs := []suite.TestSuiteRun{
+		{Name: "suite-1", Cases: []suite.TestCase{stubTestCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-2", Cases: []suite.TestCase{stubTestCase{name: "b", result: passedCase("b")}}},
+		{Name: "suite-3", Cases: []suite.TestCase{stubTestCase{name: "c", result: passedCase("c")}}},
+	}
+	hook := func(_ context.Context, sr execution.SuiteResult) error {
+		hookCalls++
+		if sr.SuiteName == "suite-1" {
+			cancel()
+		}
+		return nil
+	}
+	out, err := New().RunTestSuites(ctx, runs, nil, hook)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunTestSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("len(out) = %d, want 1 partial suite", len(out))
+	}
+	if out[0].SuiteName != "suite-1" {
+		t.Fatalf("partial suite = %q, want suite-1", out[0].SuiteName)
+	}
+	if RollupSuiteStatus(out[0]) != evalspb.Status_PASSED {
+		t.Fatalf("partial rollup = %v, want PASSED", RollupSuiteStatus(out[0]))
+	}
+	if hookCalls != 1 {
+		t.Fatalf("hook calls = %d, want 1", hookCalls)
+	}
+}
+
+type cancelOnRunTestCase struct {
+	name   string
+	cancel context.CancelFunc
+}
+
+func (c cancelOnRunTestCase) Name() string { return c.name }
+
+func (c cancelOnRunTestCase) Run(context.Context) *execution.CaseResult {
+	c.cancel()
+	return passedCase(c.name)
+}
+
+func TestRunner_RunTestSuites_cancelMidSuitePartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := []suite.TestSuiteRun{{
+		Name: "suite-a",
+		Cases: []suite.TestCase{
+			stubTestCase{name: "one", result: passedCase("one")},
+			cancelOnRunTestCase{name: "two", cancel: cancel},
+			stubTestCase{name: "three", result: passedCase("three")},
+		},
+	}}
+	out, err := New().RunTestSuites(ctx, runs, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunTestSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("len(out) = %d, want 1 partial suite", len(out))
+	}
+	if len(out[0].Cases) != 3 {
+		t.Fatalf("len(cases) = %d, want 3 (completed + cancelled)", len(out[0].Cases))
+	}
+	assertCancelledCase(t, out[0].Cases[2])
+	if RollupSuiteStatus(out[0]) != evalspb.Status_PASSED {
+		t.Fatalf("partial rollup = %v, want PASSED (NOT_EVALUATED is neutral)", RollupSuiteStatus(out[0]))
+	}
+}
+
+func assertCancelledCase(t *testing.T, cr execution.CaseResult) {
+	t.Helper()
+	if cr.Status != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("case %q status = %v, want NOT_EVALUATED", cr.Name, cr.Status)
+	}
+	if len(cr.Checks) != 1 || cr.Checks[0].ID != verdict.IDSkipped {
+		t.Fatalf("case %q checks = %+v, want single %q skip marker", cr.Name, cr.Checks, verdict.IDSkipped)
 	}
 }
 
@@ -303,6 +392,77 @@ func TestRunner_RunEvalSuites_oneError(t *testing.T) {
 	}
 	if RollupSuiteStatus(suites[0]) != evalspb.Status_FAILED {
 		t.Fatalf("status = %v, want FAILED", RollupSuiteStatus(suites[0]))
+	}
+}
+
+func TestRunner_RunEvalSuites_cancelBetweenSuitesPartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := []suite.EvalSuiteRun{
+		{Name: "suite-1", Cases: []suite.EvalCase{stubEvalCase{name: "a", result: passedCase("a")}}},
+		{Name: "suite-2", Cases: []suite.EvalCase{stubEvalCase{name: "b", result: passedCase("b")}}},
+		{Name: "suite-3", Cases: []suite.EvalCase{stubEvalCase{name: "c", result: passedCase("c")}}},
+	}
+	hook := func(_ context.Context, sr execution.SuiteResult) error {
+		if sr.SuiteName == "suite-1" {
+			cancel()
+		}
+		return nil
+	}
+	out, err := New().RunEvalSuites(ctx, runs, nil, hook)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunEvalSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 || out[0].SuiteName != "suite-1" {
+		t.Fatalf("partial out = %+v, want [suite-1]", out)
+	}
+	if RollupSuiteStatus(out[0]) != evalspb.Status_PASSED {
+		t.Fatalf("partial rollup = %v, want PASSED", RollupSuiteStatus(out[0]))
+	}
+}
+
+type cancelOnRunEvalCase struct {
+	name   string
+	cancel context.CancelFunc
+}
+
+func (c cancelOnRunEvalCase) Name() string { return c.name }
+
+func (c cancelOnRunEvalCase) Run(context.Context) *execution.CaseResult {
+	c.cancel()
+	return passedCase(c.name)
+}
+
+func TestRunner_RunEvalSuites_cancelMidSuitePartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := []suite.EvalSuiteRun{{
+		Name: "suite-a",
+		Cases: []suite.EvalCase{
+			stubEvalCase{name: "one", result: passedCase("one")},
+			cancelOnRunEvalCase{name: "two", cancel: cancel},
+			stubEvalCase{name: "three", result: passedCase("three")},
+		},
+	}}
+	out, err := New().RunEvalSuites(ctx, runs, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunEvalSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 || len(out[0].Cases) != 3 {
+		t.Fatalf("partial out = %+v, want one suite with three cases", out)
+	}
+	assertCancelledEvalCase(t, out[0].Cases[2])
+}
+
+func assertCancelledEvalCase(t *testing.T, cr execution.CaseResult) {
+	t.Helper()
+	if cr.Status != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("case %q status = %v, want NOT_EVALUATED", cr.Name, cr.Status)
+	}
+	if len(cr.Metrics) != 1 || cr.Metrics[0].ID != verdict.IDSkipped {
+		t.Fatalf("case %q metrics = %+v, want single %q skip marker", cr.Name, cr.Metrics, verdict.IDSkipped)
 	}
 }
 
@@ -484,6 +644,58 @@ func TestRunner_appliesDecoratorToLoadCases(t *testing.T) {
 	}
 	if seen != "runner-value" {
 		t.Fatalf("seen = %q, want %q", seen, "runner-value")
+	}
+}
+
+func TestRunner_loadSuiteDecoratorOverridesRunner(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	_, err := runner.RunLoadSuites(context.Background(), []suite.LoadSuiteRun{{
+		Decorate: stampDecorator("suite-value"),
+		Cases:    []suite.LoadCase{ctxValueCapturingLoadCase{name: "capture", seen: &seen}},
+	}}, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
+	if err != nil {
+		t.Fatalf("RunLoadSuites() error = %v", err)
+	}
+	if seen != "suite-value" {
+		t.Fatalf("seen = %q, want %q", seen, "suite-value")
+	}
+}
+
+type ctxValueCapturingInfraCase struct {
+	name string
+	seen *string
+}
+
+func (c ctxValueCapturingInfraCase) Name() string { return c.name }
+
+func (c ctxValueCapturingInfraCase) Lookback() (time.Duration, bool) { return 0, false }
+
+func (c ctxValueCapturingInfraCase) Run(ctx context.Context, _ suite.InfraObserveCaseConfig) *execution.InfraObserveCaseResult {
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.seen = v
+	} else {
+		*c.seen = ""
+	}
+	return &execution.InfraObserveCaseResult{Name: c.name, Status: evalspb.Status_PASSED}
+}
+
+func TestRunner_infraObserveSuiteDecoratorOverridesRunner(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	runner := New(WithContext(stampDecorator("runner-value")))
+	_, err := runner.RunInfraObserveSuites(context.Background(), []suite.InfraObserveSuiteRun{{
+		Decorate: stampDecorator("suite-value"),
+		Cases:    []suite.InfraObserveCase{ctxValueCapturingInfraCase{name: "capture", seen: &seen}},
+	}}, InfraObserveRunParams{}, nil, nil)
+	if err != nil {
+		t.Fatalf("RunInfraObserveSuites() error = %v", err)
+	}
+	if seen != "suite-value" {
+		t.Fatalf("seen = %q, want %q", seen, "suite-value")
 	}
 }
 
@@ -801,9 +1013,12 @@ func TestTestSuiteCompleteHook_contextCancellation(t *testing.T) {
 		}
 		return nil
 	}
-	_, err := New().RunTestSuites(ctx, runs, nil, hook)
+	out, err := New().RunTestSuites(ctx, runs, nil, hook)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunTestSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 || out[0].SuiteName != "suite-a" {
+		t.Fatalf("partial out = %+v, want [suite-a]", out)
 	}
 	if hookCalls != 1 {
 		t.Fatalf("hook calls = %d, want 1", hookCalls)

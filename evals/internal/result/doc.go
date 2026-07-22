@@ -2,6 +2,6 @@
 //
 // Internal to go.alis.build/evals; only the framework's own runtime
 // subpackages (runner, mapper, adk) may import it. External callers
-// should consume the proto-free result types from
+// should consume the in-process result types from
 // go.alis.build/evals/execution instead.
 package result

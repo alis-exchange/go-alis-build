@@ -2,10 +2,10 @@ package suite
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadinfra"
 )
@@ -43,6 +43,10 @@ type InfraObserveSuite struct {
 	spanner []loadinfra.SpannerTarget
 	// cases holds qualified infra-observe cases in registration order.
 	cases []InfraObserveCase
+	// decorate is applied to the context passed to setup, teardown, and cases.
+	decorate ContextDecorator
+	// stopOnFailure skips remaining cases after the first non-PASSED case.
+	stopOnFailure bool
 }
 
 // InfraObserveSuiteOption configures an InfraObserveSuite at construction time.
@@ -109,6 +113,23 @@ func WithInfraObserveSpannerTargets(targets ...loadinfra.SpannerTarget) InfraObs
 	}
 }
 
+// WithInfraObserveContext installs a [ContextDecorator] on the infra observe suite.
+func WithInfraObserveContext(fn ContextDecorator) InfraObserveSuiteOption {
+	return func(s *InfraObserveSuite) error {
+		s.decorate = fn
+		return nil
+	}
+}
+
+// WithInfraObserveStopOnFailure marks the suite so remaining cases are skipped
+// after the first non-PASSED case result.
+func WithInfraObserveStopOnFailure() InfraObserveSuiteOption {
+	return func(s *InfraObserveSuite) error {
+		s.stopOnFailure = true
+		return nil
+	}
+}
+
 // NewInfraObserveSuite creates an infra observation suite.
 func NewInfraObserveSuite(name string, opts ...InfraObserveSuiteOption) (*InfraObserveSuite, error) {
 	if err := validateSuiteName(name); err != nil {
@@ -116,6 +137,9 @@ func NewInfraObserveSuite(name string, opts ...InfraObserveSuiteOption) (*InfraO
 	}
 	s := &InfraObserveSuite{name: name}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption{}
+		}
 		if err := opt(s); err != nil {
 			return nil, err
 		}
@@ -159,8 +183,8 @@ func qualifyInfraObserveCase(suiteName string, c InfraObserveCase, existing []In
 		return nil, ErrNilInfraObserveCase{}
 	}
 	short := c.Name()
-	if strings.Contains(short, ".") {
-		return nil, ErrInvalidCaseName{Name: short}
+	if err := validateCaseName(short); err != nil {
+		return nil, err
 	}
 	qualified := QualifiedName(suiteName, short)
 	for _, e := range existing {
@@ -227,12 +251,31 @@ func (s *InfraObserveSuite) SpannerTargets() []loadinfra.SpannerTarget {
 	return append([]loadinfra.SpannerTarget(nil), s.spanner...)
 }
 
+// Decorator returns the suite [ContextDecorator], or nil when unset.
+func (s *InfraObserveSuite) Decorator() ContextDecorator {
+	if s != nil {
+		return s.decorate
+	}
+	return nil
+}
+
+// StopOnFailure reports whether remaining cases should be skipped after the
+// first non-PASSED case.
+func (s *InfraObserveSuite) StopOnFailure() bool {
+	return s != nil && s.stopOnFailure
+}
+
 // InfraObserveSuiteRun is a filtered infra observe suite ready for runner execution.
 type InfraObserveSuiteRun struct {
 	Name         string
 	Environments []string
-	Setup        SuiteHook
-	Teardown     SuiteHook
+	// EnvRegistry is the registry that validated the environment names. Nil
+	// makes the runner use env.DefaultRegistry for manually assembled runs.
+	EnvRegistry   *env.Registry
+	Setup         SuiteHook
+	Teardown      SuiteHook
+	Decorate      ContextDecorator
+	StopOnFailure bool
 	// Lookback is the suite default lookback applied when a case has no override.
 	Lookback time.Duration
 	// CloudRun is the suite's declared Cloud Run targets copied at selection time.

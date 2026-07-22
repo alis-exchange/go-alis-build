@@ -672,6 +672,28 @@ func TestAggregator_AbortSnapshotSLOFields(t *testing.T) {
 	}
 }
 
+func TestAggregator_buildAbortMetricsUsesElapsedDuration(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now().Add(-2 * time.Second)
+	agg := newAggregator(start, start.Add(30*time.Second), 30*time.Second, 0)
+	for i := 0; i < 100; i++ {
+		agg.record(sample{
+			sentAt:  start.Add(time.Duration(i) * 20 * time.Millisecond),
+			latency: time.Millisecond,
+			result:  TargetResult{},
+		})
+	}
+	m := agg.buildAbortMetrics()
+	if m.Duration > 3*time.Second {
+		t.Fatalf("Duration=%v, want elapsed ~2s not full 30s window", m.Duration)
+	}
+	if m.ActualQPS < 40 {
+		t.Fatalf("ActualQPS=%v, want ~50 from elapsed time not %.1f from full window",
+			m.ActualQPS, float64(m.RequestCount)/30.0)
+	}
+}
+
 func TestInProcess_StreamSummaryAggregation(t *testing.T) {
 	t.Parallel()
 
@@ -703,6 +725,35 @@ func TestInProcess_StreamSummaryAggregation(t *testing.T) {
 	}
 	if m.Stream.TTFB.P50Ms <= 0 {
 		t.Fatalf("TTFB summary empty: %+v", m.Stream.TTFB)
+	}
+}
+
+func TestInProcess_ConcurrencyStepDownCountsDropped(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error {
+		time.Sleep(2 * time.Millisecond)
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:         200,
+		Concurrency: 8,
+		Duration:    500 * time.Millisecond,
+		ConcurrencyStages: []Stage{
+			{Duration: 100 * time.Millisecond, Target: 8},
+			{Duration: 400 * time.Millisecond, Target: 1},
+		},
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount == 0 {
+		t.Fatal("RequestCount=0, want completed samples")
+	}
+	if m.DroppedCount == 0 {
+		t.Fatal("DroppedCount=0, want > 0 when concurrency steps down")
 	}
 }
 

@@ -55,19 +55,16 @@
 //
 //   - [WithLoadEnvironment]                     — declare env dependencies
 //   - [WithLoadSetup] / [WithLoadTeardown]      — before/after-cases hooks
+//   - [WithLoadContext]                         — per-suite context decoration
+//   - [WithLoadStopOnFailure]                   — skip dependent later cases
 //   - [WithLoadProfileOverride](mode, profile)  — per-mode profile override
 //   - [WithCloudRunTargets] / [WithSpannerTargets] — declare infra targets
 //   - [WithLookback] — default lookback for infra-observe cases
 //
-// Load suites deliberately have no per-suite [ContextDecorator]: load
-// tests should run under whatever the runner's default decorator installs
-// so measurements match production traffic. Use runner-level context
-// decoration for cross-suite defaults.
-//
 // # Errors
 //
 // Constructor and registration failures return typed errors from
-// [errors.go] (for example [ErrInvalidSuiteName], [ErrDuplicateCase],
-// [ErrUnknownEnvironment]) that implement [errors.EvalError] and map to
+// [errors.go] (for example [ErrInvalidSuiteName] and [ErrDuplicateCase]) that
+// implement [errors.EvalError] and map to
 // gRPC codes for RPC validation.
 package suite

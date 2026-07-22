@@ -105,8 +105,7 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 		cases := make([]execution.CaseResult, 0, len(results))
 		var suiteJudgeCalls int64
 		for _, r := range results {
-			cr := CaseFromRunEvalResult(r, each)
-			cr.Name = suite.QualifiedName(setID, r.EvalID)
+			cr := CaseFromRunEvalResult(setID, r, each)
 			suiteJudgeCalls += cr.JudgeCallCount
 			cases = append(cases, *cr)
 		}

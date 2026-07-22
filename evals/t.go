@@ -6,6 +6,7 @@ import (
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
+	"go.alis.build/evals/verdict"
 )
 
 // T is the per-case recorder that a CaseFunc receives. Every recording method
@@ -21,6 +22,8 @@ type T struct {
 	seen map[string]struct{}
 	// duplicateHit is set on first duplicate id; suppresses further duplicate leaves.
 	duplicateHit bool
+	// reservedHit is set on first reserved user id; suppresses further reserved leaves.
+	reservedHit bool
 }
 
 // leaf is the internal representation of one recorded assertion. Adapters
@@ -42,7 +45,7 @@ type leaf struct {
 const (
 	// DuplicateCheckIDName is the id used when duplicate check IDs are detected
 	// inside one case.
-	DuplicateCheckIDName = "duplicate-check-id"
+	DuplicateCheckIDName = verdict.IDDuplicateCheckID
 )
 
 // newT allocates a per-case recorder with an empty seen set.
@@ -116,9 +119,31 @@ func (t *T) Score(id string, score, threshold float64, rationale string) bool {
 	})
 }
 
+// Pass records an intentional passing leaf for cases that deliberately
+// perform no other assertions.
+func (t *T) Pass(id string) bool {
+	return t.Check(id, true)
+}
+
+// RecordSuccess is an alias for [T.Pass].
+func (t *T) RecordSuccess(id string) bool {
+	return t.Pass(id)
+}
+
 // claim reserves id for this case. Returns false and records one duplicate-check
-// leaf when id was already used in the same case.
+// or reserved-check leaf when id was already used or uses a reserved prefix.
 func (t *T) claim(id string) bool {
+	if verdict.IsReserved(id) {
+		if !t.reservedHit {
+			t.reservedHit = true
+			t.leaves = append(t.leaves, leaf{
+				id:      verdict.IDReservedCheckID,
+				status:  evalspb.Status_FAILED,
+				message: fmt.Sprintf("reserved check id: %q", id),
+			})
+		}
+		return false
+	}
 	if _, ok := t.seen[id]; ok {
 		if !t.duplicateHit {
 			t.duplicateHit = true
@@ -152,15 +177,24 @@ func statusOf(pass bool) evalspb.Status {
 // the rolled-up status for a test case.
 func (t *T) checksAndStatus() ([]execution.Check, evalspb.Status) {
 	if t == nil || len(t.leaves) == 0 {
+		status, _ := verdict.Case(verdict.Evidence{}, verdict.IntegrationCasePolicy())
+		if status == evalspb.Status_FAILED {
+			return []execution.Check{{
+				ID:      verdict.IDNoChecksRecorded,
+				Status:  evalspb.Status_FAILED,
+				Message: "case body recorded no checks or metrics",
+			}}, status
+		}
 		return nil, evalspb.Status_PASSED
 	}
-	out := make([]execution.Check, 0, len(t.leaves))
-	status := evalspb.Status_PASSED
-	for _, l := range t.leaves {
-		out = append(out, execution.Check{ID: l.id, Status: l.status, Message: l.message})
-		if l.status != evalspb.Status_PASSED {
-			status = evalspb.Status_FAILED
-		}
+	vLeaves := make([]verdict.Leaf, len(t.leaves))
+	for i, l := range t.leaves {
+		vLeaves[i] = verdict.Leaf{ID: l.id, Status: l.status, Message: l.message}
+	}
+	status, _ := verdict.Case(verdict.Evidence{Leaves: vLeaves}, verdict.Policy{})
+	out := make([]execution.Check, len(t.leaves))
+	for i, l := range t.leaves {
+		out[i] = execution.Check{ID: l.id, Status: l.status, Message: l.message}
 	}
 	return out, status
 }
@@ -169,20 +203,29 @@ func (t *T) checksAndStatus() ([]execution.Check, evalspb.Status) {
 // the rolled-up status for an eval case.
 func (t *T) metricsAndStatus() ([]execution.Metric, evalspb.Status) {
 	if t == nil || len(t.leaves) == 0 {
+		status, _ := verdict.Case(verdict.Evidence{}, verdict.EvalCasePolicy())
+		if status == evalspb.Status_FAILED {
+			return []execution.Metric{{
+				ID:      verdict.IDNoChecksRecorded,
+				Status:  evalspb.Status_FAILED,
+				Message: "case body recorded no checks or metrics",
+			}}, status
+		}
 		return nil, evalspb.Status_PASSED
 	}
-	out := make([]execution.Metric, 0, len(t.leaves))
-	status := evalspb.Status_PASSED
-	for _, l := range t.leaves {
+	vLeaves := make([]verdict.Leaf, len(t.leaves))
+	for i, l := range t.leaves {
+		vLeaves[i] = verdict.Leaf{ID: l.id, Status: l.status, Message: l.message}
+	}
+	status, _ := verdict.Case(verdict.Evidence{Leaves: vLeaves}, verdict.Policy{})
+	out := make([]execution.Metric, len(t.leaves))
+	for i, l := range t.leaves {
 		m := execution.Metric{ID: l.id, Status: l.status, Message: l.message, Threshold: l.threshold}
 		if l.score != nil {
 			s := *l.score
 			m.Score = new(s)
 		}
-		out = append(out, m)
-		if l.status != evalspb.Status_PASSED {
-			status = evalspb.Status_FAILED
-		}
+		out[i] = m
 	}
 	return out, status
 }

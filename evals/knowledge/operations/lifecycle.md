@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: End-to-end lifecycle
-description: The timeline of a single `RunIntegrationTest` / `RunAgentEval` / `RunLoadTest` call.
+description: The timeline of one integration, agent-eval, load, or infra-observation RPC.
 tags: [lifecycle, runtime, lro]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -10,38 +10,41 @@ timestamp: 2026-07-08T00:00:00Z
 
 1. **Register.** Each case package calls `env.Register(...)` and one
    of `RegisterIntegration` / `RegisterEval` / `RegisterLoad` /
-   `RegisterAgent` in its `init()` function.
-2. **Wire.** The neuron's `TestServiceServer` is constructed with
+   `RegisterInfraObserve` / `RegisterAgent` during startup.
+2. **Freeze.** After registration completes, `evals.Freeze()` validates
+   environment references, profiles, and duplicate suite names, then seals
+   the registry.
+3. **Wire.** The neuron's `TestServiceServer` is constructed with
    `evals.DefaultRegistry()`, `runner.New()`, and a reporter (default
    `logreport.Reporter{}` from `go.alis.build/evals/report/log`).
-3. **RPC arrives.** `RunIntegrationTest` / `RunLoadTest` /
-   `RunAgentEval`. `Registry.ValidateSelection` rejects unknown
+4. **RPC arrives.** `RunIntegrationTest` / `RunLoadTest` /
+   `RunAgentEval` / `RunInfraObservation`. `Registry.ValidateSelection` rejects unknown
    `case_ids` synchronously with `InvalidArgument`.
-4. **LRO starts.** A long-running operation is created with initial
+5. **LRO starts.** A long-running operation is created with initial
    metadata (`case_count`, `suite_count`). A resume task is scheduled;
    locally the `lro` library runs it in a goroutine via
    `httptest.NewRecorder`, in production it's dispatched via Cloud
    Tasks.
-5. **Runner executes.** Environment setups fire once, then suites
+6. **Runner executes.** Environment setups fire once, then suites
    run sequentially. Each case runs under panic recovery — one bad
    case cannot take the batch down. LRO metadata is updated after
    each case (`completed_case_count`) and each suite
    (`completed_suite_count`).
-6. **Map & report.** Each completed suite is mapped to `evalspb.Run`
+7. **Map & report.** Each completed suite is mapped to `evalspb.Run`
    via [`mapper`](/packages/mapper.md) and passed to the configured
    `Reporter`. Reporter errors are logged; they do not fail the LRO.
-7. **Complete.** The LRO completes with `RunXxxResponse.runs`
+8. **Complete.** The LRO completes with `RunXxxResponse.runs`
    listing the resource names of every emitted run
    (`runs/{run_id}`). Consumers fetch or subscribe to those.
 
-Every case appears in the result — passing, failing, or
+Every selected case appears in the result — passing, failing, or
 `NOT_EVALUATED` — so dashboards can compute pass rate, headroom, and
 trend without reconstructing what was intended to run.
 
 # Panic recovery
 
 The `runner` wraps every case in a defer/recover pair. A panic is
-recorded as one leaf on the case with id `panic` and status
+recorded as one leaf on the case with id `_evals.case` and status
 `FAILED`, and the case's status rolls up to `FAILED`. Subsequent
 cases still execute.
 
@@ -52,7 +55,7 @@ share `example-v1` and the RPC selects all of them, `seedExample`
 runs once at the start and `cleanupExample` runs once at the end.
 
 If setup returns an error, every case in every dependent suite is
-marked with an `env-setup-failed` result and teardown for that env
+marked `FAILED` with an `_evals.setup` result and teardown for that env
 is skipped.
 
 # Cancellation

@@ -17,6 +17,8 @@ const (
 	// perTargetTimeout caps each Monitoring ListTimeSeries call so one slow
 	// target cannot block Observe indefinitely when many targets run concurrently.
 	perTargetTimeout = 30 * time.Second
+	// DefaultTargetConcurrency bounds concurrent target fetches inside Observe.
+	DefaultTargetConcurrency = 8
 )
 
 // ObserveResult holds infra snapshots for one observation window.
@@ -34,13 +36,19 @@ type ObserveResult struct {
 // extendQueryEnd true so Monitoring queries extend w.End forward by per-kind
 // settle padding. Standalone callers pass WindowLookback with extendQueryEnd
 // false so queries use the settled window as-is.
-func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, spanner []SpannerTarget, w ObservationWindow, extendQueryEnd bool) (ObserveResult, error) {
+//
+// targetConcurrency caps concurrent per-target fetches; zero or negative uses
+// [DefaultTargetConcurrency].
+func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, spanner []SpannerTarget, w ObservationWindow, extendQueryEnd bool, targetConcurrency int) (ObserveResult, error) {
 	if client == nil {
 		return ObserveResult{}, fmt.Errorf("loadinfra: nil MetricClient")
 	}
 	if len(cloud) == 0 && len(spanner) == 0 {
 		return ObserveResult{}, nil
 	}
+
+	limit := targetConcurrencyLimit(targetConcurrency)
+	sem := make(chan struct{}, limit)
 
 	var (
 		mu  sync.Mutex
@@ -52,6 +60,8 @@ func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, s
 		wg.Add(1)
 		go func(t CloudRunTarget) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			snap := observeCloudRun(ctx, client, t, w, extendQueryEnd)
 			mu.Lock()
 			out.CloudRun = append(out.CloudRun, snap)
@@ -62,6 +72,8 @@ func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, s
 		wg.Add(1)
 		go func(t SpannerTarget) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			snap := observeSpanner(ctx, client, t, w, extendQueryEnd)
 			mu.Lock()
 			out.Spanner = append(out.Spanner, snap)
@@ -77,6 +89,13 @@ func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, s
 		return out.Spanner[i].Id < out.Spanner[j].Id
 	})
 	return out, nil
+}
+
+func targetConcurrencyLimit(n int) int {
+	if n <= 0 {
+		return DefaultTargetConcurrency
+	}
+	return n
 }
 
 // observeCloudRun fetches one Cloud Run target snapshot. Query failures are

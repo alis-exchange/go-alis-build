@@ -61,7 +61,8 @@ combination is what `case_ids` filters match. Case names must:
 - `PASSED` — the case executed and every recorded leaf passed.
 - `FAILED` — the case executed and at least one leaf failed.
 - `NOT_EVALUATED` — the case was skipped. Reasons include
-  `StopOnFailure`, setup failure, or an unmatched filter.
+  `StopOnFailure` or cancellation before the selected case started. Cases
+  excluded by a filter do not appear; setup failures are `FAILED`.
 
 # Related
 

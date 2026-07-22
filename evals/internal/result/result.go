@@ -3,15 +3,16 @@ package result
 import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
+	"go.alis.build/evals/verdict"
 )
 
 const (
 	// CaseErrorCheckName is the check id recorded when a case panics.
-	CaseErrorCheckName = "case"
+	CaseErrorCheckName = verdict.IDCase
 	// SetupErrorCheckName is the check id recorded when suite setup fails.
-	SetupErrorCheckName = "setup"
+	SetupErrorCheckName = verdict.IDSetup
 	// SkippedCheckName is the check id recorded when a case is not evaluated.
-	SkippedCheckName = "skipped"
+	SkippedCheckName = verdict.IDSkipped
 )
 
 // statusPassed reports whether s is the wire PASSED enum value.
@@ -21,21 +22,7 @@ func statusPassed(s evalspb.Status) bool {
 
 // RollupRunStatus aggregates per-case statuses into a run-level status.
 func RollupRunStatus(statuses []evalspb.Status) evalspb.Status {
-	hasFailed := false
-	for _, s := range statuses {
-		switch s {
-		case evalspb.Status_FAILED:
-			hasFailed = true
-		case evalspb.Status_PASSED:
-			continue
-		default:
-			hasFailed = true
-		}
-	}
-	if hasFailed {
-		return evalspb.Status_FAILED
-	}
-	return evalspb.Status_PASSED
+	return verdict.Run(statuses, verdict.DefaultRunPolicy())
 }
 
 // RollupCaseStatus aggregates metric leaves into one case status.
@@ -217,6 +204,122 @@ func EvalSkippedResult(name, reason string) *execution.CaseResult {
 			Status:  evalspb.Status_NOT_EVALUATED,
 			Message: reason,
 		}},
+	}
+}
+
+// CancelledCaseResult records an integration case skipped because the run ctx
+// was cancelled before the case started.
+func CancelledCaseResult(name string) *execution.CaseResult {
+	return &execution.CaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+		Checks: []execution.Check{{
+			ID:      verdict.IDSkipped,
+			Status:  evalspb.Status_NOT_EVALUATED,
+			Message: "run cancelled",
+		}},
+	}
+}
+
+// CancelledEvalCaseResult records an eval case skipped because the run ctx was
+// cancelled before the case started.
+func CancelledEvalCaseResult(name string) *execution.CaseResult {
+	return &execution.CaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+		Metrics: []execution.Metric{{
+			ID:      verdict.IDSkipped,
+			Status:  evalspb.Status_NOT_EVALUATED,
+			Message: "run cancelled",
+		}},
+	}
+}
+
+// CancelledLoadCaseResult records a load case skipped because the run ctx was
+// cancelled before the case started.
+func CancelledLoadCaseResult(name string) execution.LoadCaseResult {
+	return execution.LoadCaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+		Checks: []execution.SloCheckResult{{
+			ID:      verdict.IDSkipped,
+			Status:  evalspb.Status_NOT_EVALUATED,
+			Message: "run cancelled",
+		}},
+	}
+}
+
+// SkippedLoadCaseResult records a load case skipped because a preceding case
+// in the same suite failed when StopOnFailure is enabled.
+func SkippedLoadCaseResult(name, reason string) execution.LoadCaseResult {
+	return execution.LoadCaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+		Checks: []execution.SloCheckResult{{
+			ID:      SkippedCheckName,
+			Status:  evalspb.Status_NOT_EVALUATED,
+			Message: reason,
+		}},
+	}
+}
+
+// CancelledInfraObserveCaseResult records an infra case skipped because the run
+// ctx was cancelled before the case started.
+func CancelledInfraObserveCaseResult(name string) execution.InfraObserveCaseResult {
+	return execution.InfraObserveCaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+	}
+}
+
+// SkippedInfraObserveCaseResult records an infra case skipped because a
+// preceding case failed when StopOnFailure is enabled.
+func SkippedInfraObserveCaseResult(name, reason string) execution.InfraObserveCaseResult {
+	return execution.InfraObserveCaseResult{
+		Name:   name,
+		Status: evalspb.Status_NOT_EVALUATED,
+	}
+}
+
+// ApplyTeardownFailureToCaseResults marks every case in a suite failed with
+// verdict.IDTeardown when suite teardown returns an error.
+func ApplyTeardownFailureToCaseResults(cases []execution.CaseResult, err error) {
+	chk := execution.Check{
+		ID:      verdict.IDTeardown,
+		Status:  evalspb.Status_FAILED,
+		Message: err.Error(),
+	}
+	for i := range cases {
+		cases[i].Checks = append(cases[i].Checks, chk)
+		cases[i].Status = evalspb.Status_FAILED
+	}
+}
+
+// ApplyTeardownFailureToLoadCases marks every load case failed with
+// verdict.IDTeardown when suite teardown returns an error.
+func ApplyTeardownFailureToLoadCases(cases []execution.LoadCaseResult, err error) {
+	chk := execution.SloCheckResult{
+		ID:      verdict.IDTeardown,
+		Status:  evalspb.Status_FAILED,
+		Message: err.Error(),
+	}
+	for i := range cases {
+		cases[i].Checks = append(cases[i].Checks, chk)
+		cases[i].Status = evalspb.Status_FAILED
+	}
+}
+
+// ApplyTeardownFailureToInfraCases marks every infra case failed and appends a
+// synthetic snapshot carrying the framework teardown diagnostic.
+func ApplyTeardownFailureToInfraCases(cases []execution.InfraObserveCaseResult, err error) {
+	for i := range cases {
+		cases[i].Status = evalspb.Status_FAILED
+		message := err.Error()
+		cases[i].CloudRun = append(cases[i].CloudRun, &evalspb.CloudRunTargetSnapshot{
+			Id:           verdict.IDTeardown,
+			FetchStatus:  evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
+			FetchMessage: &message,
+		})
 	}
 }
 

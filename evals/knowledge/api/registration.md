@@ -16,13 +16,15 @@ timestamp: 2026-07-08T00:00:00Z
 | `evals.RegisterLoad(s *LoadSuite) error` | Publish a load suite. Returns `suite.ErrNilSuite` if `s == nil`. |
 | `evals.RegisterInfraObserve(s *InfraObserveSuite) error` | Publish an infra observation suite. Returns `suite.ErrNilSuite` if `s == nil`. |
 | `evals.RegisterAgent(p registry.AgentEvalProvider) error` | Publish a lazy agent-eval provider (for example an ADK-backed one). Returns `evals.ErrNilProvider` if `p == nil`. |
+| `evals.Freeze() error` | Validate and seal the default registry after startup registration. |
 | `evals.DefaultRegistry() *registry.Registry` | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests. |
 
 # When to call
 
-Register at `init()` time. All registration functions target
+Register during startup. All registration functions target
 `evals.DefaultRegistry()`. Callers must handle the returned error (or
-`log.Fatal`); the framework does not panic on registration errors.
+`log.Fatal`); the framework does not panic on registration errors. After all
+case packages have registered, call `evals.Freeze()` before serving requests.
 
 # The lazy-provider path
 

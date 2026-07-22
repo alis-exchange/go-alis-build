@@ -8,6 +8,8 @@ key**.json
 /local.env
 .vscode
 .cursor
+.claude
+.codex
 .idea
 coverage.out
 **/coverage.out

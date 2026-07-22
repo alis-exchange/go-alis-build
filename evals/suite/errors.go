@@ -23,7 +23,9 @@ func (e ErrNilSuite) GRPCStatus() *status.Status {
 	return status.New(codes.FailedPrecondition, e.Error())
 }
 
-// ErrUnknownEnvironment is returned when WithEnvironment references an unregistered name.
+// ErrUnknownEnvironment represents one unresolved environment name. New
+// registry Freeze validation reports the aggregate registry.ErrUnknownEnvironments;
+// this type remains for compatibility with callers that classify suite errors.
 type ErrUnknownEnvironment struct {
 	Name string
 }
@@ -63,12 +65,29 @@ func (e ErrInvalidSuiteName) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// ErrNilOption is returned when a nil option is passed to a constructor.
+type ErrNilOption struct{}
+
+func (e ErrNilOption) Error() string { return "nil option" }
+
+func (e ErrNilOption) Is(target error) bool {
+	var err ErrNilOption
+	return errors.As(target, &err)
+}
+
+func (e ErrNilOption) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // ErrInvalidCaseName is returned when a case short name contains '.'.
 type ErrInvalidCaseName struct {
 	Name string
 }
 
 func (e ErrInvalidCaseName) Error() string {
+	if e.Name == "" {
+		return "case name is required"
+	}
 	return fmt.Sprintf("case name %q must not contain '.'; suite qualifies names", e.Name)
 }
 

@@ -27,7 +27,9 @@ s := evals.MustNewInfraObserveSuite("peak-hours",
     }),
 )
 s.MustInfraObserveCase("hourly")
-evals.RegisterInfraObserve(s)
+if err := evals.RegisterInfraObserve(s); err != nil {
+    panic(err)
+}
 ```
 
 # Lookback precedence
@@ -47,6 +49,30 @@ required; suites with no targets are rejected at construction.
 # Concurrency
 
 Cases within a suite run **concurrently** (read-only Monitoring queries).
+`WithInfraObserveStopOnFailure` switches the suite to sequential execution and
+marks cases after the first failure `NOT_EVALUATED`. Use
+`WithInfraObserveContext` to decorate setup, teardown, and Monitoring requests.
+
+# Case status rollup (standalone)
+
+Standalone infra-observe cases (this suite kind) **fail** when any declared
+target snapshot has non-OK `FetchStatus`. Load-integrated infra snapshots
+attached to load cases remain diagnostic-only in v1 — fetch failures are
+recorded on the snapshot but do not fail the load case.
+
+| Context | Bad infra fetch | Case status |
+| --- | --- | --- |
+| Standalone infra observe | any target not OK | `FAILED` |
+| Load case with infra targets | any target not OK | unchanged (diagnostic) |
+
+# Teardown diagnostics
+
+Infra results have no generic check collection. When suite teardown fails, the
+runner marks every case `FAILED` and appends a synthetic
+`CloudRunTargetSnapshot` with `id = "_evals.teardown"`, unavailable fetch
+status, and the teardown error in `fetch_message`. Consumers should recognize
+that reserved ID as framework provenance rather than a declared Cloud Run
+target.
 
 # Related
 

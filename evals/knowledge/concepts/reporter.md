@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Reporter
-description: The sink that receives each completed `Run` proto. Bundled implementations plus a fan-out.
+description: The sink that receives each completed `Run` proto. Bundled implementations plus fan-out combinators.
 tags: [reporter, sink, pubsub, bigquery]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -30,7 +30,10 @@ type Reporter interface {
 | `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to a pre-existing BigQuery table. |
 | `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` on top of `cloud.google.com/go/pubsub/v2` (default topic `alis.evals.v1.Run`; resolves project from `ALIS_OS_PRODUCT_PROJECT`). |
 | `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful in local tests. |
-| `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out to multiple reporters, in order. First error aborts. |
+| `report.All{...}` | `go.alis.build/evals/report` | Fan-out to every reporter; [errors.Join] failures. |
+| `report.FailFast{...}` / `report.MultiReporter{...}` | `go.alis.build/evals/report` | Fan-out in order; first error aborts remaining sinks. |
+
+Serial fan-out under `All` sums each sink's per-call timeout (~10s for bundled non-log sinks).
 
 # Wiring
 
@@ -56,7 +59,7 @@ func setupReporters(ctx context.Context) error {
         _ = bq.Close()
         return err
     }
-    services.TestServiceServer.Reporter = report.MultiReporter{
+    services.TestServiceServer.Reporter = report.All{
         logreport.Reporter{},
         bq,
         ps,
@@ -70,8 +73,8 @@ func setupReporters(ctx context.Context) error {
 1. **Handle `run == nil`** as a no-op.
 2. **Do not block the LRO goroutine for long** — persist async or with
    a short timeout.
-3. **Errors are best-effort.** Returning one is logged by the caller;
-   subsequent reporters in a `MultiReporter` are skipped for that run.
+3. **Errors are best-effort.** Under `FailFast`, later sinks are skipped;
+   under `All`, every sink is still invoked.
 
 # Minimal custom-reporter example
 
@@ -114,6 +117,7 @@ func (r *WebhookReporter) ReportRun(ctx context.Context, run *evalspb.Run) error
 
 * [`report` package](/packages/report.md)
 * [Reporters API](/api/reporters.md)
+* [Troubleshooting](/operations/troubleshooting.md)
 * [Run wire type](/wire-types/run.md)
 
 # Citations

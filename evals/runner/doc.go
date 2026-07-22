@@ -21,6 +21,14 @@
 //   - Panic recovery — a panic in one case is turned into a FAILED case
 //     result so a single bad case cannot take down the batch.
 //
+// # Generic case loop
+//
+// [Execute] runs the inner case loop shared by all Run*Suites methods.
+// Each Run* method still owns environment activation, suite setup/teardown,
+// infra client attachment, suite envelope assembly, and suite-complete hooks.
+// Case-level concurrency for infra observation is controlled via
+// [ExecuteOptions.Sequential] and [ExecuteOptions.Concurrency].
+//
 // # Method surface
 //
 //   - [Runner.RunTestSuites]  — integration tests, sequential per suite.
@@ -44,10 +52,11 @@
 //
 // # StopOnFailure
 //
-// Test and eval suites honour a per-suite `StopOnFailure` flag: once a
-// case ends non-PASSED, the remaining cases are recorded with status
-// NOT_EVALUATED and a "preceding case … failed" reason. Load suites do
-// not honour StopOnFailure — see the package [suite] docs for rationale.
+// Integration, eval, and load suites honour a per-suite StopOnFailure flag:
+// once a case ends non-PASSED, the remaining cases are recorded with status
+// NOT_EVALUATED and a "preceding case … failed" reason. Infra-observe suites
+// honour StopOnFailure sequentially; without it, cases within a suite run
+// concurrently. See the package [suite] docs for rationale.
 //
 // # Rollup
 //

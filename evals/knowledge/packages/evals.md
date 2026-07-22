@@ -12,13 +12,15 @@ timestamp: 2026-07-08T00:00:00Z
 `evals` is the root package and the only one most consumers import
 directly. It exposes:
 
-- Suite constructors: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`.
+- Suite constructors: `NewIntegrationSuite`, `NewAgentEvalSuite`,
+  `NewLoadSuite`, `NewInfraObserveSuite`.
 - The `T` recorder and its methods.
 - SLO constructors for load suites.
 - The `Call` / streaming helpers / `Result[T]` RPC wrappers.
 - The `Rouge1F1` deterministic scorer.
 - Registration functions: `RegisterIntegration`, `RegisterEval`,
-  `RegisterLoad`, `RegisterAgent`, `DefaultRegistry`.
+  `RegisterLoad`, `RegisterInfraObserve`, `RegisterAgent`, `Freeze`,
+  `DefaultRegistry`.
 
 # Files
 
@@ -26,7 +28,8 @@ directly. It exposes:
 | ---- | ------- |
 | `doc.go` | Package-level documentation covering everything below. |
 | `suite.go` | `Suite`, `NewIntegrationSuite`, `NewAgentEvalSuite`, `Case`, `SuiteOption`, `StopOnFailure`, `WithEnv`, `WithContext`, `WithSetup`, `WithTeardown`, and the `ContextDecorator` type alias. |
-| `load.go` | `LoadSuite`, `NewLoadSuite`, `LoadCase`, `LoadSuiteOption`, `WithLoadEnv`, `WithLoadProfile`. |
+| `load.go` | `LoadSuite`, `NewLoadSuite`, `LoadCase`, `LoadSuiteOption`, lifecycle/context options, `WithLoadProfile`. |
+| `observe.go` | `InfraObserveSuite`, `NewInfraObserveSuite`, case registration, lookback, context, and StopOnFailure options. |
 | `load_profile.go` | `Profile` (re-export), `DefaultLoadProfile`, `ResolveLoadProfile`. |
 | `slo.go` | `SLO` type and `SLOLatencyP50/P95/P99`, `SLOErrorRate`, `SLOMinQPS`. |
 | `t.go` | `T` and its methods (`Check`, `Checkf`, `NoErr`, `Max`, `Score`). `DuplicateCheckIDName`. |
@@ -34,7 +37,7 @@ directly. It exposes:
 | `stream_server.go` | `CallServerStream`, `ServerStreamResult[T]`. |
 | `stream_client.go` | `CallClientStream`, `ClientStreamResult[Resp]`. |
 | `score.go` | `Rouge1F1`. |
-| `register.go` | `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterAgent`, `DefaultRegistry`. |
+| `register.go` | `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterInfraObserve`, `RegisterAgent`, `Freeze`, `DefaultRegistry`. |
 | `suite_test.go`, `load_test.go`, `slo_test.go`, `t_test.go`, `call_test.go`, `stream_test.go`, `example_test.go` | Tests and doc examples. |
 
 # Related

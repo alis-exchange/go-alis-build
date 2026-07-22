@@ -2,6 +2,7 @@ package loadinfra
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestObserveCloudRunSuccess(t *testing.T) {
 		cloudRunMetricFilter(target, crMetricStartupLatencies): doubleSeries(800),
 	}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true)
+	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestObserveSpannerSuccess(t *testing.T) {
 		cpuFilter: doubleSeries(0.72),
 	}}
 
-	got, err := Observe(context.Background(), client, nil, []SpannerTarget{target}, window, true)
+	got, err := Observe(context.Background(), client, nil, []SpannerTarget{target}, window, true, 0)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestObservePartialFailure(t *testing.T) {
 		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(10),
 	}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true)
+	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestObserveAllTargetsEmittedOnFailure(t *testing.T) {
 	spanner := SpannerTarget{ID: "sp", ProjectID: "p", InstanceID: "i", Location: "r", Database: "d"}
 	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{cloud}, []SpannerTarget{spanner}, window, true)
+	got, err := Observe(context.Background(), client, []CloudRunTarget{cloud}, []SpannerTarget{spanner}, window, true, 0)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -165,7 +166,7 @@ func TestObserveExtendQueryEnd(t *testing.T) {
 		client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
 			filter: int64Series(1),
 		}}
-		if _, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, false); err != nil {
+		if _, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, false, 0); err != nil {
 			t.Fatalf("Observe: %v", err)
 		}
 		if !client.LastIntervalEnd.Equal(window.End) {
@@ -178,7 +179,7 @@ func TestObserveExtendQueryEnd(t *testing.T) {
 		client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
 			filter: int64Series(1),
 		}}
-		if _, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true); err != nil {
+		if _, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0); err != nil {
 			t.Fatalf("Observe: %v", err)
 		}
 		wantEnd := window.End.Add(CloudRunSettlePadding)
@@ -199,12 +200,44 @@ func TestObserveShortWindowAdvisory(t *testing.T) {
 		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(1),
 	}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true)
+	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
 	if got.CloudRun[0].FetchMessage == nil || !strings.Contains(*got.CloudRun[0].FetchMessage, "coarse_window") {
 		t.Fatalf("FetchMessage=%v, want coarse_window advisory", got.CloudRun[0].FetchMessage)
+	}
+}
+
+func TestObserve_respectsTargetConcurrencyBound(t *testing.T) {
+	t.Parallel()
+
+	const (
+		targets = 20
+		bound   = 4
+	)
+	window := ObservationWindow{
+		Start: time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 7, 16, 10, 5, 0, 0, time.UTC),
+	}
+	client := &FakeMetricClient{
+		BlockDelay: 20 * time.Millisecond,
+		ByFilter:   map[string][]*monitoringpb.TimeSeries{},
+	}
+	cloud := make([]CloudRunTarget, targets)
+	for i := range cloud {
+		cloud[i] = CloudRunTarget{
+			ID: fmt.Sprintf("cr-%d", i), Role: RoleEntry,
+			ProjectID: "p", Region: "r", ServiceName: fmt.Sprintf("svc-%d", i),
+		}
+		client.ByFilter[cloudRunMetricFilter(cloud[i], crMetricRequestCount)] = int64Series(1)
+	}
+
+	if _, err := Observe(context.Background(), client, cloud, nil, window, true, bound); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if client.PeakInFlight > bound {
+		t.Fatalf("PeakInFlight=%d, want <= %d", client.PeakInFlight, bound)
 	}
 }
 

@@ -25,9 +25,9 @@ func TestCaseFromRunEvalResult_mapsFields(t *testing.T) {
 		}},
 	}
 
-	got := adk.CaseFromRunEvalResult(r, 2*time.Second)
-	if got.Name != "case-1" {
-		t.Fatalf("name = %q", got.Name)
+	got := adk.CaseFromRunEvalResult("eval_set_1", r, 2*time.Second)
+	if got.Name != "eval_set_1.case-1" {
+		t.Fatalf("name = %q, want eval_set_1.case-1", got.Name)
 	}
 	if got.SessionID != "sess-abc" {
 		t.Fatalf("session_id = %q", got.SessionID)
@@ -55,7 +55,7 @@ func TestCaseFromRunEvalResult_failedMetricMessage(t *testing.T) {
 		}},
 	}
 
-	got := adk.CaseFromRunEvalResult(r, 0)
+	got := adk.CaseFromRunEvalResult("eval_set_1", r, 0)
 	if got.Metrics[0].Message == "" {
 		t.Fatal("expected failure message on metric")
 	}
@@ -83,7 +83,7 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 		}},
 	}
 
-	got := adk.CaseFromRunEvalResult(r, 0)
+	got := adk.CaseFromRunEvalResult("eval_set_1", r, 0)
 	if len(got.Metrics[0].Rubric) != 1 {
 		t.Fatalf("rubric = %+v", got.Metrics[0].Rubric)
 	}
@@ -98,7 +98,7 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 func TestAgentEvalResultsFromRunEvalResults(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -108,6 +108,9 @@ func TestAgentEvalResultsFromRunEvalResults(t *testing.T) {
 	)
 	if len(proto.GetCases()) != 1 {
 		t.Fatalf("cases = %d", len(proto.GetCases()))
+	}
+	if proto.GetCases()[0].GetId() != "eval_set_1.case-1" {
+		t.Fatalf("case id = %q, want eval_set_1.case-1", proto.GetCases()[0].GetId())
 	}
 	if proto.GetJudge().GetModel() != "gemini-2.5-pro" {
 		t.Fatalf("judge model = %q", proto.GetJudge().GetModel())
@@ -119,7 +122,7 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOnWire(t *testing.T) 
 
 	rubricScore := 0.42
 	rationale := "response paraphrased the reference correctly but omitted the source citation"
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusFailed,
@@ -158,7 +161,7 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOmittedWhenEmpty(t *t
 	t.Parallel()
 
 	rubricScore := 0.9
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -191,7 +194,7 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOmittedWhenEmpty(t *t
 func TestJudgeContext_CallCountRoundtrip(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -220,7 +223,7 @@ func TestJudgeContext_CallCountRoundtrip(t *testing.T) {
 func TestAgentEvalResults_JudgeNilWhenZeroValued(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -236,7 +239,7 @@ func TestAgentEvalResults_JudgeNilWhenZeroValued(t *testing.T) {
 func TestAgentEvalResults_JudgeEmittedWhenOnlyCallCountSet(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		nil,
 		nil,
 		adk.JudgeContext{CallCount: 5},
@@ -256,7 +259,7 @@ func TestAgentEvalResults_JudgeEmittedWhenOnlyCallCountSet(t *testing.T) {
 func TestAgentEvalResults_JudgeEmittedWhenOnlyErrorCountSet(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults(
+	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
 		nil,
 		nil,
 		adk.JudgeContext{ErrorCount: 2},

@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,6 +31,126 @@ func (c slowInfraObserveCase) Run(ctx context.Context, cfg suite.InfraObserveCas
 	atomic.AddInt32(c.hits, 1)
 	time.Sleep(c.delay)
 	return &execution.InfraObserveCaseResult{Name: c.name, Status: evalspb.Status_PASSED}
+}
+
+type peakTrackingInfraCase struct {
+	name  string
+	delay time.Duration
+	cur   *int32
+	peak  *int32
+}
+
+type gatedInfraObserveCase struct {
+	name    string
+	started chan<- struct{}
+	release <-chan struct{}
+	hits    *atomic.Int32
+}
+
+func (c gatedInfraObserveCase) Name() string { return c.name }
+
+func (c gatedInfraObserveCase) Lookback() (time.Duration, bool) { return 0, false }
+
+func (c gatedInfraObserveCase) Run(context.Context, suite.InfraObserveCaseConfig) *execution.InfraObserveCaseResult {
+	c.hits.Add(1)
+	if c.started != nil {
+		c.started <- struct{}{}
+	}
+	if c.release != nil {
+		<-c.release
+	}
+	return &execution.InfraObserveCaseResult{Name: c.name, Status: evalspb.Status_PASSED}
+}
+
+func (c peakTrackingInfraCase) Name() string { return c.name }
+
+func (c peakTrackingInfraCase) Lookback() (time.Duration, bool) { return 0, false }
+
+func (c peakTrackingInfraCase) Run(context.Context, suite.InfraObserveCaseConfig) *execution.InfraObserveCaseResult {
+	n := atomic.AddInt32(c.cur, 1)
+	defer atomic.AddInt32(c.cur, -1)
+	for {
+		p := atomic.LoadInt32(c.peak)
+		if n <= p {
+			break
+		}
+		if atomic.CompareAndSwapInt32(c.peak, p, n) {
+			break
+		}
+	}
+	time.Sleep(c.delay)
+	return &execution.InfraObserveCaseResult{Name: c.name, Status: evalspb.Status_PASSED}
+}
+
+func TestRunInfraObserveSuites_respectsCaseConcurrencyBound(t *testing.T) {
+	t.Parallel()
+
+	const (
+		caseCount = 20
+		bound     = 4
+	)
+	var peak, cur int32
+	cases := make([]suite.InfraObserveCase, caseCount)
+	for i := range cases {
+		cases[i] = peakTrackingInfraCase{
+			name:  fmt.Sprintf("peak.%d", i),
+			delay: 30 * time.Millisecond,
+			cur:   &cur,
+			peak:  &peak,
+		}
+	}
+	runs := []suite.InfraObserveSuiteRun{{
+		Name:     "peak",
+		Lookback: time.Minute,
+		Cases:    cases,
+	}}
+
+	if _, err := New(WithInfraObserveConcurrency(bound)).RunInfraObserveSuites(
+		context.Background(), runs, InfraObserveRunParams{}, nil, nil,
+	); err != nil {
+		t.Fatalf("RunInfraObserveSuites: %v", err)
+	}
+	if peak > bound {
+		t.Fatalf("peak concurrent cases=%d, want <= %d", peak, bound)
+	}
+}
+
+func TestRunInfraObserveSuites_progressPerCase(t *testing.T) {
+	t.Parallel()
+
+	const caseCount = 5
+	cases := make([]suite.InfraObserveCase, caseCount)
+	for i := range cases {
+		cases[i] = slowInfraObserveCase{
+			name:  fmt.Sprintf("c.%d", i),
+			delay: 10 * time.Millisecond,
+			hits:  new(int32),
+		}
+	}
+	runs := []suite.InfraObserveSuiteRun{{
+		Name:  "suite-a",
+		Cases: cases,
+	}}
+
+	var progress [][2]int
+	var progressMu sync.Mutex
+	_, err := New().RunInfraObserveSuites(context.Background(), runs, InfraObserveRunParams{}, func(completed, total int) {
+		progressMu.Lock()
+		progress = append(progress, [2]int{completed, total})
+		progressMu.Unlock()
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunInfraObserveSuites: %v", err)
+	}
+	if len(progress) != caseCount {
+		t.Fatalf("progress calls=%d, want %d incremental updates", len(progress), caseCount)
+	}
+	for i, call := range progress {
+		wantCompleted := i + 1
+		if call[0] != wantCompleted || call[1] != caseCount {
+			t.Fatalf("progress[%d]=%v, want [%d,%d]", i, call, wantCompleted, caseCount)
+		}
+	}
 }
 
 func TestRunInfraObserveSuites_casesRunConcurrently(t *testing.T) {
@@ -65,6 +187,48 @@ func TestRunInfraObserveSuites_casesRunConcurrently(t *testing.T) {
 	}
 }
 
+func TestRunInfraObserveSuites_cancelMidSuiteDoesNotStartQueuedCases(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var hits atomic.Int32
+	runs := []suite.InfraObserveSuiteRun{{
+		Name: "cancel",
+		Cases: []suite.InfraObserveCase{
+			gatedInfraObserveCase{name: "first", started: started, release: release, hits: &hits},
+			gatedInfraObserveCase{name: "second", hits: &hits},
+			gatedInfraObserveCase{name: "third", hits: &hits},
+		},
+	}}
+
+	done := make(chan struct{})
+	var got []execution.InfraObserveSuiteResult
+	var err error
+	go func() {
+		got, err = New(WithInfraObserveConcurrency(1)).RunInfraObserveSuites(ctx, runs, InfraObserveRunParams{}, nil, nil)
+		close(done)
+	}()
+	<-started
+	cancel()
+	close(release)
+	<-done
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunInfraObserveSuites() error = %v, want context.Canceled", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("case bodies started = %d, want 1", hits.Load())
+	}
+	if len(got) != 1 || len(got[0].Cases) != 3 {
+		t.Fatalf("results = %+v, want one suite with three case slots", got)
+	}
+	if got[0].Cases[1].Status != evalspb.Status_NOT_EVALUATED || got[0].Cases[2].Status != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("queued statuses = %v, %v; want NOT_EVALUATED", got[0].Cases[1].Status, got[0].Cases[2].Status)
+	}
+}
+
 func TestRunInfraObserveSuites_withFakeClient(t *testing.T) {
 	t.Parallel()
 	client := &loadinfra.FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{}}
@@ -94,8 +258,18 @@ func TestRunInfraObserveSuites_withFakeClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunInfraObserveSuites: %v", err)
 	}
+	if client.Calls == 0 {
+		t.Fatal("FakeMetricClient was not used; attachInfraClient ignored context client")
+	}
 	if len(got[0].Cases[0].CloudRun) != 1 {
 		t.Fatalf("CloudRun snapshots=%d", len(got[0].Cases[0].CloudRun))
+	}
+	snap := got[0].Cases[0].CloudRun[0]
+	if snap.GetFetchStatus() != evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK {
+		t.Fatalf("FetchStatus=%v, want OK", snap.GetFetchStatus())
+	}
+	if snap.Metrics == nil || snap.Metrics.RequestCount != 3 {
+		t.Fatalf("RequestCount=%v, want 3 from fake series", snap.Metrics)
 	}
 }
 
@@ -203,7 +377,7 @@ func (a *evalsInfraCase) Run(ctx context.Context, cfg suite.InfraObserveCaseConf
 	client := loadinfra.ClientFromContext(ctx)
 	settle := loadinfra.SettleDuration(len(a.cloudRun) > 0, false)
 	window := loadinfra.WindowLookback(lookback, time.Now(), settle)
-	obs, _ := loadinfra.Observe(ctx, client, a.cloudRun, nil, window, false)
+	obs, _ := loadinfra.Observe(ctx, client, a.cloudRun, nil, window, false, 0)
 	return &execution.InfraObserveCaseResult{
 		Name:        a.name,
 		Status:      evalspb.Status_PASSED,

@@ -5,13 +5,14 @@ import (
 	"errors"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/verdict"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // diagnosticTargetID is the synthetic target id on [ConfigFailureSnapshot].
-const diagnosticTargetID = "_evals"
+const diagnosticTargetID = verdict.IDDiagnosticTarget
 
 // ConfigFailureSnapshot returns a synthetic Cloud Run snapshot carrying a
 // configuration or setup error when no real targets were observed.

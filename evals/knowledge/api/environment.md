@@ -19,6 +19,10 @@ func WithTeardown(hook Hook) Option
 func Get(name string) *Environment
 
 type Hook func(context.Context) error
+
+func New() *Registry
+func (r *Registry) Register(name string, opts ...Option) error
+func (r *Registry) Get(name string) *Environment
 ```
 
 # Functions
@@ -31,21 +35,19 @@ type Hook func(context.Context) error
 | `env.WithTeardown(hook)` | Optional teardown, invoked in reverse-registration order after all suites finish. |
 | `env.Get(name)` | Look up a registered environment. Returns nil for unknown names. |
 
-# Process-global storage
+# Default and isolated registries
 
-Environments are process-global. If you're building a library that
-wants to be re-entrant, avoid re-registering the same name — call
-`env.Get(name)` first, or gate registration behind `sync.Once`.
+The package-level functions use one process-global default registry. Tests and
+embedders can create an isolated registry with `env.New()`, register directly
+on it, and attach it to a suite registry with `SetEnvRegistry`.
 
 # Failure surface
 
-- Setup failure: `env.ErrSetupFailed` is surfaced by the runner as
-  the reason for each dependent case's `NOT_EVALUATED` result.
+- Setup failure: `env.ErrSetupFailed` is surfaced on every selected case as a
+  `FAILED` `_evals.setup` diagnostic.
 - Missing env: `env.ErrNotRegistered` when the runner is asked to
-  activate an env that was never `env.Register`ed. This normally
-  cannot occur since suites validate their env names at construction
-  time, but is possible if the env was registered under a different
-  init order.
+  activate an environment absent from the run's registry. Calling
+  `evals.Freeze()` before serving normally catches this at startup.
 
 # Related
 

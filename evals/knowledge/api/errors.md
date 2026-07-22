@@ -50,18 +50,19 @@ All implement `EvalError`.
 | `suite.ErrInvalidSuiteName` | `evals/suite` | Empty name or name containing `.`. |
 | `suite.ErrDuplicateCase` | `evals/suite` | Two cases with the same short name inside one suite. |
 | `suite.ErrInvalidCaseName` | `evals/suite` | Case name containing `.`. |
-| `suite.ErrUnknownEnvironment` | `evals/suite` | `WithEnv` naming an env that hasn't been registered. |
+| `registry.ErrUnknownEnvironments` | `evals/registry` | `Freeze` found one or more suite environment names absent from its environment registry. |
 | `suite.ErrInvalidFilterPath` | `evals/suite` | `case_ids` entry that is not `suite` or `suite.case`. |
 | `suite.ErrLoadProfileUnspecifiedMode` | `evals/suite` | `WithLoadProfile` targeting `MODE_UNSPECIFIED`. |
 | `env.ErrDuplicateRegistration` | `evals/env` | `env.Register` called twice for the same name. |
 | `env.ErrNotRegistered` | `evals/env` | Runner asked for an env that wasn't `env.Register`ed. |
 | `env.ErrSetupFailed` | `evals/env` | Env setup hook returned an error; every case in dependent suites is marked with a setup-error result. |
-| `registry.ErrNoTestSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` | `evals/registry` | Filter matches nothing. |
+| `registry.ErrNoSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` / `ErrNoInfraObserveSuites` | `evals/registry` | No suites are registered for the requested run type. |
+| `registry.ErrUnknownCase` | `evals/registry` | A non-empty `case_ids` filter matched no registered case. |
 
 # Construction-time vs runtime
 
-- **Construction-time errors** (name violations, duplicate cases,
-  unknown envs, wrong-kind registration) are returned by
+- **Startup errors** (name violations, duplicate cases, unknown environments
+  at Freeze, wrong-kind registration) are returned by
   `evals.NewIntegrationSuite` / `evals.NewAgentEvalSuite` /
   `evals.NewLoadSuite`, `Suite.Case` / `LoadSuite.LoadCase`, and the
   `Register*` functions. Callers decide whether to `log.Fatal`,

@@ -1,8 +1,6 @@
 package mapper
 
 import (
-	"os"
-
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/internal/result"
@@ -25,7 +23,7 @@ func IntegrationRun(sr execution.SuiteResult, operation, runID, batchID string) 
 		Data: &evalspb.Run_IntegrationTest{
 			IntegrationTest: integrationData(sr),
 		},
-		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
+		GoogleProjectId: googleProjectID(),
 	}
 	if batchID != "" {
 		run.BatchId = new(batchID)
@@ -48,7 +46,7 @@ func LoadRun(sr execution.LoadSuiteResult, operation, runID, batchID string) *ev
 		Data: &evalspb.Run_LoadTest{
 			LoadTest: loadTestData(sr),
 		},
-		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
+		GoogleProjectId: googleProjectID(),
 	}
 	if batchID != "" {
 		run.BatchId = new(batchID)
@@ -88,7 +86,7 @@ func InfraObserveRun(sr execution.InfraObserveSuiteResult, operation, runID, bat
 		Data: &evalspb.Run_InfraObservation{
 			InfraObservation: infraObservationData(sr),
 		},
-		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
+		GoogleProjectId: googleProjectID(),
 	}
 	if batchID != "" {
 		run.BatchId = new(batchID)
@@ -217,7 +215,7 @@ func AgentEvalRun(sr execution.SuiteResult, operation, runID string) *evalspb.Ru
 		Data: &evalspb.Run_AgentEval{
 			AgentEval: agentEvalData(sr),
 		},
-		GoogleProjectId: os.Getenv("ALIS_OS_PROJECT"),
+		GoogleProjectId: googleProjectID(),
 	}
 
 	return run

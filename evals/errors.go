@@ -46,6 +46,86 @@ func (e ErrNilTarget) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// ErrEmptySLOs is returned when a load case is registered with no SLOs and
+// without the [NoSLOs] escape hatch.
+type ErrEmptySLOs struct {
+	Case string
+}
+
+func (e ErrEmptySLOs) Error() string {
+	return fmt.Sprintf("load case %q: at least one SLO required (use evals.NoSLOs() for measure-only cases)", e.Case)
+}
+
+func (e ErrEmptySLOs) Is(target error) bool {
+	var err ErrEmptySLOs
+	return errors.As(target, &err)
+}
+
+func (e ErrEmptySLOs) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// ErrDuplicateSLOID is returned when a load case declares the same SLO id twice.
+type ErrDuplicateSLOID struct {
+	Case string
+	ID   string
+}
+
+func (e ErrDuplicateSLOID) Error() string {
+	return fmt.Sprintf("load case %q: duplicate SLO id %q", e.Case, e.ID)
+}
+
+func (e ErrDuplicateSLOID) Is(target error) bool {
+	var err ErrDuplicateSLOID
+	return errors.As(target, &err)
+}
+
+func (e ErrDuplicateSLOID) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// ErrDualLoadCaseData is returned when both static data and a data provider
+// are configured on the same load case.
+type ErrDualLoadCaseData struct {
+	Case string
+}
+
+func (e ErrDualLoadCaseData) Error() string {
+	return fmt.Sprintf("load case %q: WithLoadCaseData and WithLoadCaseDataProvider are mutually exclusive", e.Case)
+}
+
+func (e ErrDualLoadCaseData) Is(target error) bool {
+	var err ErrDualLoadCaseData
+	return errors.As(target, &err)
+}
+
+func (e ErrDualLoadCaseData) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// ErrInvalidSLO is returned when a load case declares an out-of-range SLO.
+type ErrInvalidSLO struct {
+	Case   string
+	ID     string
+	Reason string
+}
+
+func (e ErrInvalidSLO) Error() string {
+	if e.ID == "" {
+		return fmt.Sprintf("load case %q: invalid SLO: %s", e.Case, e.Reason)
+	}
+	return fmt.Sprintf("load case %q: SLO %q: %s", e.Case, e.ID, e.Reason)
+}
+
+func (e ErrInvalidSLO) Is(target error) bool {
+	var err ErrInvalidSLO
+	return errors.As(target, &err)
+}
+
+func (e ErrInvalidSLO) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // ErrNilProvider is returned when [RegisterAgent] is called with a nil
 // provider.
 type ErrNilProvider struct{}

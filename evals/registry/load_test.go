@@ -38,7 +38,7 @@ func TestRegistry_SelectLoadRuns_all(t *testing.T) {
 	s := mustLoadSuite(t, "load-a")
 	_ = s.AddCase(stubLoadCase{name: "one"})
 	_ = s.AddCase(stubLoadCase{name: "two"})
-	reg.RegisterLoadSuite(s)
+	mustRegisterLoadSuite(t, reg, s)
 
 	runs, err := reg.SelectLoadRuns(nil)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestRegistry_SelectLoadRuns_caseFilter(t *testing.T) {
 	s := mustLoadSuite(t, "load-a")
 	_ = s.AddCase(stubLoadCase{name: "one"})
 	_ = s.AddCase(stubLoadCase{name: "two"})
-	reg.RegisterLoadSuite(s)
+	mustRegisterLoadSuite(t, reg, s)
 
 	runs, err := reg.SelectLoadRuns([]string{"load-a.two"})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestRegistry_SelectLoadRuns_profileOverridesFlow(t *testing.T) {
 		suite.WithLoadProfileOverride(evalspb.RunLoadTestRequest_MODERATE, p),
 	)
 	_ = s.AddCase(stubLoadCase{name: "one"})
-	reg.RegisterLoadSuite(s)
+	mustRegisterLoadSuite(t, reg, s)
 
 	runs, err := reg.SelectLoadRuns(nil)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestRegistry_ValidateSelection_load(t *testing.T) {
 	reg := New()
 	s := mustLoadSuite(t, "load-a")
 	_ = s.AddCase(stubLoadCase{name: "one"})
-	reg.RegisterLoadSuite(s)
+	mustRegisterLoadSuite(t, reg, s)
 
 	// Unknown case.
 	if err := reg.ValidateSelection(evalspb.Run_LOAD_TEST, []string{"load-a.missing"}); err == nil {

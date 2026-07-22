@@ -118,3 +118,56 @@ func (e ErrUnsupportedRunType) Is(target error) bool {
 func (e ErrUnsupportedRunType) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
+
+// ErrRegistryFrozen is returned when registration is attempted after Freeze.
+type ErrRegistryFrozen struct{}
+
+func (e ErrRegistryFrozen) Error() string { return "registry is frozen" }
+
+func (e ErrRegistryFrozen) Is(target error) bool {
+	var err ErrRegistryFrozen
+	return errors.As(target, &err)
+}
+
+func (e ErrRegistryFrozen) GRPCStatus() *status.Status {
+	return status.New(codes.FailedPrecondition, e.Error())
+}
+
+// ErrDuplicateSuite is returned when the same suite name is registered twice
+// within one run kind.
+type ErrDuplicateSuite struct {
+	Kind string
+	Name string
+}
+
+func (e ErrDuplicateSuite) Error() string {
+	return fmt.Sprintf("duplicate %s suite %q", e.Kind, e.Name)
+}
+
+func (e ErrDuplicateSuite) Is(target error) bool {
+	var err ErrDuplicateSuite
+	return errors.As(target, &err)
+}
+
+func (e ErrDuplicateSuite) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// ErrUnknownEnvironments is returned when Freeze finds suite environment
+// names that are not registered in the environment registry.
+type ErrUnknownEnvironments struct {
+	Names []string
+}
+
+func (e ErrUnknownEnvironments) Error() string {
+	return fmt.Sprintf("unknown environments: %v", e.Names)
+}
+
+func (e ErrUnknownEnvironments) Is(target error) bool {
+	var err ErrUnknownEnvironments
+	return errors.As(target, &err)
+}
+
+func (e ErrUnknownEnvironments) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}

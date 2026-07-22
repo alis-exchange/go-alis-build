@@ -26,7 +26,8 @@ want to propagate the error.
 # Activation semantics
 
 - **Once per LRO.** An environment activates exactly once per
-  `RunIntegrationTest` / `RunAgentEval` / `RunLoadTest` invocation,
+  `RunIntegrationTest` / `RunAgentEval` / `RunLoadTest` /
+  `RunInfraObservation` invocation,
   regardless of how many selected suites reference it. This lets
   several suites share expensive setup (seeding a database, warming a
   cache) without paying the cost repeatedly.
@@ -35,14 +36,16 @@ want to propagate the error.
   cancelled.
 - **Failure fans out.** If setup for an environment returns an error,
   every case in every dependent suite is recorded with an
-  `env-setup-failed` marker; teardown for that environment is skipped.
+  `_evals.setup` failure; teardown for that environment is skipped.
 - **Teardown errors are logged.** They do not affect case outcomes.
 
-# Process-globality
+# Default and isolated registries
 
-Environments are stored in a **process-wide map**. Re-entrant libraries
-must gate registration with `sync.Once` or check `env.Get(name)`
-first; duplicate registration panics with `env.ErrDuplicateName`.
+The package-level helpers store environments in a process-wide default
+registry. Tests and embedders can instead create an isolated `env.Registry`
+and attach it to a suite registry with `SetEnvRegistry`. Duplicate registration
+returns `env.ErrDuplicateRegistration`; only `MustRegister` converts that error
+to a panic.
 
 # Related
 

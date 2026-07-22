@@ -11,6 +11,7 @@ import (
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
+	"go.alis.build/evals/verdict"
 )
 
 type stubLoadCase struct {
@@ -295,12 +296,82 @@ func TestLoadSuiteCompleteHook_contextCancellation(t *testing.T) {
 		}
 		return nil
 	}
-	_, err := New().RunLoadSuites(ctx, runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, hook)
+	out, err := New().RunLoadSuites(ctx, runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, hook)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunLoadSuites() error = %v, want context.Canceled", err)
 	}
+	if len(out) != 1 || out[0].SuiteName != "suite-a" {
+		t.Fatalf("partial out = %+v, want [suite-a]", out)
+	}
 	if hookCalls != 1 {
 		t.Fatalf("hook calls = %d, want 1", hookCalls)
+	}
+}
+
+func TestRunLoadSuites_cancelBetweenSuitesPartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := []suite.LoadSuiteRun{
+		{Name: "suite-1", Cases: []suite.LoadCase{stubLoadCase{name: "a", result: passedLoad("a")}}},
+		{Name: "suite-2", Cases: []suite.LoadCase{stubLoadCase{name: "b", result: passedLoad("b")}}},
+		{Name: "suite-3", Cases: []suite.LoadCase{stubLoadCase{name: "c", result: passedLoad("c")}}},
+	}
+	hook := func(_ context.Context, sr execution.LoadSuiteResult) error {
+		if sr.SuiteName == "suite-1" {
+			cancel()
+		}
+		return nil
+	}
+	out, err := New().RunLoadSuites(ctx, runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, hook)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunLoadSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 || out[0].SuiteName != "suite-1" {
+		t.Fatalf("partial out = %+v, want [suite-1]", out)
+	}
+	if RollupLoadSuiteStatus(out[0]) != evalspb.Status_PASSED {
+		t.Fatalf("partial rollup = %v, want PASSED", RollupLoadSuiteStatus(out[0]))
+	}
+}
+
+type cancelOnRunLoadCase struct {
+	name   string
+	cancel context.CancelFunc
+}
+
+func (c cancelOnRunLoadCase) Name() string { return c.name }
+
+func (c cancelOnRunLoadCase) Run(context.Context, evalspb.RunLoadTestRequest_Mode, loadgen.Profile) *execution.LoadCaseResult {
+	c.cancel()
+	return passedLoad(c.name)
+}
+
+func TestRunLoadSuites_cancelMidSuitePartialResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := []suite.LoadSuiteRun{{
+		Name: "suite-a",
+		Cases: []suite.LoadCase{
+			stubLoadCase{name: "one", result: passedLoad("one")},
+			cancelOnRunLoadCase{name: "two", cancel: cancel},
+			stubLoadCase{name: "three", result: passedLoad("three")},
+		},
+	}}
+	out, err := New().RunLoadSuites(ctx, runs, evalspb.RunLoadTestRequest_MINIMAL, defaultResolver(), nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunLoadSuites() error = %v, want context.Canceled", err)
+	}
+	if len(out) != 1 || len(out[0].Cases) != 3 {
+		t.Fatalf("partial out = %+v, want one suite with three cases", out)
+	}
+	cr := out[0].Cases[2]
+	if cr.Status != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("case %q status = %v, want NOT_EVALUATED", cr.Name, cr.Status)
+	}
+	if len(cr.Checks) != 1 || cr.Checks[0].ID != verdict.IDSkipped {
+		t.Fatalf("case %q checks = %+v, want single %q skip marker", cr.Name, cr.Checks, verdict.IDSkipped)
 	}
 }
 

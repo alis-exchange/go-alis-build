@@ -9,21 +9,25 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Role
 
-`evals/registry` implements the process-wide registry that
-`TestServiceServer` consumes. It stores suites, agent-eval
-providers, and knows how to select subsets against the filter
-grammar.
+`evals/registry` implements the default or isolated registry consumed by
+`TestServiceServer`. It stores suites and agent-eval providers, validates
+startup configuration, and selects subsets against the filter grammar.
 
 # Public surface
 
 - `registry.Registry` — the concrete type. `DefaultRegistry()` in
-  the root `evals` package returns the process-wide one.
+  the root `evals` package returns the process-wide one; `registry.New()`
+  creates an isolated instance.
 - `registry.AgentEvalProvider` — the interface `adk.NewProvider`
   implements.
-- `registry.ValidateSelection(caseIDs, kind) error` — the check that
+- `(*Registry).Freeze() error` — validates and seals startup registration.
+- `(*Registry).SetEnvRegistry(*env.Registry) error` — supplies the environment
+  registry used by Freeze and selected runs.
+- `(*Registry).ValidateSelection(kind, caseIDs) error` — the check that
   RPC handlers call synchronously before creating an LRO.
-- `registry.ErrNoTestSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites`,
-  `ErrUnknownSuite`, `ErrUnknownCase` — typed `EvalError`s.
+- `registry.ErrNoSuites`, `ErrNoEvalSuites`, `ErrNoLoadSuites`,
+  `ErrNoInfraObserveSuites`, `ErrUnknownCase`, `ErrDuplicateSuite`,
+  `ErrUnknownEnvironments`, and `ErrRegistryFrozen` — typed errors.
 
 # Files
 

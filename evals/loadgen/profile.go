@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -58,53 +59,87 @@ type Profile struct {
 // defaultRequestTimeout is applied when Profile.RequestTimeout is zero.
 const defaultRequestTimeout = 30 * time.Second
 
+// Validate checks profile invariants before a load window starts.
+func (p Profile) Validate() error {
+	return p.validate()
+}
+
 // validate checks profile invariants before a load window starts.
 func (p Profile) validate() error {
 	if p.Concurrency < 1 {
-		return ErrInvalidProfile{Field: "Concurrency"}
+		return ErrInvalidProfile{Field: "Concurrency", Got: fmt.Sprintf("%d", p.Concurrency), Want: ">= 1"}
 	}
 	if p.Duration <= 0 {
-		return ErrInvalidProfile{Field: "Duration"}
+		return ErrInvalidProfile{Field: "Duration", Got: p.Duration.String(), Want: "> 0"}
 	}
 	if p.Warmup < 0 {
-		return ErrInvalidProfile{Field: "Warmup"}
+		return ErrInvalidProfile{Field: "Warmup", Got: p.Warmup.String(), Want: ">= 0"}
 	}
 	if p.RequestTimeout < 0 {
-		return ErrInvalidProfile{Field: "RequestTimeout"}
+		return ErrInvalidProfile{Field: "RequestTimeout", Got: p.RequestTimeout.String(), Want: ">= 0"}
 	}
 	if p.GracefulRampDown < 0 {
-		return ErrInvalidProfile{Field: "GracefulRampDown"}
+		return ErrInvalidProfile{Field: "GracefulRampDown", Got: p.GracefulRampDown.String(), Want: ">= 0"}
 	}
 	total := p.Warmup + p.Duration
 	if len(p.QPSStages) == 0 {
-		if p.QPS <= 0 {
-			return ErrInvalidProfile{Field: "QPS"}
+		if err := validateRateTarget("QPS", p.QPS); err != nil {
+			return err
 		}
-	} else if err := validateStages(p.QPSStages, "QPSStages", total); err != nil {
+	} else if err := validateStages(p.QPSStages, "QPSStages", total, false); err != nil {
 		return err
 	}
 	if len(p.ConcurrencyStages) > 0 {
-		if err := validateStages(p.ConcurrencyStages, "ConcurrencyStages", total); err != nil {
+		if err := validateStages(p.ConcurrencyStages, "ConcurrencyStages", total, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func validateRateTarget(field string, target float64) error {
+	if target <= 0 || math.IsNaN(target) || math.IsInf(target, 0) {
+		got := fmt.Sprintf("%v", target)
+		if math.IsNaN(target) {
+			got = "NaN"
+		}
+		return ErrInvalidProfile{Field: field, Got: got, Want: "> 0 finite"}
+	}
+	return nil
+}
+
 // validateStages ensures stage durations sum to want and each stage is positive.
-func validateStages(stages []Stage, field string, want time.Duration) error {
+func validateStages(stages []Stage, field string, want time.Duration, integralTargets bool) error {
 	var sum time.Duration
 	for i, s := range stages {
 		if s.Duration <= 0 {
-			return ErrInvalidProfile{Field: fmt.Sprintf("%s[%d].Duration", field, i)}
+			return ErrInvalidProfile{Field: fmt.Sprintf("%s[%d].Duration", field, i), Got: s.Duration.String(), Want: "> 0"}
 		}
-		if s.Target <= 0 {
-			return ErrInvalidProfile{Field: fmt.Sprintf("%s[%d].Target", field, i)}
+		if err := validateStageTarget(field, i, s.Target, integralTargets); err != nil {
+			return err
 		}
 		sum += s.Duration
 	}
 	if sum != want {
-		return ErrInvalidProfile{Field: field}
+		return ErrInvalidProfile{Field: field, Got: sum.String(), Want: want.String()}
+	}
+	return nil
+}
+
+func validateStageTarget(field string, i int, target float64, integral bool) error {
+	name := fmt.Sprintf("%s[%d].Target", field, i)
+	if target <= 0 || math.IsNaN(target) || math.IsInf(target, 0) {
+		got := fmt.Sprintf("%v", target)
+		if math.IsNaN(target) {
+			got = "NaN"
+		}
+		return ErrInvalidProfile{Field: name, Got: got, Want: "> 0 finite"}
+	}
+	if integral {
+		trunc := math.Trunc(target)
+		if target != trunc || target < 1 {
+			return ErrInvalidProfile{Field: name, Got: fmt.Sprintf("%v", target), Want: "positive integer"}
+		}
 	}
 	return nil
 }

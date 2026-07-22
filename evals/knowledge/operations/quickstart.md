@@ -62,6 +62,18 @@ The `Must*` constructors and `MustCase` panic on config errors so init-time
 misuse fails loudly. Use the error-returning variants (`NewIntegrationSuite`,
 `Case`, etc.) if you'd rather propagate.
 
+After all packages have registered their environments and suites, validate and
+seal the process registry before the server begins accepting requests:
+
+```go
+if err := evals.Freeze(); err != nil {
+    return fmt.Errorf("freeze eval registrations: %w", err)
+}
+```
+
+Call `Freeze` only after registration is complete. Later registration returns
+`registry.ErrRegistryFrozen`.
+
 ## 3. Wire the service and (optionally) fan out to reporters
 
 ```go

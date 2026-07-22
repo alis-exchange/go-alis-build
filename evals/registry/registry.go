@@ -2,8 +2,11 @@ package registry
 
 import (
 	"context"
+	"sort"
+	"sync"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/env"
 	"go.alis.build/evals/execution"
 	"go.alis.build/evals/loadgen"
 	"go.alis.build/evals/suite"
@@ -27,6 +30,7 @@ func (f AgentEvalProviderFunc) Run(ctx context.Context, filters []string) ([]exe
 
 // Registry holds registered suites keyed by run type.
 type Registry struct {
+	mu sync.RWMutex
 	// byType indexes integration-test suites by run type (today only INTEGRATION_TEST).
 	byType map[evalspb.Run_Type][]*suite.TestSuite
 	// evals holds eagerly registered agent-eval suites selected by filter paths.
@@ -37,6 +41,11 @@ type Registry struct {
 	infraObserves []*suite.InfraObserveSuite
 	// evalProviders supplies lazy agent-eval suites (for example ADK discovery).
 	evalProviders []AgentEvalProvider
+	// envRegistry selects which environment registry Freeze validates against.
+	// Nil uses [env.DefaultRegistry].
+	envRegistry *env.Registry
+	// frozen is set after a successful Freeze; further registration is rejected.
+	frozen bool
 }
 
 // New returns an empty Registry. [evals.DefaultRegistry] uses this constructor.
@@ -46,44 +55,306 @@ func New() *Registry {
 	}
 }
 
-// RegisterIntegrationSuite adds a suite for integration test runs.
-func (r *Registry) RegisterIntegrationSuite(s *suite.TestSuite) {
+// RegisterIntegrationSuite adds a suite for integration test runs. It rejects
+// nil, duplicate, and post-Freeze registration with typed errors.
+func (r *Registry) RegisterIntegrationSuite(s *suite.TestSuite) error {
 	if r == nil {
-		return
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	if s == nil {
+		return suite.ErrNilSuite{}
+	}
+	name := s.Name()
+	for _, existing := range r.byType[evalspb.Run_INTEGRATION_TEST] {
+		if existing.Name() == name {
+			return ErrDuplicateSuite{Kind: "integration", Name: name}
+		}
 	}
 	r.byType[evalspb.Run_INTEGRATION_TEST] = append(r.byType[evalspb.Run_INTEGRATION_TEST], s)
+	return nil
 }
 
-// RegisterAgentEvalSuite adds an agent evaluation suite.
-func (r *Registry) RegisterAgentEvalSuite(s *suite.EvalSuite) {
+// RegisterAgentEvalSuite adds an agent evaluation suite. It rejects nil,
+// duplicate, and post-Freeze registration with typed errors.
+func (r *Registry) RegisterAgentEvalSuite(s *suite.EvalSuite) error {
 	if r == nil {
-		return
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	if s == nil {
+		return suite.ErrNilSuite{}
+	}
+	name := s.Name()
+	for _, existing := range r.evals {
+		if existing.Name() == name {
+			return ErrDuplicateSuite{Kind: "eval", Name: name}
+		}
 	}
 	r.evals = append(r.evals, s)
+	return nil
 }
 
-// RegisterLoadSuite adds a load-test suite.
-func (r *Registry) RegisterLoadSuite(s *suite.LoadSuite) {
+// RegisterLoadSuite adds a load-test suite. It rejects nil, duplicate, and
+// post-Freeze registration with typed errors.
+func (r *Registry) RegisterLoadSuite(s *suite.LoadSuite) error {
 	if r == nil {
-		return
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	if s == nil {
+		return suite.ErrNilSuite{}
+	}
+	name := s.Name()
+	for _, existing := range r.loads {
+		if existing.Name() == name {
+			return ErrDuplicateSuite{Kind: "load", Name: name}
+		}
 	}
 	r.loads = append(r.loads, s)
+	return nil
 }
 
-// RegisterInfraObserveSuite adds an infra observation suite.
-func (r *Registry) RegisterInfraObserveSuite(s *suite.InfraObserveSuite) {
+// RegisterInfraObserveSuite adds an infra observation suite. It rejects nil,
+// duplicate, and post-Freeze registration with typed errors.
+func (r *Registry) RegisterInfraObserveSuite(s *suite.InfraObserveSuite) error {
 	if r == nil {
-		return
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	if s == nil {
+		return suite.ErrNilSuite{}
+	}
+	name := s.Name()
+	for _, existing := range r.infraObserves {
+		if existing.Name() == name {
+			return ErrDuplicateSuite{Kind: "infra_observe", Name: name}
+		}
 	}
 	r.infraObserves = append(r.infraObserves, s)
+	return nil
 }
 
-// RegisterAgentEvalProvider adds a lazy agent eval provider (for example ADK discovery).
-func (r *Registry) RegisterAgentEvalProvider(p AgentEvalProvider) {
-	if r == nil || p == nil {
-		return
+// RegisterAgentEvalProvider adds a lazy agent eval provider (for example ADK
+// discovery). A nil provider is ignored; registration after Freeze returns
+// [ErrRegistryFrozen].
+func (r *Registry) RegisterAgentEvalProvider(p AgentEvalProvider) error {
+	if r == nil {
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	if p == nil {
+		return nil
 	}
 	r.evalProviders = append(r.evalProviders, p)
+	return nil
+}
+
+// SetEnvRegistry configures the environment registry used by Freeze and by
+// runs selected from this registry. Nil uses [env.DefaultRegistry]. It returns
+// [ErrNotConfigured] for a nil receiver and [ErrRegistryFrozen] after Freeze.
+func (r *Registry) SetEnvRegistry(er *env.Registry) error {
+	if r == nil {
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return ErrRegistryFrozen{}
+	}
+	r.envRegistry = er
+	return nil
+}
+
+// EnvRegistry returns the environment registry used for validation and
+// execution. Nil configuration resolves to [env.DefaultRegistry].
+func (r *Registry) EnvRegistry() *env.Registry {
+	if r == nil {
+		return env.DefaultRegistry()
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.envRegistry != nil {
+		return r.envRegistry
+	}
+	return env.DefaultRegistry()
+}
+
+func (r *Registry) envRegistryLocked() *env.Registry {
+	if r.envRegistry != nil {
+		return r.envRegistry
+	}
+	return env.DefaultRegistry()
+}
+
+// Freeze validates registered suites and seals the registry against further
+// registration. Validation errors identify duplicate suites, unknown
+// environments, or invalid load profiles. A second successful call is a no-op;
+// a nil receiver returns [ErrNotConfigured].
+func (r *Registry) Freeze() error {
+	if r == nil {
+		return ErrNotConfigured{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		return nil
+	}
+	if err := r.validateForFreeze(); err != nil {
+		return err
+	}
+	r.frozen = true
+	return nil
+}
+
+// Frozen reports whether the registry has been sealed by Freeze.
+func (r *Registry) Frozen() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.frozen
+}
+
+func (r *Registry) validateForFreeze() error {
+	if err := validateDuplicateSuiteNames(r.byType[evalspb.Run_INTEGRATION_TEST], "integration"); err != nil {
+		return err
+	}
+	if err := validateDuplicateEvalSuiteNames(r.evals); err != nil {
+		return err
+	}
+	if err := validateDuplicateLoadSuiteNames(r.loads); err != nil {
+		return err
+	}
+	if err := validateDuplicateInfraObserveSuiteNames(r.infraObserves); err != nil {
+		return err
+	}
+	if err := r.validateEnvironments(); err != nil {
+		return err
+	}
+	return validateLoadSuiteProfiles(r.loads)
+}
+
+func (r *Registry) validateEnvironments() error {
+	envReg := r.envRegistry
+	if envReg == nil {
+		envReg = env.DefaultRegistry()
+	}
+	seen := make(map[string]struct{})
+	var missing []string
+	collect := func(names []string) {
+		for _, name := range names {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			if envReg.Get(name) == nil {
+				missing = append(missing, name)
+			}
+		}
+	}
+	for _, s := range r.byType[evalspb.Run_INTEGRATION_TEST] {
+		collect(s.Environments())
+	}
+	for _, s := range r.evals {
+		collect(s.Environments())
+	}
+	for _, s := range r.loads {
+		collect(s.Environments())
+	}
+	for _, s := range r.infraObserves {
+		collect(s.Environments())
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return ErrUnknownEnvironments{Names: missing}
+}
+
+func validateLoadSuiteProfiles(suites []*suite.LoadSuite) error {
+	for _, s := range suites {
+		if s == nil {
+			continue
+		}
+		for _, mode := range allModes {
+			if p, ok := s.ProfileOverride(mode); ok {
+				if err := p.Validate(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateDuplicateSuiteNames(suites []*suite.TestSuite, kind string) error {
+	seen := make(map[string]struct{}, len(suites))
+	for _, s := range suites {
+		name := s.Name()
+		if _, ok := seen[name]; ok {
+			return ErrDuplicateSuite{Kind: kind, Name: name}
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func validateDuplicateEvalSuiteNames(suites []*suite.EvalSuite) error {
+	seen := make(map[string]struct{}, len(suites))
+	for _, s := range suites {
+		name := s.Name()
+		if _, ok := seen[name]; ok {
+			return ErrDuplicateSuite{Kind: "eval", Name: name}
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func validateDuplicateLoadSuiteNames(suites []*suite.LoadSuite) error {
+	seen := make(map[string]struct{}, len(suites))
+	for _, s := range suites {
+		name := s.Name()
+		if _, ok := seen[name]; ok {
+			return ErrDuplicateSuite{Kind: "load", Name: name}
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func validateDuplicateInfraObserveSuiteNames(suites []*suite.InfraObserveSuite) error {
+	seen := make(map[string]struct{}, len(suites))
+	for _, s := range suites {
+		name := s.Name()
+		if _, ok := seen[name]; ok {
+			return ErrDuplicateSuite{Kind: "infra_observe", Name: name}
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 // AgentEvalProviders returns registered lazy agent eval providers.
@@ -91,6 +362,8 @@ func (r *Registry) AgentEvalProviders() []AgentEvalProvider {
 	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return append([]AgentEvalProvider(nil), r.evalProviders...)
 }
 
@@ -99,6 +372,8 @@ func (r *Registry) SelectTestRuns(runType evalspb.Run_Type, filters []string) ([
 	if r == nil {
 		return nil, nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	suites := r.byType[runType]
 	if len(suites) == 0 {
 		return nil, nil
@@ -116,6 +391,7 @@ func (r *Registry) SelectTestRuns(runType evalspb.Run_Type, filters []string) ([
 		runs = append(runs, suite.TestSuiteRun{
 			Name:          s.Name(),
 			Environments:  s.Environments(),
+			EnvRegistry:   r.envRegistryLocked(),
 			Setup:         s.SetupHook(),
 			Teardown:      s.TeardownHook(),
 			Cases:         cases,
@@ -131,6 +407,8 @@ func (r *Registry) SelectLoadRuns(filters []string) ([]suite.LoadSuiteRun, error
 	if r == nil {
 		return nil, nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if len(r.loads) == 0 {
 		return nil, nil
 	}
@@ -147,9 +425,12 @@ func (r *Registry) SelectLoadRuns(filters []string) ([]suite.LoadSuiteRun, error
 		runs = append(runs, suite.LoadSuiteRun{
 			Name:             s.Name(),
 			Environments:     s.Environments(),
+			EnvRegistry:      r.envRegistryLocked(),
 			Setup:            s.SetupHook(),
 			Teardown:         s.TeardownHook(),
 			Cases:            cases,
+			Decorate:         s.Decorator(),
+			StopOnFailure:    s.StopOnFailure(),
 			ProfileOverrides: copyProfileOverrides(s),
 			CloudRun:         s.CloudRunTargets(),
 			Spanner:          s.SpannerTargets(),
@@ -163,6 +444,8 @@ func (r *Registry) SelectInfraObserveRuns(filters []string) ([]suite.InfraObserv
 	if r == nil {
 		return nil, nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if len(r.infraObserves) == 0 {
 		return nil, nil
 	}
@@ -177,14 +460,17 @@ func (r *Registry) SelectInfraObserveRuns(filters []string) ([]suite.InfraObserv
 			continue
 		}
 		runs = append(runs, suite.InfraObserveSuiteRun{
-			Name:         s.Name(),
-			Environments: s.Environments(),
-			Setup:        s.SetupHook(),
-			Teardown:     s.TeardownHook(),
-			Lookback:     s.Lookback(),
-			CloudRun:     s.CloudRunTargets(),
-			Spanner:      s.SpannerTargets(),
-			Cases:        cases,
+			Name:          s.Name(),
+			Environments:  s.Environments(),
+			EnvRegistry:   r.envRegistryLocked(),
+			Setup:         s.SetupHook(),
+			Teardown:      s.TeardownHook(),
+			Decorate:      s.Decorator(),
+			StopOnFailure: s.StopOnFailure(),
+			Lookback:      s.Lookback(),
+			CloudRun:      s.CloudRunTargets(),
+			Spanner:       s.SpannerTargets(),
+			Cases:         cases,
 		})
 	}
 	return runs, nil
@@ -219,6 +505,8 @@ func (r *Registry) SelectEvalRuns(filters []string) ([]suite.EvalSuiteRun, error
 	if r == nil {
 		return nil, nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if len(r.evals) == 0 {
 		return nil, nil
 	}
@@ -235,6 +523,7 @@ func (r *Registry) SelectEvalRuns(filters []string) ([]suite.EvalSuiteRun, error
 		runs = append(runs, suite.EvalSuiteRun{
 			Name:          s.Name(),
 			Environments:  s.Environments(),
+			EnvRegistry:   r.envRegistryLocked(),
 			Setup:         s.SetupHook(),
 			Teardown:      s.TeardownHook(),
 			Cases:         cases,
@@ -250,6 +539,8 @@ func (r *Registry) ValidateSelection(runType evalspb.Run_Type, filters []string)
 	if r == nil {
 		return ErrNotConfigured{}
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	switch runType {
 	case evalspb.Run_INTEGRATION_TEST:
 		suites := r.byType[runType]
@@ -261,7 +552,10 @@ func (r *Registry) ValidateSelection(runType evalspb.Run_Type, filters []string)
 		if len(r.evals) == 0 && len(r.evalProviders) == 0 {
 			return ErrNoEvalSuites{}
 		}
-		if len(r.evalProviders) > 0 {
+		if len(filters) == 0 {
+			return nil
+		}
+		if len(r.evals) == 0 {
 			return nil
 		}
 		return validateEvalSelection(r.evals, filters)

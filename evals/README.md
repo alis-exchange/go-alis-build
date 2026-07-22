@@ -1,35 +1,55 @@
 # evals
 
-A single Go framework for writing three kinds of post-deploy test against your live services:
+Define and run post-deploy integration, load, agent, and infrastructure evaluations from Go.
+
+## About
+
+`evals` is a Go framework for writing four kinds of post-deploy test against live services:
 
 - **Integration tests** — assert behavioural contracts on your gRPC surface.
-- **Load tests** — generate traffic at a chosen intensity and evaluate Service Level Objectives(SLOs) on the aggregate performance.
+- **Load tests** — generate traffic at a chosen intensity and evaluate Service Level Objectives (SLOs) on the aggregate performance.
 - **Agent evaluations** — grade agent transcripts with deterministic checks, LLM-as-judge scores, and rubric dimensions.
+- **Infra observation** — fetch Cloud Run and Spanner Monitoring snapshots over a settled lookback window (standalone or attached to load cases).
 
-You author suites in Go, register them once, and the deployed service exposes them via three RPCs on a `TestService`. Each RPC returns a long-running operation; each completed suite becomes a `Run`
-published to whichever reporters (Pub/Sub, BigQuery, Spanner, log) you wire up.
+You author suites in Go, register them once, and the deployed service exposes them via four RPCs on a `TestService`. Each RPC returns a long-running operation; each completed suite becomes a `Run`
+published to whichever reporters (Pub/Sub, BigQuery, log) you wire up.
 
 The wire types this framework produces live in a separate proto module, `go.alis.build/common/alis/evals/v1` — imported here as `evalspb`. Consumers that ingest runs from
 Pub/Sub or BigQuery pin that module directly.
+
+## Installation
+
+Add the package to the Go module that hosts your test service:
+
+```bash
+go get go.alis.build/evals
+```
+
+The generated wire types are supplied separately by
+`go.alis.build/common/alis/evals/v1` and resolve through the module dependency.
 
 ---
 
 ## Table of contents
 
-1. [Quickstart](#quickstart)
-2. [Concepts](#concepts)
-3. [Wire types](#wire-types)
-4. [Integration tests](#integration-tests)
+1. [About](#about)
+2. [Installation](#installation)
+3. [Quickstart](#quickstart)
+4. [Usage](#usage)
+5. [Concepts](#concepts)
+6. [Wire types](#wire-types)
+7. [Integration tests](#integration-tests)
    - [Streaming RPCs](#streaming-rpcs)
-5. [Agent evaluations](#agent-evaluations)
-6. [Load tests](#load-tests)
-7. [Options reference](#options-reference)
+8. [Agent evaluations](#agent-evaluations)
+9. [Load tests](#load-tests)
+10. [Infra observation](#infra-observation)
+11. [Options reference](#options-reference)
 
 - [Suite constructors](#suite-constructors)
 - [Shared suite options (test + eval)](#shared-suite-options-test--eval)
 - [Load-suite options](#load-suite-options)
 - [Case registration](#case-registration)
-- [Assertion primitives (](#assertion-primitives-t)`T`[)](#assertion-primitives-t)
+- [Assertion primitives (`T`)](#assertion-primitives-t)
 - [Load profile fields](#load-profile-fields)
 - [SLO constructors](#slo-constructors)
 - [Environment API](#environment-api)
@@ -38,10 +58,12 @@ Pub/Sub or BigQuery pin that module directly.
 - [Errors](#errors)
 - [Helpers](#helpers)
 
-8. [Filter grammar](#filter-grammar)
-9. [Context and authentication](#context-and-authentication)
-10. [Package layout](#package-layout)
-11. [End-to-end lifecycle](#end-to-end-lifecycle)
+12. [Filter grammar](#filter-grammar)
+13. [Context and authentication](#context-and-authentication)
+14. [Package layout](#package-layout)
+15. [End-to-end lifecycle](#end-to-end-lifecycle)
+16. [Troubleshooting](#troubleshooting)
+17. [License](#license)
 
 ---
 
@@ -94,35 +116,58 @@ func setupReporters(ctx context.Context) (*pubsubreport.Reporter, error) {
     if err != nil {
         return nil, err
     }
-    services.TestServiceServer.Reporter = report.MultiReporter{
+    services.TestServiceServer.Reporter = report.All{
         logreport.Reporter{},
         ps, // publishes bare evalspb.Run JSON to alis.evals.v1.Run via pubsub/v2
     }
     return ps, nil // Close() at server drain
 }
+
+// Call once from main after all case packages have been imported and before
+// the server starts accepting requests.
+func Bootstrap(ctx context.Context) (*pubsubreport.Reporter, error) {
+    if err := Register(); err != nil {
+        return nil, err
+    }
+    if err := evals.Freeze(); err != nil {
+        return nil, err
+    }
+    return setupReporters(ctx)
+}
 ```
 
-Once the binary starts, `RunIntegrationTest` / `RunAgentEval` / `RunLoadTest` on the `TestService` see the registered suites; the `/api/...` paths used by ADK-backed agent evals are installed by the
+After `Bootstrap` succeeds and the binary starts, `RunIntegrationTest` / `RunAgentEval` / `RunLoadTest` / `RunInfraObservation` on the `TestService` see the registered suites; the `/api/...` paths used by ADK-backed agent evals are installed by the
 launcher import above.
+
+---
+
+## Usage
+
+- To verify gRPC behavior, start with [Integration tests](#integration-tests).
+- To grade agent sessions, use [Agent evaluations](#agent-evaluations).
+- To measure traffic and SLOs, use [Load tests](#load-tests).
+- To inspect Cloud Run or Spanner without generating traffic, use [Infra observation](#infra-observation).
+
+The sections below are organized by these use cases; the complete constructor
+and option tables remain under [Options reference](#options-reference).
 
 ---
 
 ## Concepts
 
-**Suite.** A named group of related cases plus optional environment dependencies and lifecycle hooks. Three kinds exist (integration, eval, load) matching the three RPCs.
+**Suite.** A named group of related cases plus optional environment dependencies and lifecycle hooks. Four kinds exist (integration, agent eval, load, infra observation) matching the four RPCs.
 
-**Case.** The unit the runner executes. For integration and eval suites a case is a `func(ctx, *T)` that measures the SUT and records assertions on the per-case `T` recorder. For load suites a case is a `ResultTarget` invoked many times by the built-in load generator, plus declared SLOs against the aggregate result.
+**Case.** The unit the runner executes. For integration and eval suites a case is a `func(ctx, *T)` that measures the SUT and records assertions on the per-case `T` recorder. For load suites a case is a `ResultTarget` invoked many times by the built-in load generator, plus declared SLOs against the aggregate result. For infra observation suites a case triggers Monitoring snapshots over a configured lookback — no client traffic.
 
 `T` **recorder.** A per-case handle passed to integration and eval cases. Every recording method (`Check`, `NoErr`, `Max`, `Score`, …) returns whether the assertion passed, so authors control flow
 with plain `if !… { return }`. No panics, no `runtime.Goexit`.
 
 **Environment.** Shared setup/teardown identified by name. Registered once (`env.Register`) and referenced by any suite via `WithEnv` — activated once per LRO, not once per suite.
 
-**Reporter.** A `report.Reporter` sink that receives each completed `Run` proto. The default is `log.Reporter` (one alog line per run); use `MultiReporter{…}` to fan out to BigQuery,
-Pub/Sub, Spanner, etc. Concrete sinks live in subpackages — see [Reporters](#reporters).
+**Reporter.** A `report.Reporter` sink that receives each completed `Run` proto. The default is `log.Reporter` (one alog line per run); use `report.All` or `report.FailFast` (alias `MultiReporter`) to fan out to BigQuery,
+Pub/Sub, etc. Concrete sinks live in subpackages — see [Reporters](#reporters).
 
-**Registry.** Process-global (mirrors `http.DefaultServeMux`) — suites publish themselves at `init()` via `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, or `RegisterAgent`.
-The registered suites are what the RPCs can see.
+**Registry.** The default registry mirrors `http.DefaultServeMux`: suites publish during startup via `RegisterIntegration`, `RegisterEval`, `RegisterLoad`, `RegisterInfraObserve`, or `RegisterAgent`. Isolated registries are available for tests and embedders. The registered suites are what the RPCs can see.
 
 **Case ids.** Every case is qualified as `{suite}.{case}` at registration. The RPC's `case_ids` field is a filter:
 
@@ -134,7 +179,7 @@ The registered suites are what the RPCs can see.
 
 ## Wire types
 
-Consumers see three top-level messages, one per RPC, all sharing the `Run` envelope and `Status` enum. Every case appears in the results — passed and failed alike — so downstream dashboards can
+Consumers see four result shapes (one per RPC), all sharing the `Run` envelope and `Status` enum. Every selected case appears in the results — passed, failed, or skipped — so downstream dashboards can
 compute headroom, not just breaches.
 
 ### Common
@@ -144,18 +189,19 @@ enum Status {
   STATUS_UNSPECIFIED = 0;
   PASSED             = 1;   // executed and every check passed
   FAILED             = 2;   // executed and one or more checks failed
-  NOT_EVALUATED      = 3;   // skipped (StopOnFailure, setup fail, filter)
+  NOT_EVALUATED      = 3;   // selected but skipped (StopOnFailure or cancellation)
 }
 
 message Run {
   string      name        = 2;   // runs/{run_id}
   optional    string batch_id = 3;
-  Run.Type    type        = 4;   // INTEGRATION_TEST | LOAD_TEST | AGENT_EVAL
+  Run.Type    type        = 4;   // INTEGRATION_TEST | LOAD_TEST | AGENT_EVAL | INFRA_OBSERVATION
   Status      status      = 5;
   oneof data {
     IntegrationTestResults integration_test = 6;
     LoadTestResults        load_test        = 7;
     AgentEvalResults       agent_eval       = 8;
+    InfraObservationResults infra_observation = 9;
   }
   Timestamp   start_time  = 21;
   Timestamp   end_time    = 22;
@@ -365,10 +411,9 @@ if !t.Max("latency", r.Latency, budget) { return }
 t.Check("shape", r.Resp.GetName() != "")
 ```
 
-**Duplicate check ids.** Using the same id twice inside one case records a single `duplicate-check-id` failure leaf so downstream tooling stays deterministic.
+**Duplicate check ids.** Using the same id twice inside one case records a single `_evals.duplicate-check-id` failure leaf so downstream tooling stays deterministic.
 
-**Setup / teardown.** If `WithSetup` returns an error, every case in the suite is recorded with a `setup` failure marker and teardown is skipped. Teardown errors are logged but don't affect case
-outcomes.
+**Setup / teardown.** If `WithSetup` returns an error, every case in the suite is recorded with an `_evals.setup` failure marker and teardown is skipped. If teardown fails, every completed case is marked failed with an `_evals.teardown` diagnostic.
 
 **StopOnFailure.** For stateful flows (create → get → update → delete), `evals.StopOnFailure()` on the suite marks all subsequent cases `NOT_EVALUATED` once any case fails.
 
@@ -437,24 +482,24 @@ t.Max("response", r.ResponseLatency, 200*time.Millisecond)
 
 **`ServerStreamResult[T]`**
 
-| Field | Meaning |
-| ----- | ------- |
-| `Messages` | All successfully received messages (partial on recv error). |
-| `Err` | Transport error; nil on clean EOF. Set on nil-message `Recv`. |
-| `TTFB` | Start through first message; includes `openFn`. **0 when empty.** |
-| `TotalDuration` | Wall clock from start through recv loop exit. |
+| Field              | Meaning                                                            |
+| ------------------ | ------------------------------------------------------------------ |
+| `Messages`         | All successfully received messages (partial on recv error).        |
+| `Err`              | Transport error; nil on clean EOF. Set on nil-message `Recv`.      |
+| `TTFB`             | Start through first message; includes `openFn`. **0 when empty.**  |
+| `TotalDuration`    | Wall clock from start through recv loop exit.                      |
 | `MessageIntervals` | Gap between consecutive messages; `len = max(0, len(Messages)-1)`. |
 
 **`ClientStreamResult[Resp]`**
 
-| Field | Meaning |
-| ----- | ------- |
-| `Resp` | Final response from `sendFn` (partial value preserved on error). |
-| `Err` | Transport or sendFn error. |
-| `SendDuration` | Start through last successful Send (includes `openFn`). |
-| `ResponseLatency` | `CloseAndRecv` entry through return; 0 if never reached. |
-| `TotalDuration` | Wall clock through `sendFn` return. |
-| `MessagesSent` | Count of successful Sends. |
+| Field             | Meaning                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| `Resp`            | Final response from `sendFn` (partial value preserved on error). |
+| `Err`             | Transport or sendFn error.                                       |
+| `SendDuration`    | Start through last successful Send (includes `openFn`).          |
+| `ResponseLatency` | `CloseAndRecv` entry through return; 0 if never reached.         |
+| `TotalDuration`   | Wall clock through `sendFn` return.                              |
+| `MessagesSent`    | Count of successful Sends.                                       |
 
 ---
 
@@ -653,55 +698,87 @@ notice you're measuring the generator, not the SUT — bump `Concurrency` and re
 
 ---
 
+## Infra observation
+
+Infra observation suites fetch Cloud Run and Spanner Monitoring snapshots over a settled lookback window. They do not invoke loadgen or client-side SLOs. Results map to `Run.Type = INFRA_OBSERVATION` and are emitted via `RunInfraObservation`.
+
+```go
+s := evals.MustNewInfraObserveSuite("peak-hours",
+    evals.WithLookback(30*time.Minute),
+    evals.WithInfraObserveContext(addMonitoringIdentity),
+    evals.WithInfraObserveStopOnFailure(), // optional; switches to sequential execution
+    evals.WithCloudRunTargets(evals.CloudRunTarget{
+        ID: "search", Role: evals.RoleEntry,
+        ProjectID: "my-project", Region: "europe-west1", ServiceName: "search-v1",
+    }),
+)
+s.MustInfraObserveCase("hourly")
+if err := evals.RegisterInfraObserve(s); err != nil {
+    panic(err)
+}
+```
+
+Lookback resolves in order: RPC request override → per-case `WithObserveCaseLookback` → suite `WithLookback`. At least one Cloud Run or Spanner target is required. Cases within a suite run concurrently unless `WithInfraObserveStopOnFailure` requests deterministic sequential execution. Standalone infra-observe cases **fail** when any target snapshot has non-OK `FetchStatus`; load-attached infra snapshots remain diagnostic-only in v1. A suite teardown failure appears as a synthetic Cloud Run snapshot whose id is `_evals.teardown`.
+
+See `evals/knowledge/suites/infra-observe-suite.md` for full authoring detail.
+
+---
+
 ## Options reference
 
 Everything in the public API of the framework, in one place.
 
 ### Suite constructors
 
-| Function                                                                     | Returns              | Notes                                                                                                            |
-| ---------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `evals.NewIntegrationSuite(name string, opts ...SuiteOption)`                | `(*Suite, error)`    | Integration suite. Returns a typed error on invalid name (empty or containing `.`) or invalid option.            |
-| `evals.NewAgentEvalSuite(name string, opts ...SuiteOption)`                  | `(*Suite, error)`    | Agent-eval suite. Same error rules.                                                                              |
-| `evals.NewLoadSuite(name string, opts ...LoadSuiteOption)`                   | `(*LoadSuite, error)`| Load suite. Same error rules.                                                                                    |
-| `evals.MustNewIntegrationSuite` / `MustNewAgentEvalSuite` / `MustNewLoadSuite` | `*Suite` / `*LoadSuite` | Panicking variants for init-time code that would `log.Fatal` on a config error.                              |
+| Function                                                                                                    | Returns                                        | Notes                                                                                                 |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `evals.NewIntegrationSuite(name string, opts ...SuiteOption)`                                               | `(*Suite, error)`                              | Integration suite. Returns a typed error on invalid name (empty or containing `.`) or invalid option. |
+| `evals.NewAgentEvalSuite(name string, opts ...SuiteOption)`                                                 | `(*Suite, error)`                              | Agent-eval suite. Same error rules.                                                                   |
+| `evals.NewLoadSuite(name string, opts ...LoadSuiteOption)`                                                  | `(*LoadSuite, error)`                          | Load suite. Same error rules.                                                                         |
+| `evals.NewInfraObserveSuite(name string, opts ...InfraObserveSuiteOption)`                                  | `(*InfraObserveSuite, error)`                  | Infra observation suite. Requires lookback and at least one infra target.                             |
+| `evals.MustNewIntegrationSuite` / `MustNewAgentEvalSuite` / `MustNewLoadSuite` / `MustNewInfraObserveSuite` | `*Suite` / `*LoadSuite` / `*InfraObserveSuite` | Panicking variants for init-time code that would `log.Fatal` on a config error.                       |
 
 `Suite.Kind()` reports `KindTest` or `KindEval`. Kinds cannot be mixed — passing a `KindEval` suite
 to `RegisterIntegration` returns `evals.ErrWrongSuiteKind`.
+
+All registration errors must be checked. Direct callers of `registry.Registry.Register*`
+should note that these methods now return errors; a bare call remains legal Go but silently
+discards duplicate, nil, or frozen-registry failures.
 
 ### Shared suite options (test + eval)
 
 All apply to both `NewIntegrationSuite` and `NewAgentEvalSuite`.
 
-| Option                                     | Effect                                                                                                                                                                           |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals.WithEnv(names ...string)`           | Declare shared environments. Every name must have been passed to `env.Register` before the suite is constructed.                                                                 |
-| `evals.WithSetup(hook suite.SuiteHook)`    | Runs once per LRO before the suite's cases. Signature: `func(ctx context.Context) error`. Failure fails every case in the suite with a `setup` marker and skips teardown.        |
-| `evals.WithTeardown(hook suite.SuiteHook)` | Runs once after the suite's cases (or before propagating cancellation). Errors are logged but ignored.                                                                           |
+| Option                                         | Effect                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evals.WithEnv(names ...string)`               | Declare shared environments. `evals.Freeze()` validates every name after registration is complete.                                                                                                                                                                                                      |
+| `evals.WithSetup(hook suite.SuiteHook)`        | Runs once per LRO before the suite's cases. Signature: `func(ctx context.Context) error`. Failure fails every case in the suite with an `_evals.setup` marker and skips teardown.                                                                                                                       |
+| `evals.WithTeardown(hook suite.SuiteHook)`     | Runs once after the suite's cases (or before propagating cancellation). Failure marks every case failed with an `_evals.teardown` diagnostic.                                                                                                                                                           |
 | `evals.WithContext(fn evals.ContextDecorator)` | Install a `func(ctx) ctx` applied to the suite's setup, teardown, and every case body. The framework's only auth-adjacent surface: use it to stamp caller identity, auth headers, tokens, tracing, or any request-scoped context values. See [Context and authentication](#context-and-authentication). |
-| `evals.StopOnFailure()`                    | Once any case in the suite ends non-`PASSED`, remaining cases are recorded `NOT_EVALUATED` with a "preceding case … failed" reason. Use for stateful flows.                      |
+| `evals.StopOnFailure()`                        | Once any case in the suite ends non-`PASSED`, remaining cases are recorded `NOT_EVALUATED` with a "preceding case … failed" reason. Use for stateful flows.                                                                                                                                             |
 
 ### Load-suite options
 
-Applied to `NewLoadSuite`. Kept separate from `SuiteOption` because several test/eval options
-(`StopOnFailure`, `WithContext`) do not have sensible load-test semantics — load suites always
-run under whatever context the runner installs so measurements match production traffic.
+Applied to `NewLoadSuite`. Load suites use their own option type so load profiles
+and infrastructure targets cannot be attached to integration or eval suites.
 
-| Option                                                                   | Effect                                                                                                                                                                 |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals.WithLoadEnv(names ...string)`                                     | Declare shared environments. Same semantics as `WithEnv` on test/eval suites.                                                                                          |
-| `evals.WithLoadSetup(hook suite.SuiteHook)`                              | Suite-level pre-cases hook. Failure fails every case with a `setup` marker.                                                                                            |
-| `evals.WithLoadTeardown(hook suite.SuiteHook)`                           | Suite-level post-cases hook. Errors logged, ignored.                                                                                                                   |
+| Option                                                                   | Effect                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evals.WithLoadEnv(names ...string)`                                     | Declare shared environments. Same semantics as `WithEnv` on test/eval suites.                                                                                                                                 |
+| `evals.WithLoadSetup(hook suite.SuiteHook)`                              | Suite-level pre-cases hook. Failure fails every case with an `_evals.setup` marker.                                                                                                                           |
+| `evals.WithLoadTeardown(hook suite.SuiteHook)`                           | Suite-level post-cases hook. Failure marks every completed case failed with an `_evals.teardown` diagnostic.                                                                                                  |
+| `evals.WithLoadContext(fn evals.ContextDecorator)`                       | Apply request-scoped identity, authentication, or tracing values to setup, teardown, and case traffic.                                                                                                        |
+| `evals.WithLoadStopOnFailure()`                                          | Stop after the first non-passing load case and emit `_evals.skipped` for remaining cases.                                                                                                                     |
 | `evals.WithLoadProfile(mode evalspb.RunLoadTestRequest_Mode, p Profile)` | Override the framework default profile for that specific mode. The override fully replaces the default; other modes keep theirs. Returns `suite.ErrLoadProfileUnspecifiedMode` if `mode == MODE_UNSPECIFIED`. |
 
 ### Case registration
 
-| Method                                                                          | Effect                                                                                                                        |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `(*Suite).Case(name string, fn CaseFunc) error`                                 | Register a test or eval case. Returns a typed error (`evals.ErrNilCaseFunc`, `suite.ErrInvalidCaseName`, `suite.ErrDuplicateCase`). |
-| `(*Suite).MustCase(name string, fn CaseFunc) *Suite`                            | Panicking variant returning the receiver for fluent chaining.                                                                 |
-| `(*LoadSuite).LoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) error` | Register a load case. Returns a typed error (`evals.ErrNilTarget`, etc.). |
-| `(*LoadSuite).MustLoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) *LoadSuite` | Panicking variant returning the receiver for fluent chaining. |
+| Method                                                                                                       | Effect                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `(*Suite).Case(name string, fn CaseFunc) error`                                                              | Register a test or eval case. Returns a typed error (`evals.ErrNilCaseFunc`, `suite.ErrInvalidCaseName`, `suite.ErrDuplicateCase`). |
+| `(*Suite).MustCase(name string, fn CaseFunc) *Suite`                                                         | Panicking variant returning the receiver for fluent chaining.                                                                       |
+| `(*LoadSuite).LoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) error`          | Register a load case. Returns a typed error (`evals.ErrNilTarget`, etc.).                                                           |
+| `(*LoadSuite).MustLoadCase(name string, target ResultTarget, slos []SLO, opts ...LoadCaseOption) *LoadSuite` | Panicking variant returning the receiver for fluent chaining.                                                                       |
 
 Types:
 
@@ -737,42 +814,42 @@ id `duplicate-check-id` (see the exported constant `evals.DuplicateCheckIDName`)
 
 `evals.Profile` (re-exports `loadgen.Profile`):
 
-| Field            | Type            | Meaning                                                                                                                                                |
-| ---------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `QPS`            | `float64`       | Target requests per second when `QPSStages` is empty. Must be > 0 unless stages are set.                                                                                                               |
-| `Concurrency`    | `int`           | Number of worker goroutines when `ConcurrencyStages` is empty. Must be ≥ 1. Sized to keep enough requests in flight for the target rate at the target's expected latency (Little's law). |
-| `Duration`       | `time.Duration` | The measurement window. Must be > 0.                                                                                                                   |
-| `Warmup`         | `time.Duration` | Traffic runs at target rate for this leading period but the samples are dropped. Zero disables warmup.                                                 |
-| `RequestTimeout` | `time.Duration` | Per-request `context.WithTimeout` cap. Zero → 30 s default. Always further capped by the remaining window so a straggler cannot pollute the next case. |
-| `QPSStages`      | `[]Stage`       | Piecewise QPS shape over `Warmup+Duration`. Overrides constant `QPS` when set. Stage durations must sum to the total window.                          |
-| `QPSStageLinear` | `bool`          | Linear interpolation between consecutive QPS stage targets (ghz-style).                                                                               |
-| `ConcurrencyStages` | `[]Stage`    | Piecewise worker-pool shape over `Warmup+Duration`.                                                                                                    |
-| `GracefulRampDown` | `time.Duration` | Allow in-flight requests to finish after the measurement boundary, up to this limit.                                                              |
+| Field               | Type            | Meaning                                                                                                                                                                                  |
+| ------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QPS`               | `float64`       | Target requests per second when `QPSStages` is empty. Must be > 0 unless stages are set.                                                                                                 |
+| `Concurrency`       | `int`           | Number of worker goroutines when `ConcurrencyStages` is empty. Must be ≥ 1. Sized to keep enough requests in flight for the target rate at the target's expected latency (Little's law). |
+| `Duration`          | `time.Duration` | The measurement window. Must be > 0.                                                                                                                                                     |
+| `Warmup`            | `time.Duration` | Traffic runs at target rate for this leading period but the samples are dropped. Zero disables warmup.                                                                                   |
+| `RequestTimeout`    | `time.Duration` | Per-request `context.WithTimeout` cap. Zero → 30 s default. Always further capped by the remaining window so a straggler cannot pollute the next case.                                   |
+| `QPSStages`         | `[]Stage`       | Piecewise QPS shape over `Warmup+Duration`. Overrides constant `QPS` when set. Stage durations must sum to the total window.                                                             |
+| `QPSStageLinear`    | `bool`          | Linear interpolation between consecutive QPS stage targets (ghz-style).                                                                                                                  |
+| `ConcurrencyStages` | `[]Stage`       | Piecewise worker-pool shape over `Warmup+Duration`.                                                                                                                                      |
+| `GracefulRampDown`  | `time.Duration` | Allow in-flight requests to finish after the measurement boundary, up to this limit.                                                                                                     |
 
 ### SLO constructors
 
 Each constructor produces one `SLO` value; each SLO produces one `SloCheck` per case run (passed or
 failed).
 
-| Constructor                               | Check id         | Unit  | Passes when         | Notes                                                                                                                            |
-| ----------------------------------------- | ---------------- | ----- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `evals.SLOLatencyP50(max time.Duration)`  | `latency.p50_ms` | `ms`  | `observed <= limit` | Median latency.                                                                                                                  |
-| `evals.SLOLatencyP95(max time.Duration)`  | `latency.p95_ms` | `ms`  | `observed <= limit` | 95th percentile.                                                                                                                 |
-| `evals.SLOLatencyP99(max time.Duration)`  | `latency.p99_ms` | `ms`  | `observed <= limit` | 99th percentile — the usual tail-latency guardrail.                                                                              |
-| `evals.SLOErrorRate(maxFraction float64)` | `error_rate`     | `%`   | `observed <= limit` | Constructor accepts a fraction (`0.01` for 1%). Observed and limit are recorded as percent so wire values match human intuition. |
-| `evals.SLOMinQPS(min float64)`            | `actual_qps`     | `rps` | `observed >= limit` | Throughput floor — useful for detecting silent capacity regressions.                                                             |
-| `evals.SLOStreamTTFB(max time.Duration)`  | `stream.ttfb_p99_ms` | `ms` | `observed <= limit` | Stream send-duration p99. Fails when no stream samples were recorded.                                                         |
-| `evals.SLOMessagesPerSec(min float64)`    | `stream.messages_per_sec` | `msg/s` | `observed >= limit` | Aggregate outbound message rate across the measurement window.                                                          |
+| Constructor                               | Check id                  | Unit    | Passes when         | Notes                                                                                                                            |
+| ----------------------------------------- | ------------------------- | ------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `evals.SLOLatencyP50(max time.Duration)`  | `latency.p50_ms`          | `ms`    | `observed <= limit` | Median latency.                                                                                                                  |
+| `evals.SLOLatencyP95(max time.Duration)`  | `latency.p95_ms`          | `ms`    | `observed <= limit` | 95th percentile.                                                                                                                 |
+| `evals.SLOLatencyP99(max time.Duration)`  | `latency.p99_ms`          | `ms`    | `observed <= limit` | 99th percentile — the usual tail-latency guardrail.                                                                              |
+| `evals.SLOErrorRate(maxFraction float64)` | `error_rate`              | `%`     | `observed <= limit` | Constructor accepts a fraction (`0.01` for 1%). Observed and limit are recorded as percent so wire values match human intuition. |
+| `evals.SLOMinQPS(min float64)`            | `actual_qps`              | `rps`   | `observed >= limit` | Throughput floor — useful for detecting silent capacity regressions.                                                             |
+| `evals.SLOStreamTTFB(max time.Duration)`  | `stream.ttfb_p99_ms`      | `ms`    | `observed <= limit` | Stream send-duration p99. Fails when no stream samples were recorded.                                                            |
+| `evals.SLOMessagesPerSec(min float64)`    | `stream.messages_per_sec` | `msg/s` | `observed >= limit` | Aggregate outbound message rate across the measurement window.                                                                   |
 
 `TargetResult.CheckErr` records semantic assertion failures separately from transport errors. When any checks fail, the case receives a synthetic `SloCheck` with id `checks` so status rolls up `FAILED`.
 
 ### Load case options
 
-| Option | Effect |
-| ------ | ------ |
-| `evals.WithLoadCaseTags(map[string]string)` | Attach labels to the case wire result. |
-| `evals.WithLoadCaseData(data ...any)` | Round-robin payloads rotated by request number. |
-| `evals.WithLoadCaseDataProvider(p DataProvider)` | Programmatic per-request data. |
+| Option                                           | Effect                                          |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `evals.WithLoadCaseTags(map[string]string)`      | Attach labels to the case wire result.          |
+| `evals.WithLoadCaseData(data ...any)`            | Round-robin payloads rotated by request number. |
+| `evals.WithLoadCaseDataProvider(p DataProvider)` | Programmatic per-request data.                  |
 
 Use `runner.WithAbortOnSLOFailure()` to cancel a load case early when any declared SLO fails on partial metrics (polled every 2s).
 
@@ -790,28 +867,31 @@ func Get(name string) *Environment
 type Hook func(context.Context) error
 ```
 
-| Function                              | Effect                                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `env.Register(name, opts...) error`   | Register a globally-named environment. Returns `env.ErrDuplicateRegistration` on duplicate.             |
-| `env.MustRegister(name, opts...)`     | Panicking variant. Use at package init when a duplicate should halt the process.                        |
-| `env.WithSetup(hook)`                 | Optional setup, invoked once per LRO if any selected suite depends on this env.                         |
-| `env.WithTeardown(hook)`              | Optional teardown, invoked in reverse-registration order after all suites finish.                       |
-| `env.Get(name)`                       | Look up a registered environment. Returns nil for unknown names.                                        |
+| Function                            | Effect                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `env.Register(name, opts...) error` | Register a globally-named environment. Returns `env.ErrDuplicateRegistration` on duplicate. |
+| `env.MustRegister(name, opts...)`   | Panicking variant. Use at package init when a duplicate should halt the process.            |
+| `env.WithSetup(hook)`               | Optional setup, invoked once per LRO if any selected suite depends on this env.             |
+| `env.WithTeardown(hook)`            | Optional teardown, invoked in reverse-registration order after all suites finish.           |
+| `env.Get(name)`                     | Look up a registered environment. Returns nil for unknown names.                            |
 
-Environments are process-global. If you're building a library that wants to be re-entrant, avoid
-re-registering the same name — call `env.Get(name)` first, or gate registration behind `sync.Once`.
+The package-level helpers use a process-global default registry. Tests and
+embedders can create an isolated `env.Registry` and attach it to a suite
+registry with `registry.SetEnvRegistry`.
 
 ### Registration functions
 
-| Function                                                    | Effect                                                                                                                              |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `evals.RegisterIntegration(s *Suite) error`                 | Publish an integration suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindTest`.     |
-| `evals.RegisterEval(s *Suite) error`                        | Publish an eval suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindEval`.            |
-| `evals.RegisterLoad(s *LoadSuite) error`                    | Publish a load suite. Returns `suite.ErrNilSuite` if `s == nil`.                                                                    |
-| `evals.RegisterAgent(p registry.AgentEvalProvider) error`   | Publish a lazy agent-eval provider (for example an ADK-backed one). Returns `evals.ErrNilProvider` if `p == nil`.                   |
-| `evals.DefaultRegistry() *registry.Registry`                | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests.                                               |
+| Function                                                  | Effect                                                                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `evals.RegisterIntegration(s *Suite) error`               | Publish an integration suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindTest`. |
+| `evals.RegisterEval(s *Suite) error`                      | Publish an eval suite. Returns `suite.ErrNilSuite` if `s == nil` or `evals.ErrWrongSuiteKind` if `s.Kind() != KindEval`.        |
+| `evals.RegisterLoad(s *LoadSuite) error`                  | Publish a load suite. Returns `suite.ErrNilSuite` if `s == nil`.                                                                |
+| `evals.RegisterInfraObserve(s *InfraObserveSuite) error`  | Publish an infra observation suite. Returns `suite.ErrNilSuite` if `s == nil`.                                                  |
+| `evals.RegisterAgent(p registry.AgentEvalProvider) error` | Publish a lazy agent-eval provider (for example an ADK-backed one). Returns `evals.ErrNilProvider` if `p == nil`.               |
+| `evals.Freeze() error`                                    | Validate and seal the default registry after all startup registration is complete.                                              |
+| `evals.DefaultRegistry() *registry.Registry`              | Return the process-wide registry that `TestServiceServer` consumes. Useful for tests.                                           |
 
-Call these once at `init()` time. All four target `evals.DefaultRegistry()`. Callers must handle
+Call these once at startup. All five target `evals.DefaultRegistry()`. Callers must handle
 the returned error (or `log.Fatal`); the framework does not panic on registration errors.
 
 ### Reporters
@@ -829,18 +909,19 @@ type Reporter interface {
 
 Bundled reporter implementations:
 
-| Type | Package | Purpose |
-| ---- | ------- | ------- |
-| `log.Reporter{}` | `go.alis.build/evals/report/log` | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
-| `bigquery.Reporter` | `go.alis.build/evals/report/bigquery` | Streams each Run to BigQuery via protobq (Duration as STRING). |
-| `pubsub.Reporter` | `go.alis.build/evals/report/pubsub` | Publishes bare `Run` JSON via `protojson` + `pubsub/v2`. |
-| `report.NoOpReporter{}` | `go.alis.build/evals/report` | Discard. Useful for local tests where you want the LRO to complete without emitting anything. |
-| `report.MultiReporter{…}` | `go.alis.build/evals/report` | Fan out to multiple reporters, in order. First error aborts the fan-out. |
+| Type                                             | Package                               | Purpose                                                                                                                  |
+| ------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `log.Reporter{}`                                 | `go.alis.build/evals/report/log`      | Default. Emits a one-line summary via `alog` — `Info` for `PASSED` runs, `Warn` for anything else. Nil-safe on nil runs. |
+| `bigquery.Reporter`                              | `go.alis.build/evals/report/bigquery` | Streams each Run to BigQuery via protobq (Duration as STRING).                                                           |
+| `pubsub.Reporter`                                | `go.alis.build/evals/report/pubsub`   | Publishes bare `Run` JSON via `protojson` + `pubsub/v2`.                                                                 |
+| `report.NoOpReporter{}`                          | `go.alis.build/evals/report`          | Discard. Useful for local tests where you want the LRO to complete without emitting anything.                            |
+| `report.All{…}`                                  | `go.alis.build/evals/report`          | Fan out to every reporter in order; [errors.Join] all failures. Nil entries skipped.                                     |
+| `report.FailFast{…}` / `report.MultiReporter{…}` | `go.alis.build/evals/report`          | Fan out in order; first error aborts remaining sinks for that run.                                                       |
 
 Companion packages (not themselves Reporters):
 
-| Symbol | Package | Purpose |
-| ------ | ------- | ------- |
+| Symbol                                                                   | Package                               | Purpose                                                                                                                                                             |
+| ------------------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bqschema.Schema()` / `bqschema.SchemaJSON()` / `bqschema.EnsureTable()` | `go.alis.build/evals/report/bqschema` | Canonical BigQuery schema for `evalspb.Run` rows and a table-provisioning helper. Both `bigquery.Reporter` and Pub/Sub → BigQuery subscriptions target this schema. |
 
 Wiring:
@@ -867,7 +948,7 @@ func setupReporters(ctx context.Context) error {
         _ = bq.Close()
         return err
     }
-    services.TestServiceServer.Reporter = report.MultiReporter{
+    services.TestServiceServer.Reporter = report.All{
         logreport.Reporter{},
         bq,
         ps,
@@ -875,6 +956,10 @@ func setupReporters(ctx context.Context) error {
     return nil // Close bq and ps at server drain
 }
 ```
+
+Serial fan-out under `report.All` adds worst-case latency equal to the **sum** of each sink's per-call timeout (bundled non-log reporters default to 10s). A log + BigQuery + Pub/Sub stack can add ~20s per suite. Use `FailFast` when one durable sink is authoritative.
+
+Set `mapper.SetConfig(mapper.Config{GoogleProjectID: os.Getenv("ALIS_OS_PROJECT")})` at bootstrap so `Run.google_project_id` records where the eval ran. Reporter sinks still target `ALIS_OS_PRODUCT_PROJECT`.
 
 #### Platform infrastructure (Alis Build)
 
@@ -960,13 +1045,13 @@ func setupPubsub(ctx context.Context) (*pubsubreport.Reporter, error) {
 
 By default every `ReportRun` blocks until the Pub/Sub broker acks the message — the safer choice for short-lived eval processes that may exit right after completing a run. Options:
 
-| Option | Effect |
-| ------ | ------ |
-| `pubsubreport.WithProject(id)` | Override the Google Cloud project (defaults to `ALIS_OS_PRODUCT_PROJECT`). Only valid with `New`. |
-| `pubsubreport.WithTopic(name)` | Override the default topic. Accepts a bare topic ID or a fully-qualified `projects/<p>/topics/<t>` resource string. |
-| `pubsubreport.WithOrderingKey(k)` | Apply the Pub/Sub ordering key on every message and enable message ordering on the publisher. |
-| `pubsubreport.WithBackground()` | Fire-and-forget publishing (does not wait for broker ack). Best-effort delivery only; call `Close` before process exit to flush pending messages. |
-| `pubsubreport.WithPublishTimeout(d)` | Bound each publish via `context.WithTimeout`. Defaults to 10s. |
+| Option                               | Effect                                                                                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pubsubreport.WithProject(id)`       | Override the Google Cloud project (defaults to `ALIS_OS_PRODUCT_PROJECT`). Only valid with `New`.                                                 |
+| `pubsubreport.WithTopic(name)`       | Override the default topic. Accepts a bare topic ID or a fully-qualified `projects/<p>/topics/<t>` resource string.                               |
+| `pubsubreport.WithOrderingKey(k)`    | Apply the Pub/Sub ordering key on every message and enable message ordering on the publisher.                                                     |
+| `pubsubreport.WithBackground()`      | Fire-and-forget publishing (does not wait for broker ack). Best-effort delivery only; call `Close` before process exit to flush pending messages. |
+| `pubsubreport.WithPublishTimeout(d)` | Bound each publish via `context.WithTimeout`. Defaults to 10s.                                                                                    |
 
 `pubsubreport.New(ctx, opts...)` owns the underlying `*pubsub.Client` and the `*pubsub.Publisher` for the configured topic; `Close` stops the publisher and closes the client. `pubsubreport.NewWithClient(client, opts...)` borrows a client (Close stops only the publisher); passing `WithProject` there returns an error since the borrowed client already has a project bound.
 
@@ -978,8 +1063,9 @@ If you want a table fed by both the streaming-insert path (`bqreport.Reporter`) 
 
 1. Handle `run == nil` as a no-op.
 2. Do not block the LRO goroutine for long — persist async or with a short timeout.
-3. Errors are best-effort. Returning one is logged by the caller; subsequent reporters in a
-   `MultiReporter` are skipped.
+3. Errors are best-effort. Returning one is logged by the caller. Under `report.FailFast` /
+   `MultiReporter`, later sinks are skipped for that run; under `report.All`, every sink is still
+   invoked and errors are joined.
 
 Minimal implementation skeleton (webhook example — use the bundled `pubsubreport` / `bqreport` for Pub/Sub and BigQuery):
 
@@ -1038,26 +1124,27 @@ gRPC statuses at the RPC boundary:
 
 Concrete error types worth knowing about (all implement `EvalError`):
 
-| Error                                                              | Package          | Triggered by                                                                                          |
-| ------------------------------------------------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------- |
-| `evals.ErrNilCaseFunc`                                             | `evals`          | `Suite.Case` called with a nil case function.                                                          |
-| `evals.ErrNilTarget`                                               | `evals`          | `LoadSuite.LoadCase` called with a nil target.                                                         |
-| `evals.ErrNilProvider`                                             | `evals`          | `RegisterAgent` called with a nil provider.                                                            |
-| `evals.ErrWrongSuiteKind`                                          | `evals`          | Suite passed to the wrong `Register*` (e.g. eval suite to `RegisterIntegration`).                      |
-| `evals.ErrUnknownSuiteKind`                                        | `evals`          | Internal invariant: `Suite.Case` invoked on a suite whose `kind` is neither `KindTest` nor `KindEval`. |
-| `suite.ErrNilSuite`                                                | `evals/suite`    | Registration or case-add on a nil suite.                                                              |
-| `suite.ErrInvalidSuiteName`                                        | `evals/suite`    | Empty name, name containing `.`.                                                                      |
-| `suite.ErrDuplicateCase`                                           | `evals/suite`    | Two cases with the same short name inside one suite.                                                  |
-| `suite.ErrInvalidCaseName`                                         | `evals/suite`    | Case name containing `.`.                                                                             |
-| `suite.ErrUnknownEnvironment`                                      | `evals/suite`    | `WithEnv` naming an env that hasn't been registered.                                                  |
-| `suite.ErrInvalidFilterPath`                                       | `evals/suite`    | `case_ids` entry that is not `suite` or `suite.case`.                                                 |
-| `suite.ErrLoadProfileUnspecifiedMode`                              | `evals/suite`    | `WithLoadProfile` targeting `MODE_UNSPECIFIED`.                                                        |
-| `env.ErrDuplicateRegistration`                                     | `evals/env`      | `env.Register` called twice for the same name.                                                         |
-| `env.ErrNotRegistered`                                             | `evals/env`      | Runner asked for an env that wasn't `env.Register`ed.                                                 |
-| `env.ErrSetupFailed`                                               | `evals/env`      | Env setup hook returned an error; every case in dependent suites is marked with a setup-error result. |
-| `registry.ErrNoTestSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` | `evals/registry` | Filter matches nothing.                                                                               |
+| Error                                                                                      | Package          | Triggered by                                                                                           |
+| ------------------------------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `evals.ErrNilCaseFunc`                                                                     | `evals`          | `Suite.Case` called with a nil case function.                                                          |
+| `evals.ErrNilTarget`                                                                       | `evals`          | `LoadSuite.LoadCase` called with a nil target.                                                         |
+| `evals.ErrNilProvider`                                                                     | `evals`          | `RegisterAgent` called with a nil provider.                                                            |
+| `evals.ErrWrongSuiteKind`                                                                  | `evals`          | Suite passed to the wrong `Register*` (e.g. eval suite to `RegisterIntegration`).                      |
+| `evals.ErrUnknownSuiteKind`                                                                | `evals`          | Internal invariant: `Suite.Case` invoked on a suite whose `kind` is neither `KindTest` nor `KindEval`. |
+| `suite.ErrNilSuite`                                                                        | `evals/suite`    | Registration or case-add on a nil suite.                                                               |
+| `suite.ErrInvalidSuiteName`                                                                | `evals/suite`    | Empty name, name containing `.`.                                                                       |
+| `suite.ErrDuplicateCase`                                                                   | `evals/suite`    | Two cases with the same short name inside one suite.                                                   |
+| `suite.ErrInvalidCaseName`                                                                 | `evals/suite`    | Case name containing `.`.                                                                              |
+| `registry.ErrUnknownEnvironments`                                                          | `evals/registry` | `Freeze` found one or more suite environment names absent from its environment registry.               |
+| `suite.ErrInvalidFilterPath`                                                               | `evals/suite`    | `case_ids` entry that is not `suite` or `suite.case`.                                                  |
+| `suite.ErrLoadProfileUnspecifiedMode`                                                      | `evals/suite`    | `WithLoadProfile` targeting `MODE_UNSPECIFIED`.                                                        |
+| `env.ErrDuplicateRegistration`                                                             | `evals/env`      | `env.Register` called twice for the same name.                                                         |
+| `env.ErrNotRegistered`                                                                     | `evals/env`      | Runner asked for an env that wasn't `env.Register`ed.                                                  |
+| `env.ErrSetupFailed`                                                                       | `evals/env`      | Env setup hook returned an error; every case in dependent suites is marked with a setup-error result.  |
+| `registry.ErrNoSuites` / `ErrNoEvalSuites` / `ErrNoLoadSuites` / `ErrNoInfraObserveSuites` | `evals/registry` | No suites are registered for the requested run type.                                                   |
+| `registry.ErrUnknownCase`                                                                  | `evals/registry` | A non-empty `case_ids` filter matched no registered case.                                              |
 
-Construction-time errors (name violations, duplicate cases, unknown envs, wrong-kind
+Startup errors (name violations, duplicate cases, unknown environments at Freeze, wrong-kind
 registration) are returned as typed `EvalError` values from `evals.NewIntegrationSuite` /
 `evals.NewAgentEvalSuite` / `evals.NewLoadSuite`, from `Suite.Case` / `LoadSuite.LoadCase`, and
 from the `Register*` functions. Callers decide whether to `log.Fatal`, propagate, or ignore.
@@ -1071,11 +1158,11 @@ to a gRPC status by the RPC handlers.
 | Function                                                                            | Purpose                                                                                                                 |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `evals.Call[T](ctx context.Context, fn func(context.Context) (T, error)) Result[T]` | Invoke an RPC, capture typed response, error, and wall-clock latency. Records nothing on `T` — assertions are explicit. |
-| `evals.CallServerStream[T](ctx, openFn) ServerStreamResult[T]` | Drain a bounded server stream; capture messages, TTFB (0 when empty), total duration, and inter-message intervals. |
-| `evals.CallClientStream[Req, Resp](ctx, openFn, sendFn) ClientStreamResult[Resp]` | Client-streaming with split send/response timing and message count. |
-| `evals.ServerStreamResult[T]` | `{Messages []T, Err, TTFB, TotalDuration, MessageIntervals}`. |
-| `evals.ClientStreamResult[Resp]` | `{Resp, Err, SendDuration, ResponseLatency, TotalDuration, MessagesSent}`. |
-| `evals.ClientStreamTargetResult(r ClientStreamResult[Resp]) TargetResult` | Map streaming timing into a load-case result for aggregation and stream SLOs. |
+| `evals.CallServerStream[T](ctx, openFn) ServerStreamResult[T]`                      | Drain a bounded server stream; capture messages, TTFB (0 when empty), total duration, and inter-message intervals.      |
+| `evals.CallClientStream[Req, Resp](ctx, openFn, sendFn) ClientStreamResult[Resp]`   | Client-streaming with split send/response timing and message count.                                                     |
+| `evals.ServerStreamResult[T]`                                                       | `{Messages []T, Err, TTFB, TotalDuration, MessageIntervals}`.                                                           |
+| `evals.ClientStreamResult[Resp]`                                                    | `{Resp, Err, SendDuration, ResponseLatency, TotalDuration, MessagesSent}`.                                              |
+| `evals.ClientStreamTargetResult(r ClientStreamResult[Resp]) TargetResult`           | Map streaming timing into a load-case result for aggregation and stream SLOs.                                           |
 | `evals.Result[T]`                                                                   | `{Resp T, Err error, Latency time.Duration}`.                                                                           |
 | `evals.Rouge1F1(hypothesis, reference string) float64`                              | Deterministic ROUGE-1 unigram F1 scorer. Empty-empty → 1; one-empty → 0. Feed into `t.Score`.                           |
 | `evals.DefaultLoadProfile(mode evalspb.RunLoadTestRequest_Mode) (Profile, bool)`    | Look up the framework default profile for `mode`. Returns `(zero, false)` for `MODE_UNSPECIFIED`.                       |
@@ -1165,44 +1252,70 @@ callers pass into their own token source when building the transport.
 
 ## Package layout
 
-| Path                    | Role                                                                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `T`, `Call`, `CallServerStream`, `CallClientStream`, `Rouge1F1`, SLO constructors, registration functions. See also `stream_server.go` and `stream_client.go`. |
-| `evals/adk`             | ADK evaluation-launcher client (transport-agnostic) and lazy `AgentEvalProvider`.                                                        |
-| `evals/env`             | Shared environment registration and activation.                                                                                          |
-| `evals/errors`          | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                               |
-| `evals/execution`       | Proto-free in-process result types (boundary between case-facing and wire-facing).                                                       |
-| `evals/loadgen`         | Embedded load generator (`Profile`, `Pacer`, `Generator`, `Metrics`).                                                                    |
-| `evals/mapper`          | `execution` → `evalspb.Run` translation.                                                                                                 |
-| `evals/registry`        | Registered suites, filter grammar, selection validation.                                                                                 |
-| `evals/report`          | `Reporter` interface + `NoOpReporter`, `MultiReporter`.                                                                                  |
-| `evals/report/log`      | Default log reporter (`log.Reporter`).                                                                                                   |
-| `evals/report/bqschema` | Shared BigQuery schema + `EnsureTable` for Run rows. |
-| `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`). |
-| `evals/report/pubsub`   | JSON Pub/Sub reporter (`pubsub.Reporter`) on `pubsub/v2`. |
-| `evals/runner`          | Environment activation, suite execution, panic recovery, status rollups.                                                                 |
-| `evals/suite`           | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                               |
+| Path                    | Role                                                                                                                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evals`                 | Public authoring surface: `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `NewInfraObserveSuite`, `T`, `Call`, `CallServerStream`, `CallClientStream`, `Rouge1F1`, SLO constructors, registration functions. See also `stream_server.go` and `stream_client.go`. |
+| `evals/adk`             | ADK evaluation-launcher client (transport-agnostic) and lazy `AgentEvalProvider`.                                                                                                                                                                                            |
+| `evals/env`             | Shared environment registration and activation.                                                                                                                                                                                                                              |
+| `evals/errors`          | `EvalError` interface + `ToGRPC` / `ToGRPCf` for RPC boundary translation.                                                                                                                                                                                                   |
+| `evals/execution`       | In-process result types between execution and mapping; reuses wire status enums and infrastructure snapshots.                                                                                                                                                                |
+| `evals/loadgen`         | Embedded load generator (`Profile`, `Pacer`, `Generator`, `Metrics`).                                                                                                                                                                                                        |
+| `evals/mapper`          | `execution` → `evalspb.Run` translation; [`SetConfig`](mapper/config.go) for `google_project_id`.                                                                                                                                                                            |
+| `evals/registry`        | Registered suites, filter grammar, selection validation.                                                                                                                                                                                                                     |
+| `evals/report`          | `Reporter` interface + `NoOpReporter`, `All`, `FailFast`, `MultiReporter`.                                                                                                                                                                                                   |
+| `evals/report/log`      | Default log reporter (`log.Reporter`).                                                                                                                                                                                                                                       |
+| `evals/report/bqschema` | Shared BigQuery schema + `EnsureTable` for Run rows.                                                                                                                                                                                                                         |
+| `evals/report/bigquery` | BigQuery streaming reporter (`bigquery.Reporter`).                                                                                                                                                                                                                           |
+| `evals/report/pubsub`   | JSON Pub/Sub reporter (`pubsub.Reporter`) on `pubsub/v2`.                                                                                                                                                                                                                    |
+| `evals/runner`          | Environment activation, suite execution, panic recovery, status rollups.                                                                                                                                                                                                     |
+| `evals/suite`           | Internal `TestSuite`, `EvalSuite`, `LoadSuite` primitives.                                                                                                                                                                                                                   |
 
 ---
 
 ## End-to-end lifecycle
 
 1. **Register.** Each case package calls `env.Register(...)` and one of `RegisterIntegration` /
-   `RegisterEval` / `RegisterLoad` / `RegisterAgent` in its `init()` function.
-2. **Wire.** The neuron's `TestServiceServer` is constructed with `evals.DefaultRegistry()`,
-   `runner.New()`, and a reporter (default `logreport.Reporter{}`).
-3. **RPC arrives.** `RunIntegrationTest` / `RunLoadTest` / `RunAgentEval`.
+   `RegisterEval` / `RegisterLoad` / `RegisterInfraObserve` / `RegisterAgent` in its `init()` function.
+2. **Freeze.** After every package has registered, `evals.Freeze()` validates environment references,
+   load profiles, and duplicate suite names, then rejects later registration.
+3. **Wire.** The neuron's `TestServiceServer` is constructed with `evals.DefaultRegistry()`,
+   `runner.New()`, `mapper.SetConfig(...)` for `google_project_id`, and a reporter (default `logreport.Reporter{}`).
+4. **RPC arrives.** `RunIntegrationTest` / `RunLoadTest` / `RunAgentEval` / `RunInfraObservation`.
    `Registry.ValidateSelection` rejects unknown `case_ids` synchronously with `InvalidArgument`.
-4. **LRO starts.** A long-running operation is created with initial metadata (`case_count`,
+5. **LRO starts.** A long-running operation is created with initial metadata (`case_count`,
    `suite_count`). A resume task is scheduled; locally the `lro` library runs it in a goroutine via
    `httptest.NewRecorder`, in production it's dispatched via Cloud Tasks.
-5. **Runner executes.** Environment setups fire once, then suites run sequentially. Each case runs
+6. **Runner executes.** Environment setups fire once, then suites run sequentially. Each case runs
    under panic recovery — one bad case cannot take the batch down. LRO metadata is updated after
    each case (`completed_case_count`) and each suite (`completed_suite_count`).
-6. **Map & report.** Each completed suite is mapped to `evalspb.Run` via `mapper` and passed to the
+7. **Map & report.** Each completed suite is mapped to `evalspb.Run` via `mapper` and passed to the
    configured `Reporter`. Reporter errors are logged; they do not fail the LRO.
-7. **Complete.** The LRO completes with `RunXxxResponse.runs` listing the resource names of every
+8. **Complete.** The LRO completes with `RunXxxResponse.runs` listing the resource names of every
    emitted run (`runs/{run_id}`). Consumers fetch or subscribe to those.
 
-Every case appears in the result — passing, failing, or `NOT_EVALUATED` — so dashboards can compute
+Every selected case appears in the result — passing, failing, or `NOT_EVALUATED` — so dashboards can compute
 pass rate, headroom, and trend without reconstructing what was intended to run.
+
+---
+
+## Troubleshooting
+
+See `evals/knowledge/operations/troubleshooting.md` for the full table. Common signals:
+
+| Surfaced signal                        | Meaning                                   | Fix                                                                      |
+| -------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------ |
+| `_evals.no-checks-recorded`            | Case ran but recorded nothing             | Add an assertion or `t.Pass(id)`                                         |
+| `_evals.transport_errors`              | Transport failures with no error-rate SLO | Add `SLOErrorRate` or fix the SUT                                        |
+| `_evals.aborted`                       | Abort-on-SLO stopped a load window        | Inspect the breached SLO check                                           |
+| `_evals.teardown`                      | Suite teardown failed                     | Fix teardown; infra results carry this as a synthetic Cloud Run snapshot |
+| `INFRA_FETCH_STATUS_PERMISSION_DENIED` | Monitoring IAM missing                    | Grant `roles/monitoring.viewer`                                          |
+| `ErrUnknownCase`                       | Filter matched nothing                    | Check `{suite}.{case}` spelling                                          |
+| `ErrRegistryFrozen`                    | Registration after `registry.Freeze()`    | Register during init, before serving                                     |
+
+Diagnostic id strings match [`evals/verdict`](verdict/ids.go) constants so this table cannot drift from code.
+
+---
+
+## License
+
+This package is distributed under the repository's [MIT License](../LICENSE).
