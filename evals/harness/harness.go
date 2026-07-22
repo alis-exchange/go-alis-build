@@ -26,7 +26,24 @@ type SuiteRunner[C, R any] func(ctx context.Context, cases []C) ([]R, error)
 
 // BatchOptions configures optional batch-helper behaviour.
 type BatchOptions struct {
+	// Progress is called after each case completes.
 	Progress func(completed, total int)
+	// SuiteProgress is called after each suite has been mapped, reported,
+	// and recorded in the returned run names.
+	SuiteProgress func(completed, total int)
+}
+
+func recordSuite(names *[]string, name string, completed *int, total int, opts BatchOptions, mu *sync.Mutex) {
+	mu.Lock()
+	if name != "" {
+		*names = append(*names, name)
+	}
+	*completed = *completed + 1
+	current := *completed
+	mu.Unlock()
+	if opts.SuiteProgress != nil {
+		opts.SuiteProgress(current, total)
+	}
 }
 
 // RunSuite executes cases via run, maps each suite result, and reports best-effort.
@@ -93,8 +110,9 @@ func RunIntegrationBatch(
 	opts BatchOptions,
 ) ([]string, error) {
 	var (
-		names []string
-		mu    sync.Mutex
+		names     []string
+		completed int
+		mu        sync.Mutex
 	)
 	_, err := r.RunTestSuites(ctx, runs, opts.Progress, func(ctx context.Context, sr execution.SuiteResult) error {
 		suiteMeta := meta
@@ -102,11 +120,7 @@ func RunIntegrationBatch(
 		name := mapReport(ctx, sr, suiteMeta, func(sr execution.SuiteResult, m RunMeta) *evalspb.Run {
 			return mapper.IntegrationRun(sr, m.Operation, m.RunID, m.BatchID)
 		}, reporter)
-		mu.Lock()
-		if name != "" {
-			names = append(names, name)
-		}
-		mu.Unlock()
+		recordSuite(&names, name, &completed, len(runs), opts, &mu)
 		return nil
 	})
 	return names, err
@@ -122,8 +136,9 @@ func RunEvalBatch(
 	opts BatchOptions,
 ) ([]string, error) {
 	var (
-		names []string
-		mu    sync.Mutex
+		names     []string
+		completed int
+		mu        sync.Mutex
 	)
 	_, err := r.RunEvalSuites(ctx, runs, opts.Progress, func(ctx context.Context, sr execution.SuiteResult) error {
 		suiteMeta := meta
@@ -131,11 +146,7 @@ func RunEvalBatch(
 		name := mapReport(ctx, sr, suiteMeta, func(sr execution.SuiteResult, m RunMeta) *evalspb.Run {
 			return mapper.AgentEvalRun(sr, m.Operation, m.RunID)
 		}, reporter)
-		mu.Lock()
-		if name != "" {
-			names = append(names, name)
-		}
-		mu.Unlock()
+		recordSuite(&names, name, &completed, len(runs), opts, &mu)
 		return nil
 	})
 	return names, err
@@ -153,8 +164,9 @@ func RunLoadBatch(
 	opts BatchOptions,
 ) ([]string, error) {
 	var (
-		names []string
-		mu    sync.Mutex
+		names     []string
+		completed int
+		mu        sync.Mutex
 	)
 	_, err := r.RunLoadSuites(ctx, runs, mode, resolve, opts.Progress, func(ctx context.Context, sr execution.LoadSuiteResult) error {
 		suiteMeta := meta
@@ -162,11 +174,7 @@ func RunLoadBatch(
 		name := mapReport(ctx, sr, suiteMeta, func(sr execution.LoadSuiteResult, m RunMeta) *evalspb.Run {
 			return mapper.LoadRun(sr, m.Operation, m.RunID, m.BatchID)
 		}, reporter)
-		mu.Lock()
-		if name != "" {
-			names = append(names, name)
-		}
-		mu.Unlock()
+		recordSuite(&names, name, &completed, len(runs), opts, &mu)
 		return nil
 	})
 	return names, err
@@ -183,8 +191,9 @@ func RunInfraObserveBatch(
 	opts BatchOptions,
 ) ([]string, error) {
 	var (
-		names []string
-		mu    sync.Mutex
+		names     []string
+		completed int
+		mu        sync.Mutex
 	)
 	_, err := r.RunInfraObserveSuites(ctx, runs, params, opts.Progress, func(ctx context.Context, sr execution.InfraObserveSuiteResult) error {
 		suiteMeta := meta
@@ -192,11 +201,7 @@ func RunInfraObserveBatch(
 		name := mapReport(ctx, sr, suiteMeta, func(sr execution.InfraObserveSuiteResult, m RunMeta) *evalspb.Run {
 			return mapper.InfraObserveRun(sr, m.Operation, m.RunID, m.BatchID)
 		}, reporter)
-		mu.Lock()
-		if name != "" {
-			names = append(names, name)
-		}
-		mu.Unlock()
+		recordSuite(&names, name, &completed, len(runs), opts, &mu)
 		return nil
 	})
 	return names, err

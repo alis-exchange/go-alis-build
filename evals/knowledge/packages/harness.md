@@ -51,7 +51,10 @@ After:
 names, err := harness.RunIntegrationBatch(ctx, runner, runs, harness.RunMeta{
     Operation: operation,
     BatchID:   batchID,
-}, reporter, harness.BatchOptions{Progress: progress})
+}, reporter, harness.BatchOptions{
+    Progress:      caseProgress,
+    SuiteProgress: suiteProgress,
+})
 ```
 
 Products keep LRO private state, Cloud Tasks resume registration, and
@@ -63,7 +66,8 @@ Products keep LRO private state, Cloud Tasks resume registration, and
 - **Nil reporter** — map only, no I/O.
 - **Run IDs** — a fresh UUID is generated per suite unless [RunMeta.RunID] is
   set and exactly one suite result is returned from [RunSuite].
-- **Progress** — optional via [BatchOptions.Progress]; forwarded to runner.
+- **Case progress** — optional via [BatchOptions.Progress]; forwarded to the runner.
+- **Suite progress** — optional via [BatchOptions.SuiteProgress]; called after each suite is mapped, reported, and recorded in the returned run names.
 
 # Related
 

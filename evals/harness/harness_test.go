@@ -173,10 +173,50 @@ func TestRunIntegrationBatch_wiresMapperAndReporter(t *testing.T) {
 	}
 }
 
+func TestRunIntegrationBatch_reportsSuiteProgressAfterReporting(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingReporter{err: errors.New("sink unavailable")}
+	runs := []suite.TestSuiteRun{
+		{Cases: []suite.TestCase{stubHarnessTestCase{name: "suite-a.case", status: evalspb.Status_PASSED}}},
+		{Cases: []suite.TestCase{stubHarnessTestCase{name: "suite-b.case", status: evalspb.Status_PASSED}}},
+	}
+	var got [][2]int
+	names, err := RunIntegrationBatch(
+		context.Background(),
+		runner.New(),
+		runs,
+		RunMeta{Operation: "operations/test"},
+		rec,
+		BatchOptions{SuiteProgress: func(completed, total int) {
+			if len(rec.runs) != completed {
+				t.Errorf("reported runs = %d when completed = %d", len(rec.runs), completed)
+			}
+			got = append(got, [2]int{completed, total})
+		}},
+	)
+	if err != nil {
+		t.Fatalf("RunIntegrationBatch: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("names = %v, want 2", names)
+	}
+	want := [][2]int{{1, 2}, {2, 2}}
+	if len(got) != len(want) {
+		t.Fatalf("suite progress = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("suite progress[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestRunEvalBatch_wiresMapperAndReporter(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingReporter{}
+	var suiteProgress [2]int
 	r := runner.New()
 	runs := []suite.EvalSuiteRun{{
 		Cases: []suite.EvalCase{
@@ -185,7 +225,9 @@ func TestRunEvalBatch_wiresMapperAndReporter(t *testing.T) {
 	}}
 
 	names, err := RunEvalBatch(context.Background(), r, runs,
-		RunMeta{Operation: "operations/eval"}, rec, BatchOptions{})
+		RunMeta{Operation: "operations/eval"}, rec, BatchOptions{
+			SuiteProgress: func(completed, total int) { suiteProgress = [2]int{completed, total} },
+		})
 	if err != nil {
 		t.Fatalf("RunEvalBatch: %v", err)
 	}
@@ -195,12 +237,16 @@ func TestRunEvalBatch_wiresMapperAndReporter(t *testing.T) {
 	if len(rec.runs) != 1 || rec.runs[0].GetType() != evalspb.Run_AGENT_EVAL {
 		t.Fatalf("reported run = %+v, want AGENT_EVAL", rec.runs[0])
 	}
+	if suiteProgress != [2]int{1, 1} {
+		t.Fatalf("suite progress = %v, want [1 1]", suiteProgress)
+	}
 }
 
 func TestRunLoadBatch_wiresMapperAndReporter(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingReporter{}
+	var suiteProgress [2]int
 	r := runner.New()
 	runs := []suite.LoadSuiteRun{{
 		Cases: []suite.LoadCase{
@@ -214,7 +260,9 @@ func TestRunLoadBatch_wiresMapperAndReporter(t *testing.T) {
 		},
 		RunMeta{Operation: "operations/load", BatchID: "batch-1"},
 		rec,
-		BatchOptions{},
+		BatchOptions{
+			SuiteProgress: func(completed, total int) { suiteProgress = [2]int{completed, total} },
+		},
 	)
 	if err != nil {
 		t.Fatalf("RunLoadBatch: %v", err)
@@ -225,12 +273,16 @@ func TestRunLoadBatch_wiresMapperAndReporter(t *testing.T) {
 	if len(rec.runs) != 1 || rec.runs[0].GetType() != evalspb.Run_LOAD_TEST {
 		t.Fatalf("reported run = %+v, want LOAD_TEST", rec.runs[0])
 	}
+	if suiteProgress != [2]int{1, 1} {
+		t.Fatalf("suite progress = %v, want [1 1]", suiteProgress)
+	}
 }
 
 func TestRunInfraObserveBatch_wiresMapperAndReporter(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingReporter{}
+	var suiteProgress [2]int
 	r := runner.New()
 	runs := []suite.InfraObserveSuiteRun{{
 		Cases: []suite.InfraObserveCase{
@@ -239,7 +291,9 @@ func TestRunInfraObserveBatch_wiresMapperAndReporter(t *testing.T) {
 	}}
 
 	names, err := RunInfraObserveBatch(context.Background(), r, runs, runner.InfraObserveRunParams{},
-		RunMeta{Operation: "operations/infra", BatchID: "batch-1"}, rec, BatchOptions{})
+		RunMeta{Operation: "operations/infra", BatchID: "batch-1"}, rec, BatchOptions{
+			SuiteProgress: func(completed, total int) { suiteProgress = [2]int{completed, total} },
+		})
 	if err != nil {
 		t.Fatalf("RunInfraObserveBatch: %v", err)
 	}
@@ -248,6 +302,9 @@ func TestRunInfraObserveBatch_wiresMapperAndReporter(t *testing.T) {
 	}
 	if len(rec.runs) != 1 || rec.runs[0].GetType() != evalspb.Run_INFRA_OBSERVATION {
 		t.Fatalf("reported run = %+v, want INFRA_OBSERVATION", rec.runs[0])
+	}
+	if suiteProgress != [2]int{1, 1} {
+		t.Fatalf("suite progress = %v, want [1 1]", suiteProgress)
 	}
 }
 

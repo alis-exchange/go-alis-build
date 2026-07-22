@@ -12,7 +12,8 @@
 //	    Operation: lroName,
 //	    BatchID:   batchID,
 //	}, services.TestServiceServer.Reporter, harness.BatchOptions{
-//	    Progress: updateLROProgress,
+//	    Progress:      updateLROCaseProgress,
+//	    SuiteProgress: updateLROSuiteProgress,
 //	})
 //
 // Nil [report.Reporter] skips I/O, matching nil TestServiceServer.Reporter.
