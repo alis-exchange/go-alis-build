@@ -206,6 +206,15 @@ func TestRun_cancellationStopsNewSpecializedCasesAndReturnsPartialRun(t *testing
 	if cases[1].GetStatus() != evalspb.Status_NOT_EVALUATED {
 		t.Fatalf("second status = %v, want NOT_EVALUATED", cases[1].GetStatus())
 	}
+	metrics := cases[1].GetMetrics()
+	if len(metrics) != 1 {
+		t.Fatalf("second metrics = %d, want skipped marker", len(metrics))
+	}
+	if metrics[0].GetId() != "_evals.skipped" ||
+		metrics[0].GetStatus() != evalspb.Status_NOT_EVALUATED ||
+		metrics[0].GetMessage() != "run cancelled" {
+		t.Fatalf("second skipped metric = %+v, want _evals.skipped NOT_EVALUATED run cancelled", metrics[0])
+	}
 }
 
 func TestLoadSuite_godocWarnsAboutParallelLoadCases(t *testing.T) {

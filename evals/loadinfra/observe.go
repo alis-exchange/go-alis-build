@@ -106,13 +106,13 @@ func observeCloudRun(ctx context.Context, client MetricClient, t CloudRunTarget,
 
 	qw := cloudRunQueryWindow(w, extendQueryEnd)
 	snap := &evalspb.CloudRunTargetSnapshot{
-		Id:           t.ID,
-		Role:         mapTargetRole(t.Role),
-		Target:       &evalspb.CloudRunTargetRef{ProjectId: t.ProjectID, Region: t.Region, ServiceName: t.ServiceName},
-		WindowStart:  timestamppb.New(w.Start),
-		WindowEnd:    timestamppb.New(w.End),
-		FetchStatus:  evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
-		Metrics:      &evalspb.CloudRunMetrics{},
+		Id:          t.ID,
+		Role:        mapTargetRole(t.Role),
+		Target:      &evalspb.CloudRunTargetRef{ProjectId: t.ProjectID, Region: t.Region, ServiceName: t.ServiceName},
+		WindowStart: timestamppb.New(w.Start),
+		WindowEnd:   timestamppb.New(w.End),
+		FetchStatus: evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
+		Metrics:     &evalspb.CloudRunMetrics{},
 	}
 	if t.Revision != "" {
 		snap.Target.Revision = &t.Revision

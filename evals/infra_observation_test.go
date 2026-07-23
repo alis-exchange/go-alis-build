@@ -117,6 +117,30 @@ func TestInfraObservationResult_failPreservesPartialData(t *testing.T) {
 	}
 }
 
+func TestInfraObservationResult_unavailableSnapshotFailsCaseWithoutExtraValidation(t *testing.T) {
+	t.Parallel()
+
+	run, err := NewInfraObservationSuite("infra-unavailable").
+		AddCase("partial-fetch", func(_ context.Context, r *InfraObservationResult) {
+			r.AddCloudRunSnapshot(&evalspb.CloudRunTargetSnapshot{
+				Id:          "checkout-worker",
+				FetchStatus: evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
+			})
+		}).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	c := run.GetInfraObservation().GetCases()[0]
+	if c.GetStatus() != evalspb.Status_FAILED {
+		t.Fatalf("case status = %v, want FAILED", c.GetStatus())
+	}
+	if len(c.GetValidations()) != 0 {
+		t.Fatalf("validations = %d, want none for snapshot-derived failure", len(c.GetValidations()))
+	}
+}
+
 func TestInfraObservationResult_emptyCaseIsNotEvaluated(t *testing.T) {
 	t.Parallel()
 

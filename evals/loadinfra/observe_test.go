@@ -25,13 +25,13 @@ func TestObserveCloudRunSuccess(t *testing.T) {
 		ProjectID: "proj", Region: "europe-west1", ServiceName: "search-v1",
 	}
 	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
-		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(42),
-		cloudRunMetricFilter(target, crMetricRequestLatencies): doubleSeries(12.5),
+		cloudRunMetricFilter(target, crMetricRequestCount):                                            int64Series(42),
+		cloudRunMetricFilter(target, crMetricRequestLatencies):                                        doubleSeries(12.5),
 		cloudRunMetricFilter(target, crMetricRequestCount, `metric.labels.response_code_class="5xx"`): int64Series(0),
-		cloudRunMetricFilter(target, crMetricInstanceCount): doubleSeries(3),
-		cloudRunMetricFilter(target, crMetricCPUUtilization): doubleSeries(0.55),
-		cloudRunMetricFilter(target, crMetricMemoryUtilization): doubleSeries(0.4),
-		cloudRunMetricFilter(target, crMetricStartupLatencies): doubleSeries(800),
+		cloudRunMetricFilter(target, crMetricInstanceCount):                                           doubleSeries(3),
+		cloudRunMetricFilter(target, crMetricCPUUtilization):                                          doubleSeries(0.55),
+		cloudRunMetricFilter(target, crMetricMemoryUtilization):                                       doubleSeries(0.4),
+		cloudRunMetricFilter(target, crMetricStartupLatencies):                                        doubleSeries(800),
 	}}
 
 	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0)
@@ -68,10 +68,10 @@ func TestObserveSpannerSuccess(t *testing.T) {
 		`metric.type="spanner.googleapis.com/instance/cpu/utilization"`,
 	}, " AND ")
 	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
-		spannerMetricFilter(target, spMetricQueryCount): int64Series(100),
+		spannerMetricFilter(target, spMetricQueryCount):                               int64Series(100),
 		spannerMetricFilter(target, spMetricQueryCount, `metric.labels.status!="ok"`): int64Series(2),
-		spannerMetricFilter(target, spMetricAPILatencies): doubleSeries(5.2),
-		spannerMetricFilter(target, spMetricQueryLatencies): doubleSeries(7.1),
+		spannerMetricFilter(target, spMetricAPILatencies):                             doubleSeries(5.2),
+		spannerMetricFilter(target, spMetricQueryLatencies):                           doubleSeries(7.1),
 		cpuFilter: doubleSeries(0.72),
 	}}
 
@@ -243,16 +243,16 @@ func TestObserve_respectsTargetConcurrencyBound(t *testing.T) {
 
 func int64Series(v int64) []*monitoringpb.TimeSeries {
 	return []*monitoringpb.TimeSeries{{
-		Resource:  &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
-		Metric:    &metric.Metric{Type: "test"},
-		Points:    []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
+		Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
+		Metric:   &metric.Metric{Type: "test"},
+		Points:   []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
 	}}
 }
 
 func doubleSeries(v float64) []*monitoringpb.TimeSeries {
 	return []*monitoringpb.TimeSeries{{
-		Resource:  &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
-		Metric:    &metric.Metric{Type: "test"},
-		Points:    []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_DoubleValue{DoubleValue: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
+		Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
+		Metric:   &metric.Metric{Type: "test"},
+		Points:   []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_DoubleValue{DoubleValue: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
 	}}
 }

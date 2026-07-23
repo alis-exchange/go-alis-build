@@ -20,6 +20,8 @@ var (
 )
 
 const panicCheckID = "_evals.panic"
+const skippedCheckID = "_evals.skipped"
+const skippedMessage = "run cancelled"
 
 const (
 	caseValidationID  = "_evals.case"
@@ -102,6 +104,7 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
+			s.markCancelledCases(cases)
 			return cases
 		case jobs <- i:
 		}
@@ -109,7 +112,53 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 	close(jobs)
 
 	wg.Wait()
+	if ctx.Err() != nil {
+		s.markCancelledCases(cases)
+	}
 	return cases
+}
+
+func (s *suiteCore) markCancelledCases(cases []executedCase) {
+	for i := range cases {
+		if cases[i].status != evalspb.Status_NOT_EVALUATED || hasCaseResultData(cases[i]) {
+			continue
+		}
+		switch s.branch {
+		case branchIntegration:
+			cases[i].checks = []*evalspb.IntegrationTestResults_Case_Check{{
+				Id:      skippedCheckID,
+				Status:  evalspb.Status_NOT_EVALUATED,
+				Message: skippedMessage,
+			}}
+		case branchAgentEval:
+			cases[i].metrics = []*evalspb.AgentEvalResults_Case_Metric{{
+				Id:      skippedCheckID,
+				Status:  evalspb.Status_NOT_EVALUATED,
+				Message: skippedMessage,
+			}}
+		case branchLoad, branchInfraObservation:
+			cases[i].validations = []*evalspb.Validation{{
+				Id:      skippedCheckID,
+				Status:  evalspb.Status_NOT_EVALUATED,
+				Message: skippedMessage,
+			}}
+		}
+	}
+}
+
+func hasCaseResultData(c executedCase) bool {
+	return len(c.checks) > 0 ||
+		len(c.validations) > 0 ||
+		c.sessionID != "" ||
+		len(c.metrics) > 0 ||
+		c.judge != nil ||
+		c.summary != nil ||
+		len(c.loadChecks) > 0 ||
+		len(c.tags) > 0 ||
+		len(c.cloudRun) > 0 ||
+		len(c.spanner) > 0 ||
+		len(c.infraChecks) > 0 ||
+		c.windowSet
 }
 
 func (s *suiteCore) runOneCaseRecovering(ctx context.Context, fc registeredCase) (out executedCase) {
@@ -449,6 +498,9 @@ func infraObservationOutcome(caseName string, r *InfraObservationResult) execute
 			break
 		}
 	}
+	if status != evalspb.Status_FAILED && infraSnapshotsUnavailable(r.cloudRun, r.spanner) {
+		status = evalspb.Status_FAILED
+	}
 	if status != evalspb.Status_FAILED {
 		for _, v := range validations {
 			if v.GetStatus() == evalspb.Status_FAILED {
@@ -470,6 +522,20 @@ func infraObservationOutcome(caseName string, r *InfraObservationResult) execute
 		windowEnd:   r.windowEnd,
 		windowSet:   r.windowSet,
 	}
+}
+
+func infraSnapshotsUnavailable(cloudRun []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) bool {
+	for _, snapshot := range cloudRun {
+		if snapshot.GetFetchStatus() == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+			return true
+		}
+	}
+	for _, snapshot := range spanner {
+		if snapshot.GetFetchStatus() == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *suiteCore) materializeRun(cfg runConfig, cases []executedCase, start, end time.Time) *evalspb.Run {
