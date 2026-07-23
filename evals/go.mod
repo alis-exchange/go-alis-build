@@ -11,6 +11,7 @@ require (
 	go.alis.build/adk/launchers v1.0.9
 	go.alis.build/alog v0.1.0
 	go.alis.build/common v1.1.15
+	go.alis.build/validation v1.0.7
 	go.einride.tech/protobuf-bigquery v0.29.0
 	google.golang.org/api v0.290.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a

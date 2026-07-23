@@ -60,7 +60,7 @@ func main() {
 		"evaluation_descriptor_sha256": fmt.Sprintf("%x", descriptorSum),
 		"baseline_task":                "capture-result-baseline",
 		"captured_at":                  "2026-07-23",
-		"note":                         "Frozen before the fluent typed suite rewrite; do not update after P0 without explicit review.",
+		"note":                         "Frozen before the typed suite rewrite; do not update after P0 without explicit review.",
 	}, "", "  ")
 	if err != nil {
 		fatalf("marshal manifest: %v", err)
