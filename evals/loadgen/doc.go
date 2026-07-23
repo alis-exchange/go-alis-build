@@ -3,9 +3,10 @@
 // The design is deliberately narrow: one [Profile] describes a fixed-rate
 // load window, one [Pacer] schedules sends, a fixed pool of workers
 // executes a caller-supplied [ResultTarget] function, and a single aggregator
-// goroutine folds results into aggregate [Metrics]. Nothing in this
-// package knows about proto types, suites, or SLOs — the parent [evals]
-// package composes those on top.
+// goroutine folds results into aggregate [Metrics]. Nothing in this package
+// owns eval suites, lifecycle, reporters, or SLO policy — callers compose
+// those on top and can use [Summary] to copy aggregate metrics into the
+// evals wire format.
 //
 // # Usage
 //

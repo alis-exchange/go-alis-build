@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -105,15 +106,14 @@ func (s *suiteCore) run(ctx context.Context, opts []RunOption, publish bool) (*e
 	executed := s.executeCases(ctx, cfg, cases)
 	end := now()
 	run := s.materializeRun(cfg, executed, start, end)
-	if err := ctx.Err(); err != nil {
-		return run, err
+	var runErr error
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		runErr = errors.Join(runErr, ctxErr)
 	}
-	if publish && cfg.reporter != nil {
-		if err := cfg.reporter.ReportRun(ctx, run); err != nil {
-			return run, err
-		}
+	if publish {
+		runErr = errors.Join(runErr, publishRun(ctx, cfg, run))
 	}
-	return run, nil
+	return run, runErr
 }
 
 func (s *suiteCore) snapshotPendingErrors() []error {

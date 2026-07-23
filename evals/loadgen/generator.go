@@ -33,9 +33,9 @@ type inProcess struct{}
 // hdrConfig covers 1µs to 1h with 3 significant figures. Latencies above 1h
 // are extremely unlikely for a single RPC and would be clamped to the max.
 const (
-	hdrMinValueUs = 1                                      // minimum recordable latency in microseconds
-	hdrMaxValueUs = int64(time.Hour / time.Microsecond)    // maximum recordable latency in microseconds
-	hdrSigFigs    = 3                                      // HDR histogram significant-figure precision
+	hdrMinValueUs = 1                                   // minimum recordable latency in microseconds
+	hdrMaxValueUs = int64(time.Hour / time.Microsecond) // maximum recordable latency in microseconds
+	hdrSigFigs    = 3                                   // HDR histogram significant-figure precision
 )
 
 // sample is one completed request handed from a worker to the aggregator.
@@ -369,15 +369,15 @@ func (a *aggregator) record(s sample) {
 func (a *aggregator) buildMetrics() *Metrics {
 	elapsed := a.measurementElapsed()
 	m := &Metrics{
-		Duration:          elapsed,
-		RequestCount:      a.count,
-		ErrorCount:        a.errCount,
-		CheckPassedCount:  a.checkPassed,
-		CheckFailedCount:  a.checkFailed,
-		ErrorsByCode:      cloneErrorsMap(a.errorsByCode),
-		DroppedCount:      a.dropped,
-		MeasurementStart:  a.measurementStart,
-		MeasurementEnd:    a.measurementEnd,
+		Duration:         elapsed,
+		RequestCount:     a.count,
+		ErrorCount:       a.errCount,
+		CheckPassedCount: a.checkPassed,
+		CheckFailedCount: a.checkFailed,
+		ErrorsByCode:     cloneErrorsMap(a.errorsByCode),
+		DroppedCount:     a.dropped,
+		MeasurementStart: a.measurementStart,
+		MeasurementEnd:   a.measurementEnd,
 	}
 	if elapsed > 0 {
 		m.ActualQPS = float64(a.count) / elapsed.Seconds()

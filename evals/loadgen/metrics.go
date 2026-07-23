@@ -46,9 +46,9 @@ type StreamSummary struct {
 	StreamCount       int64
 	MessagesSentTotal int64
 	// TTFB aggregates [StreamSample.SendDuration] (client-stream send phase).
-	TTFB LatencySummary
-	ResponseLatency   LatencySummary
-	TotalDuration     LatencySummary
+	TTFB            LatencySummary
+	ResponseLatency LatencySummary
+	TotalDuration   LatencySummary
 }
 
 // LatencySummary holds per-request latency percentiles and extremes in

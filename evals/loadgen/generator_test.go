@@ -756,4 +756,3 @@ func TestInProcess_ConcurrencyStepDownCountsDropped(t *testing.T) {
 		t.Fatal("DroppedCount=0, want > 0 when concurrency steps down")
 	}
 }
-
