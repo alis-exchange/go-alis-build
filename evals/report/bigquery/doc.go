@@ -52,7 +52,6 @@
 //	    if err != nil {
 //	        return nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = r
 //	    return r, nil // Close() at server drain
 //	}
 //
@@ -66,16 +65,16 @@
 //	    bqreport "go.alis.build/evals/report/bigquery"
 //	)
 //
-//	func setupReporters(ctx context.Context, datasetID, tableID string) (*bqreport.Reporter, error) {
+//	func setupReporters(ctx context.Context, datasetID, tableID string) (report.Reporter, *bqreport.Reporter, error) {
 //	    r, err := bqreport.New(ctx, os.Getenv("ALIS_OS_PRODUCT_PROJECT"), datasetID, tableID)
 //	    if err != nil {
-//	        return nil, err
+//	        return nil, nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = report.MultiReporter{
+//	    reporter := report.MultiReporter{
 //	        logreport.Reporter{},
 //	        r,
 //	    }
-//	    return r, nil // Close() at server drain
+//	    return reporter, r, nil // Close r at server drain
 //	}
 //
 // # Client ownership
