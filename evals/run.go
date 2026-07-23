@@ -48,6 +48,12 @@ type executedCase struct {
 	metrics     []*evalspb.AgentEvalResults_Case_Metric
 	judge       *evalspb.AgentEvalResults_JudgeInfo
 	judgeSkip   bool
+	summary     *evalspb.LoadTestResults_Summary
+	loadChecks  []*evalspb.LoadTestResults_SloCheck
+	tags        []*evalspb.LoadTestResults_StringEntry
+	cloudRun    []*evalspb.CloudRunTargetSnapshot
+	spanner     []*evalspb.SpannerTargetSnapshot
+	infraChecks []*evalspb.InfraSloCheck
 }
 
 func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered []registeredCase) []executedCase {
@@ -308,14 +314,67 @@ func agentEvalOutcome(caseName string, r *AgentEvalResult) executedCase {
 
 func runLoadCase(ctx context.Context, suiteName string, fc registeredCase) executedCase {
 	fn, _ := fc.fn.(LoadCaseFunc)
-	r := &LoadResult{}
+	r := newLoadResult()
 	if fn != nil {
 		fn(ctx, r)
 	}
 	_ = suiteName
+	return loadOutcome(fc.name, r)
+}
+
+func loadOutcome(caseName string, r *LoadResult) executedCase {
+	validations := validationsFromValidator(r.Validator())
+	for _, err := range r.failures {
+		validations = append(validations, &evalspb.Validation{
+			Id:      caseValidationID,
+			Status:  evalspb.Status_FAILED,
+			Message: err.Error(),
+		})
+	}
+
+	status := evalspb.Status_NOT_EVALUATED
+	if r.summary != nil ||
+		len(r.checks) > 0 ||
+		len(r.tags) > 0 ||
+		len(r.cloudRun) > 0 ||
+		len(r.spanner) > 0 ||
+		len(r.infraChecks) > 0 ||
+		len(validations) > 0 {
+		status = evalspb.Status_PASSED
+	}
+	for _, check := range r.checks {
+		if check.GetStatus() == evalspb.Status_FAILED {
+			status = evalspb.Status_FAILED
+			break
+		}
+	}
+	if status != evalspb.Status_FAILED {
+		for _, check := range r.infraChecks {
+			if check.GetStatus() == evalspb.Status_FAILED {
+				status = evalspb.Status_FAILED
+				break
+			}
+		}
+	}
+	if status != evalspb.Status_FAILED {
+		for _, v := range validations {
+			if v.GetStatus() == evalspb.Status_FAILED {
+				status = evalspb.Status_FAILED
+				break
+			}
+		}
+	}
+
 	return executedCase{
-		name:   fc.name,
-		status: evalspb.Status_PASSED,
+		name:        caseName,
+		status:      status,
+		validations: validations,
+		summary:     r.summary,
+		loadChecks:  r.checks,
+		tags:        r.tags,
+		cloudRun:    r.cloudRun,
+		spanner:     r.spanner,
+		infraChecks: r.infraChecks,
 	}
 }
 
@@ -403,8 +462,15 @@ func (s *suiteCore) attachBranchData(run *evalspb.Run, cases []executedCase) {
 		protoCases := make([]*evalspb.LoadTestResults_Case, len(cases))
 		for i, c := range cases {
 			protoCases[i] = &evalspb.LoadTestResults_Case{
-				Id:     qualifiedCaseID(s.name, c.name),
-				Status: c.status,
+				Id:          qualifiedCaseID(s.name, c.name),
+				Status:      c.status,
+				Summary:     c.summary,
+				Checks:      c.loadChecks,
+				Tags:        c.tags,
+				CloudRun:    c.cloudRun,
+				Spanner:     c.spanner,
+				InfraChecks: c.infraChecks,
+				Validations: c.validations,
 			}
 		}
 		run.Data = &evalspb.Run_LoadTest{LoadTest: &evalspb.LoadTestResults{Cases: protoCases}}
