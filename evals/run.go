@@ -54,6 +54,10 @@ type executedCase struct {
 	cloudRun    []*evalspb.CloudRunTargetSnapshot
 	spanner     []*evalspb.SpannerTargetSnapshot
 	infraChecks []*evalspb.InfraSloCheck
+	lookback    time.Duration
+	windowStart time.Time
+	windowEnd   time.Time
+	windowSet   bool
 }
 
 func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered []registeredCase) []executedCase {
@@ -84,7 +88,7 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 				}
 				fc := registered[idx]
 				start := now()
-				out := s.runOneCase(ctx, fc)
+				out := s.runOneCaseRecovering(ctx, fc)
 				out.duration = now().Sub(start)
 				out.index = idx
 				out.name = fc.name
@@ -106,6 +110,39 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 
 	wg.Wait()
 	return cases
+}
+
+func (s *suiteCore) runOneCaseRecovering(ctx context.Context, fc registeredCase) (out executedCase) {
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			out = s.panicOutcome(fc.name, panicValue)
+		}
+	}()
+	return s.runOneCase(ctx, fc)
+}
+
+func (s *suiteCore) panicOutcome(caseName string, panicValue any) executedCase {
+	message := fmt.Sprintf("panic: %v", panicValue)
+	if s.branch == branchIntegration {
+		return executedCase{
+			name:   caseName,
+			status: evalspb.Status_FAILED,
+			checks: []*evalspb.IntegrationTestResults_Case_Check{{
+				Id:      panicCheckID,
+				Status:  evalspb.Status_FAILED,
+				Message: message,
+			}},
+		}
+	}
+	return executedCase{
+		name:   caseName,
+		status: evalspb.Status_FAILED,
+		validations: []*evalspb.Validation{{
+			Id:      panicCheckID,
+			Status:  evalspb.Status_FAILED,
+			Message: message,
+		}},
+	}
 }
 
 func (s *suiteCore) runOneCase(ctx context.Context, fc registeredCase) executedCase {
@@ -380,14 +417,58 @@ func loadOutcome(caseName string, r *LoadResult) executedCase {
 
 func runInfraObservationCase(ctx context.Context, suiteName string, fc registeredCase) executedCase {
 	fn, _ := fc.fn.(InfraObservationCaseFunc)
-	r := &InfraObservationResult{}
+	r := newInfraObservationResult()
 	if fn != nil {
 		fn(ctx, r)
 	}
 	_ = suiteName
+	return infraObservationOutcome(fc.name, r)
+}
+
+func infraObservationOutcome(caseName string, r *InfraObservationResult) executedCase {
+	validations := validationsFromValidator(r.Validator())
+	for _, err := range r.failures {
+		validations = append(validations, &evalspb.Validation{
+			Id:      caseValidationID,
+			Status:  evalspb.Status_FAILED,
+			Message: err.Error(),
+		})
+	}
+
+	status := evalspb.Status_NOT_EVALUATED
+	if r.windowSet ||
+		len(r.cloudRun) > 0 ||
+		len(r.spanner) > 0 ||
+		len(r.infraChecks) > 0 ||
+		len(validations) > 0 {
+		status = evalspb.Status_PASSED
+	}
+	for _, check := range r.infraChecks {
+		if check.GetStatus() == evalspb.Status_FAILED {
+			status = evalspb.Status_FAILED
+			break
+		}
+	}
+	if status != evalspb.Status_FAILED {
+		for _, v := range validations {
+			if v.GetStatus() == evalspb.Status_FAILED {
+				status = evalspb.Status_FAILED
+				break
+			}
+		}
+	}
+
 	return executedCase{
-		name:   fc.name,
-		status: evalspb.Status_PASSED,
+		name:        caseName,
+		status:      status,
+		validations: validations,
+		cloudRun:    r.cloudRun,
+		spanner:     r.spanner,
+		infraChecks: r.infraChecks,
+		lookback:    r.lookback,
+		windowStart: r.windowStart,
+		windowEnd:   r.windowEnd,
+		windowSet:   r.windowSet,
 	}
 }
 
@@ -477,10 +558,20 @@ func (s *suiteCore) attachBranchData(run *evalspb.Run, cases []executedCase) {
 	case branchInfraObservation:
 		protoCases := make([]*evalspb.InfraObservationResults_Case, len(cases))
 		for i, c := range cases {
-			protoCases[i] = &evalspb.InfraObservationResults_Case{
-				Id:     qualifiedCaseID(s.name, c.name),
-				Status: c.status,
+			pc := &evalspb.InfraObservationResults_Case{
+				Id:          qualifiedCaseID(s.name, c.name),
+				Status:      c.status,
+				CloudRun:    c.cloudRun,
+				Spanner:     c.spanner,
+				InfraChecks: c.infraChecks,
+				Validations: c.validations,
 			}
+			if c.windowSet {
+				pc.Lookback = durationpb.New(c.lookback)
+				pc.WindowStart = timestamppb.New(c.windowStart)
+				pc.WindowEnd = timestamppb.New(c.windowEnd)
+			}
+			protoCases[i] = pc
 		}
 		run.Data = &evalspb.Run_InfraObservation{InfraObservation: &evalspb.InfraObservationResults{Cases: protoCases}}
 	}

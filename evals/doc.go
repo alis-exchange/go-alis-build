@@ -10,6 +10,8 @@
 // concurrently. Cases execute sequentially by default. WithMaxConcurrency
 // permits bounded parallel execution while preserving result order.
 //
+// LoadSuite accepts the same concurrency option. Warning: parallel load cases combine traffic against their targets and can distort measurements. Prefer the default single active load case unless the combined traffic is intentional.
+//
 // Developers own setup, cleanup, clients, credentials, fixtures, and
 // higher-level control flow using ordinary Go. The package does not provide
 // registries or framework-managed lifecycle hooks.
