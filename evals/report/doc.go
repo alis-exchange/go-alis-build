@@ -19,15 +19,10 @@
 //
 // # Wiring
 //
-// TestServiceServer holds a single [Reporter]. Wire [Reporter.ReportRun]
-// inside the optional `onSuiteComplete` callback passed to
-// [go.alis.build/evals/runner.Runner] Run*Suites methods so each
-// `evalspb.Run` is emitted as soon as its suite finishes — the runner
-// provides per-suite timing; the service owns mapping and I/O.
-//
-// Set TestServiceServer.Reporter to nil to silence emission entirely, or
-// wrap several sinks with [All] or [FailFast] (or the [MultiReporter] alias
-// for fail-fast) to fan out.
+// Suites publish explicitly through RunAndPublish. Pass a reporter with
+// evals.WithReporter to replace the default sink for that run, or wrap several
+// sinks with [All] or [FailFast] (or the [MultiReporter] alias for fail-fast)
+// to fan out.
 //
 // Bootstrap the BigQuery table once, then fan out to log, BigQuery, and
 // Pub/Sub:
@@ -71,15 +66,17 @@
 //	        _ = bq.Close()
 //	        return nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = report.All{
+//	    reporter := report.All{
 //	        logreport.Reporter{},
 //	        bq,
 //	        ps,
 //	    }
+//	    _ = reporter
 //	    return multiCloser{closers: []io.Closer{bq, ps}}, nil
 //	}
 //
-// Call the returned [io.Closer] during server drain so Pub/Sub and BigQuery
+// Pass the reporter to evals.WithReporter and call the returned [io.Closer]
+// during server drain so Pub/Sub and BigQuery
 // clients flush cleanly.
 //
 // # Fan-out semantics

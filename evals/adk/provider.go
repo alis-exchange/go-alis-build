@@ -4,8 +4,7 @@ import (
 	"context"
 	"time"
 
-	"go.alis.build/evals/execution"
-	"go.alis.build/evals/suite"
+	evalspb "go.alis.build/common/alis/evals/v1"
 )
 
 // clientFactory constructs a [Client] for one provider run; overridden in tests
@@ -22,6 +21,14 @@ type Provider struct {
 
 // ProviderOption configures a Provider.
 type ProviderOption func(*Provider)
+
+// ProviderResult is one ADK eval set materialized as protobuf-native results.
+type ProviderResult struct {
+	SuiteName string
+	StartTime time.Time
+	EndTime   time.Time
+	Results   *evalspb.AgentEvalResults
+}
 
 // WithClientFactory overrides the default HTTP client factory (for tests).
 func WithClientFactory(fn clientFactory) ProviderOption {
@@ -50,8 +57,8 @@ func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 	return p
 }
 
-// Run discovers eval sets, runs filtered cases, and returns suite results.
-func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.SuiteResult, error) {
+// Run discovers eval sets, runs filtered cases, and returns protobuf-native results.
+func (p *Provider) Run(ctx context.Context, filters []string) ([]ProviderResult, error) {
 	if p == nil {
 		return nil, ErrNilProvider{}
 	}
@@ -69,12 +76,12 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 		return nil, ErrListEvalSets{Err: err}
 	}
 
-	parsed, err := suite.ParseFilterPaths(filters)
+	parsed, err := parseFilterPaths(filters)
 	if err != nil {
 		return nil, err
 	}
 
-	var out []execution.SuiteResult
+	var out []ProviderResult
 	for _, setID := range setIDs {
 		if p.agent.IncludeEvalSet != nil && !p.agent.IncludeEvalSet(setID) {
 			continue
@@ -101,37 +108,33 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 			return nil, ErrRunEval{SetID: setID, Err: err}
 		}
 
-		each := end.Sub(start) / time.Duration(max(len(results), 1))
-		cases := make([]execution.CaseResult, 0, len(results))
-		var suiteJudgeCalls int64
-		for _, r := range results {
-			cr := CaseFromRunEvalResult(setID, r, each)
-			suiteJudgeCalls += cr.JudgeCallCount
-			cases = append(cases, *cr)
-		}
-
-		// Resolve judge provenance for this suite. Agent.JudgeModel is
-		// authoritative; probeJudgeModel is a best-effort fallback that
-		// walks the caller-supplied metric criteria for this set. See
-		// Agent.JudgeModel godoc for the caveats around heterogeneous
-		// metric setups and the adk-python default asymmetry.
+		// Resolve judge provenance for this suite. Agent.JudgeModel is authoritative;
+		// probeJudgeModel is a best-effort fallback that walks caller-supplied metric
+		// criteria for this set.
 		judgeModel := p.agent.JudgeModel
 		if judgeModel == "" {
 			judgeModel = probeJudgeModel(params.Metrics)
 		}
-
-		out = append(out, execution.SuiteResult{
+		judge := SynthesizeJudgeContext(results, judgeModel, p.agent.JudgeModelVersion)
+		out = append(out, ProviderResult{
 			SuiteName: setID,
-			Cases:     cases,
 			StartTime: start,
 			EndTime:   end,
-			Judge: execution.JudgeInfo{
-				Model:        judgeModel,
-				ModelVersion: p.agent.JudgeModelVersion,
-			},
-			JudgeCallCount: suiteJudgeCalls,
+			Results:   AgentEvalResultsFromRunEvalResults(setID, results, repeatedDuration(len(results), end.Sub(start)), judge),
 		})
 	}
 
 	return out, nil
+}
+
+func repeatedDuration(n int, total time.Duration) []time.Duration {
+	if n == 0 {
+		return nil
+	}
+	each := total / time.Duration(n)
+	out := make([]time.Duration, n)
+	for i := range out {
+		out[i] = each
+	}
+	return out
 }

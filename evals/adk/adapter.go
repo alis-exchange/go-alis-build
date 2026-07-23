@@ -6,34 +6,18 @@ import (
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals/v1"
-	"go.alis.build/evals/execution"
-	"go.alis.build/evals/internal/result"
-	"go.alis.build/evals/suite"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // JudgeContext carries optional judge provenance for AgentEvalResults.
 //
-// Model and ModelVersion identify the LLM-as-judge configuration used
-// to score the run. CallCount and ErrorCount are counters populated by
-// callers who have visibility into the judge invocation cardinality
-// (either derived by [SynthesizeJudgeContext] /
-// [SynthesizeJudgeContextFromMetrics], or fed in from an out-of-band
-// signal). See [alis.evals.v1.AgentEvalResults.JudgeInfo] for the wire
-// shape.
+// Model and ModelVersion identify the LLM-as-judge configuration used to score
+// the run. CallCount and ErrorCount are counters populated by callers who have
+// visibility into judge invocation cardinality.
 //
-// CallCount as populated by SynthesizeJudgeContext is a lower bound —
-// it counts LLM-as-judge metric result entries in RunEvalResults, not
-// per-invocation samples. See [go.alis.build/evals/execution.CaseResult.JudgeCallCount]
-// for the same caveat, and the track spec's follow-up note about
-// preserving criterion.judgeModelOptions on the launcher's
-// EvalMetricResult for a more precise count.
-//
-// ErrorCount is not derived by this package: the framework does not
-// attribute an EvalStatus of NOT_EVALUATED to "judge errored" because
-// the two are not equivalent (NOT_EVALUATED can also mean the metric
-// was skipped for reasons unrelated to the judge). Callers with an
-// out-of-band error signal may set ErrorCount directly.
+// CallCount as populated by SynthesizeJudgeContext is a lower bound: it counts
+// LLM-as-judge metric result entries in RunEvalResults, not per-invocation
+// samples.
 type JudgeContext struct {
 	Model        string
 	ModelVersion string
@@ -41,47 +25,28 @@ type JudgeContext struct {
 	ErrorCount   int64
 }
 
-// isZero reports whether the JudgeContext carries no information that
-// would populate any AgentEvalResults.JudgeInfo field.
 func (j JudgeContext) isZero() bool {
 	return j.Model == "" && j.ModelVersion == "" && j.CallCount == 0 && j.ErrorCount == 0
 }
 
-// CaseFromRunEvalResult maps one ADK case result to an internal case result.
+// CaseFromRunEvalResult maps one ADK case result to the wire case result.
 // suiteName qualifies the wire case id as "{suite}.{case}".
-//
-// Migration note: suiteName became required when eval case IDs were aligned
-// with the package-wide qualified-ID contract.
-//
-// JudgeCallCount is populated as the count of LLM-as-judge metric result
-// entries in r.OverallEvalMetricResults (per [isJudgeMetric]); see
-// [execution.CaseResult.JudgeCallCount] for the lower-bound caveat.
-func CaseFromRunEvalResult(suiteName string, r models.RunEvalResult, duration time.Duration) *execution.CaseResult {
-	metrics := make([]execution.Metric, len(r.OverallEvalMetricResults))
-	var judgeCalls int64
+func CaseFromRunEvalResult(suiteName string, r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
+	metrics := make([]*evalspb.AgentEvalResults_Case_Metric, len(r.OverallEvalMetricResults))
 	for i, mr := range r.OverallEvalMetricResults {
 		metrics[i] = metricFromADK(mr)
-		if isJudgeMetric(mr.MetricName) {
-			judgeCalls++
-		}
 	}
-	return &execution.CaseResult{
-		Name:           suite.QualifiedName(suiteName, r.EvalID),
-		Status:         statusFromADK(r.FinalEvalStatus),
-		SessionID:      r.SessionID,
-		Metrics:        metrics,
-		Duration:       duration,
-		JudgeCallCount: judgeCalls,
+	return &evalspb.AgentEvalResults_Case{
+		Id:        qualifiedADKCaseID(suiteName, r.EvalID),
+		Status:    statusFromADK(r.FinalEvalStatus),
+		SessionId: r.SessionID,
+		Duration:  durationProto(duration),
+		Metrics:   metrics,
 	}
 }
 
 // AgentEvalResultsFromRunEvalResults maps ADK results to a wire AgentEvalResults branch.
 // suiteName qualifies each emitted case ID as "{suite}.{case}".
-//
-// The returned message has a non-nil Judge sidecar iff the JudgeContext
-// is non-zero on any of Model, ModelVersion, CallCount, or ErrorCount.
-// A fully zero-valued JudgeContext yields a nil Judge (no wire sidecar),
-// which is the correct signal for a non-judge run.
 func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEvalResult, durations []time.Duration, judge JudgeContext) *evalspb.AgentEvalResults {
 	cases := make([]*evalspb.AgentEvalResults_Case, len(results))
 	for i, r := range results {
@@ -89,7 +54,7 @@ func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEv
 		if i < len(durations) {
 			d = durations[i]
 		}
-		cases[i] = caseProtoFromRunEvalResult(suiteName, r, d)
+		cases[i] = CaseFromRunEvalResult(suiteName, r, d)
 	}
 	out := &evalspb.AgentEvalResults{Cases: cases}
 	if !judge.isZero() {
@@ -107,11 +72,7 @@ func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEv
 }
 
 // SynthesizeJudgeContext derives a JudgeContext by counting LLM-as-judge
-// metric result entries in results. Model and modelVersion are the
-// caller-declared provenance (authoritative; not probed from criteria —
-// use [SynthesizeJudgeContextFromMetrics] for that). CallCount is the
-// sum across all cases of entries whose MetricName is judge-backed per
-// [isJudgeMetric]. ErrorCount is always 0 (see [JudgeContext]).
+// metric result entries in results.
 func SynthesizeJudgeContext(results []models.RunEvalResult, model, modelVersion string) JudgeContext {
 	return JudgeContext{
 		Model:        model,
@@ -121,13 +82,7 @@ func SynthesizeJudgeContext(results []models.RunEvalResult, model, modelVersion 
 }
 
 // SynthesizeJudgeContextFromMetrics is [SynthesizeJudgeContext] with an
-// auto-derived Model: it always probes the given metrics via
-// [probeJudgeModel] (walking them in slice declaration order and
-// returning the first non-empty judgeModelOptions.judgeModel found).
-// modelVersion has no fallback source and is used verbatim. Prefer this
-// over [SynthesizeJudgeContext] when the caller does not have an
-// authoritative model string but does have the metric list that was
-// evaluated.
+// auto-derived Model from metric judge options.
 func SynthesizeJudgeContextFromMetrics(results []models.RunEvalResult, metrics []models.EvalMetric, modelVersion string) JudgeContext {
 	return JudgeContext{
 		Model:        probeJudgeModel(metrics),
@@ -136,10 +91,6 @@ func SynthesizeJudgeContextFromMetrics(results []models.RunEvalResult, metrics [
 	}
 }
 
-// countJudgeCalls returns the total number of LLM-as-judge metric result
-// entries across all cases in results. Shared by
-// [adk.Provider.Run] and the SynthesizeJudgeContext* helpers so both
-// paths use identical counting rules.
 func countJudgeCalls(results []models.RunEvalResult) int64 {
 	var n int64
 	for _, r := range results {
@@ -152,33 +103,24 @@ func countJudgeCalls(results []models.RunEvalResult) int64 {
 	return n
 }
 
-// caseProtoFromRunEvalResult maps one ADK case into the wire AgentEvalResults
-// case shape, reusing [CaseFromRunEvalResult] for status and metric conversion.
-func caseProtoFromRunEvalResult(suiteName string, r models.RunEvalResult, duration time.Duration) *evalspb.AgentEvalResults_Case {
-	internalCase := CaseFromRunEvalResult(suiteName, r, duration)
-	return &evalspb.AgentEvalResults_Case{
-		Id:        internalCase.Name,
-		Status:    internalCase.Status,
-		SessionId: internalCase.SessionID,
-		Duration:  durationProto(duration),
-		Metrics:   result.MetricsProto(internalCase.Metrics),
-	}
+func qualifiedADKCaseID(suiteName, caseID string) string {
+	return suiteName + "." + caseID
 }
 
-// metricFromADK converts one ADK EvalMetricResult into the internal execution
-// metric model, including optional rubric breakdown and failure messages.
-func metricFromADK(mr models.EvalMetricResult) execution.Metric {
-	m := execution.Metric{
-		ID:        mr.MetricName,
-		Status:    statusFromADK(mr.EvalStatus),
-		Threshold: mr.Threshold,
+func metricFromADK(mr models.EvalMetricResult) *evalspb.AgentEvalResults_Case_Metric {
+	m := &evalspb.AgentEvalResults_Case_Metric{
+		Id:     mr.MetricName,
+		Status: statusFromADK(mr.EvalStatus),
 	}
 	if mr.Score != nil {
-		m.Score = new(*mr.Score)
+		m.Score = mr.Score
+	}
+	if mr.Threshold != 0 {
+		m.Threshold = &mr.Threshold
 	}
 	m.Message = metricMessage(mr)
 	if mr.Details != nil && len(mr.Details.RubricScores) > 0 {
-		m.Rubric = make([]execution.RubricScore, len(mr.Details.RubricScores))
+		m.Rubric = make([]*evalspb.AgentEvalResults_Case_Metric_RubricScore, len(mr.Details.RubricScores))
 		for i, rs := range mr.Details.RubricScores {
 			m.Rubric[i] = rubricScoreFromADK(rs, mr.Threshold)
 		}
@@ -186,10 +128,8 @@ func metricFromADK(mr models.EvalMetricResult) execution.Metric {
 	return m
 }
 
-// rubricScoreFromADK maps one ADK rubric score to execution.RubricScore,
-// deriving pass/fail from the metric threshold when a score is present.
-func rubricScoreFromADK(rs models.RubricScore, threshold float64) execution.RubricScore {
-	out := execution.RubricScore{ID: rs.RubricID}
+func rubricScoreFromADK(rs models.RubricScore, threshold float64) *evalspb.AgentEvalResults_Case_Metric_RubricScore {
+	out := &evalspb.AgentEvalResults_Case_Metric_RubricScore{Id: rs.RubricID}
 	if rs.Score != nil {
 		out.Score = rs.Score
 		out.Status = rubricStatus(*rs.Score, threshold)
@@ -197,12 +137,11 @@ func rubricScoreFromADK(rs models.RubricScore, threshold float64) execution.Rubr
 		out.Status = evalspb.Status_NOT_EVALUATED
 	}
 	if rs.Rationale != nil {
-		out.Rationale = *rs.Rationale
+		out.Rationale = rs.Rationale
 	}
 	return out
 }
 
-// rubricStatus compares a rubric score against the metric threshold.
 func rubricStatus(score, threshold float64) evalspb.Status {
 	if score >= threshold {
 		return evalspb.Status_PASSED
@@ -210,8 +149,6 @@ func rubricStatus(score, threshold float64) evalspb.Status {
 	return evalspb.Status_FAILED
 }
 
-// metricMessage synthesises a human-readable failure reason for wire output
-// when the ADK result carries no explicit message.
 func metricMessage(mr models.EvalMetricResult) string {
 	switch mr.EvalStatus {
 	case models.EvalStatusNotEvaluated:
@@ -226,7 +163,6 @@ func metricMessage(mr models.EvalMetricResult) string {
 	}
 }
 
-// statusFromADK maps ADK EvalStatus values to alis.evals.v1.Status.
 func statusFromADK(s models.EvalStatus) evalspb.Status {
 	switch s {
 	case models.EvalStatusPassed:
@@ -240,7 +176,6 @@ func statusFromADK(s models.EvalStatus) evalspb.Status {
 	}
 }
 
-// durationProto returns nil for zero durations so optional proto fields stay unset.
 func durationProto(d time.Duration) *durationpb.Duration {
 	if d == 0 {
 		return nil

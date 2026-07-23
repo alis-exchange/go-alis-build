@@ -1,10 +1,6 @@
 package adk
 
-import (
-	"testing"
-
-	"go.alis.build/evals/suite"
-)
+import "testing"
 
 func TestMatchFilters_empty(t *testing.T) {
 	t.Parallel()
@@ -18,9 +14,9 @@ func TestMatchFilters_empty(t *testing.T) {
 func TestMatchFilters_wholeSuite(t *testing.T) {
 	t.Parallel()
 
-	parsed, err := suite.ParseFilterPaths([]string{"eval_set_1"})
+	parsed, err := parseFilterPaths([]string{"eval_set_1"})
 	if err != nil {
-		t.Fatalf("ParseFilterPaths: %v", err)
+		t.Fatalf("parseFilterPaths: %v", err)
 	}
 	wantAll, caseIDs, mentioned := matchFilters(parsed, "eval_set_1")
 	if !wantAll || !mentioned || len(caseIDs) != 0 {
@@ -31,9 +27,9 @@ func TestMatchFilters_wholeSuite(t *testing.T) {
 func TestMatchFilters_singleCase(t *testing.T) {
 	t.Parallel()
 
-	parsed, err := suite.ParseFilterPaths([]string{"eval_set_1.hi"})
+	parsed, err := parseFilterPaths([]string{"eval_set_1.hi"})
 	if err != nil {
-		t.Fatalf("ParseFilterPaths: %v", err)
+		t.Fatalf("parseFilterPaths: %v", err)
 	}
 	wantAll, caseIDs, mentioned := matchFilters(parsed, "eval_set_1")
 	if wantAll || !mentioned || len(caseIDs) != 1 || caseIDs[0] != "hi" {
@@ -44,9 +40,9 @@ func TestMatchFilters_singleCase(t *testing.T) {
 func TestMatchFilters_unmentionedSuite(t *testing.T) {
 	t.Parallel()
 
-	parsed, err := suite.ParseFilterPaths([]string{"other.hi"})
+	parsed, err := parseFilterPaths([]string{"other.hi"})
 	if err != nil {
-		t.Fatalf("ParseFilterPaths: %v", err)
+		t.Fatalf("parseFilterPaths: %v", err)
 	}
 	wantAll, caseIDs, mentioned := matchFilters(parsed, "eval_set_1")
 	if mentioned || wantAll || len(caseIDs) != 0 {

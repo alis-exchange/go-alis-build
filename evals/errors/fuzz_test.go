@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"go.alis.build/evals/suite"
+	"go.alis.build/evals"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -14,7 +14,7 @@ func FuzzToGRPCEvalError(f *testing.F) {
 	f.Add("")
 
 	f.Fuzz(func(t *testing.T, field string) {
-		err := suite.ErrUnknownEnvironment{Name: "env-" + field}
+		err := evals.ErrDuplicateCase{Case: "case-" + field}
 		got := ToGRPC(err)
 		if got == nil {
 			t.Fatal("ToGRPC returned nil")
