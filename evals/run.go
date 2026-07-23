@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ var (
 	now     = time.Now
 	newUUID = uuid.NewString
 )
+
+const panicCheckID = "_evals.panic"
 
 func resolveGoogleProjectID(cfg runConfig) string {
 	if cfg.googleProject != "" {
@@ -43,37 +46,48 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 	if len(registered) == 0 {
 		return cases
 	}
-
-	sem := make(chan struct{}, cfg.maxConcurrency)
-	var wg sync.WaitGroup
-
 	for i, c := range registered {
-		wg.Add(1)
-		go func(idx int, fc registeredCase) {
-			defer wg.Done()
-
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				cases[idx] = executedCase{
-					index:  idx,
-					name:   fc.name,
-					status: evalspb.Status_NOT_EVALUATED,
-				}
-				return
-			}
-
-			defer func() { <-sem }()
-
-			start := now()
-			out := s.runOneCase(ctx, fc)
-			out.duration = now().Sub(start)
-			out.index = idx
-			out.name = fc.name
-
-			cases[idx] = out
-		}(i, c)
+		cases[i] = executedCase{
+			index:  i,
+			name:   c.name,
+			status: evalspb.Status_NOT_EVALUATED,
+		}
 	}
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	workers := min(cfg.maxConcurrency, len(registered))
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				fc := registered[idx]
+				start := now()
+				out := s.runOneCase(ctx, fc)
+				out.duration = now().Sub(start)
+				out.index = idx
+				out.name = fc.name
+				cases[idx] = out
+			}
+		}()
+	}
+
+	for i := range registered {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return cases
+		case jobs <- i:
+		}
+	}
+	close(jobs)
 
 	wg.Wait()
 	return cases
@@ -97,16 +111,42 @@ func (s *suiteCore) runOneCase(ctx context.Context, fc registeredCase) executedC
 func runIntegrationCase(ctx context.Context, suiteName string, fc registeredCase) executedCase {
 	fn, _ := fc.fn.(IntegrationCaseFunc)
 	v := validation.NewValidator()
+	var panicValue any
 	if fn != nil {
-		fn(ctx, v)
+		func() {
+			defer func() {
+				panicValue = recover()
+			}()
+			fn(ctx, v)
+		}()
+	}
+	if panicValue != nil {
+		return executedCase{
+			status: evalspb.Status_FAILED,
+			checks: []*evalspb.IntegrationTestResults_Case_Check{
+				{
+					Id:      panicCheckID,
+					Status:  evalspb.Status_FAILED,
+					Message: fmt.Sprintf("panic: %v", panicValue),
+				},
+			},
+		}
 	}
 	return integrationOutcome(suiteName, fc.name, v, 0)
 }
 
 func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur time.Duration) executedCase {
-	checks := make([]*evalspb.IntegrationTestResults_Case_Check, 0, len(v.Rules()))
+	rules := v.Rules()
+	checks := make([]*evalspb.IntegrationTestResults_Case_Check, 0, len(rules))
+	if len(rules) == 0 {
+		return executedCase{
+			name:     caseName,
+			status:   evalspb.Status_NOT_EVALUATED,
+			duration: dur,
+		}
+	}
 	status := evalspb.Status_PASSED
-	for _, r := range v.Rules() {
+	for _, r := range rules {
 		checkStatus := evalspb.Status_PASSED
 		var msg string
 		if !r.Satisfied() {

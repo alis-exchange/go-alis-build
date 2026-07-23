@@ -105,6 +105,9 @@ func (s *suiteCore) run(ctx context.Context, opts []RunOption, publish bool) (*e
 	executed := s.executeCases(ctx, cfg, cases)
 	end := now()
 	run := s.materializeRun(cfg, executed, start, end)
+	if err := ctx.Err(); err != nil {
+		return run, err
+	}
 	if publish && cfg.reporter != nil {
 		if err := cfg.reporter.ReportRun(ctx, run); err != nil {
 			return run, err
