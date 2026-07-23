@@ -21,15 +21,26 @@ type Account struct {
 
 // Payload represents a decoded payload of an ID Token.
 type Payload struct {
-	Issuer   string                 `json:"iss"`
-	Audience string                 `json:"aud"`
-	Expires  int64                  `json:"exp"`
-	IssuedAt int64                  `json:"iat"`
-	Subject  string                 `json:"sub,omitempty"`
-	Email    string                 `json:"email"`
-	Groups   []string               `json:"groups"`
-	Claims   map[string]interface{} `json:"-"`
-	Accounts map[string]*Account    `json:"accounts"`
+	Issuer              string                 `json:"iss"`
+	Audience            string                 `json:"aud"`
+	Expires             int64                  `json:"exp"`
+	IssuedAt            int64                  `json:"iat"`
+	Subject             string                 `json:"sub,omitempty"`
+	Email               string                 `json:"email"`
+	Groups              []string               `json:"groups"`
+	Claims              map[string]interface{} `json:"-"`
+	Accounts            map[string]*Account    `json:"accounts"`
+	ActiveIdeateAccount *IdeateAccount         `json:"active_ideate_account"`
+	ActiveBuildAccount  *BuildAccount          `json:"active_build_account"`
+}
+
+type IdeateAccount struct {
+	AccountID                string  `json:"account_id"`
+	IdeateAccountCreditLimit float64 `json:"ideate_account_credit_limit"`
+	IdeateUserCreditLimit    float64 `json:"ideate_user_credit_limit"`
+}
+type BuildAccount struct {
+	AccountID string `json:"account_id"`
 }
 
 // jwt represents the segments of a jwt and exposes convenience methods for
