@@ -102,6 +102,8 @@ Reporter replacement is deliberate: `WithReporter(a)` followed by `WithReporter(
 
 `RunAndPublish` publishes partial cancelled runs. If the run context is cancelled, active case functions may return on their own after observing cancellation; otherwise the evals runtime waits for active cases to return because Go cannot safely stop arbitrary goroutines. Cases that never started are emitted as `NOT_EVALUATED` with the framework `_evals.skipped` marker for compatibility.
 
+Publication gets its own 10-second timeout derived from `context.Background()`, not from the execution context. This lets `RunAndPublish` deliver a partial run after execution cancellation. Reporter failures and timeout errors are returned alongside the materialized run.
+
 ## Run options
 
 | Option | Behavior |
@@ -123,6 +125,7 @@ Suite and case configuration errors are deferred until `Run` / `RunAndPublish` s
 - `WithMaxConcurrency` bounds parallel cases while preserving result order in the original `AddCase` order.
 - Case panics are recovered at the case boundary and mark that case failed.
 - Case failures are result data, not Go errors. Operational errors such as cancellation or reporter failure are returned as Go errors and still preserve the partial `*evalspb.Run` when available.
+- A suite with no cases is a valid no-op run and has status `PASSED`. A registered case that emits no evaluation data is `NOT_EVALUATED`.
 
 ## Integration suites
 
@@ -204,6 +207,25 @@ suite := evals.NewLoadSuite("checkout-capacity").
 
 Default concurrency is one active case. `WithMaxConcurrency` can run load cases in parallel, but parallel load cases combine their traffic and can distort measurements. Use it only when the combined traffic is the scenario being evaluated.
 
+For client-streaming load targets, copy the timing returned by `evals.CallClientStream` into the load generator's protobuf-independent stream sample:
+
+```go
+target := func(ctx context.Context, _ loadgen.CallData) loadgen.TargetResult {
+    got := evals.CallClientStream(ctx, openStream, sendRequests)
+    return loadgen.TargetResult{
+        TransportErr: got.Err,
+        Stream: &loadgen.StreamSample{
+            SendDuration:    got.SendDuration,
+            ResponseLatency: got.ResponseLatency,
+            TotalDuration:   got.TotalDuration,
+            MessagesSent:    got.MessagesSent,
+        },
+    }
+}
+```
+
+This explicit bridge keeps `loadgen` independent of the root evals package while preserving stream aggregation in `loadgen.Metrics.Stream`.
+
 ## Infra observation suites
 
 Infra observation cases receive `*evals.InfraObservationResult`. Use `evals/loadinfra` to collect Cloud Run and Spanner Monitoring snapshots, or add protobuf snapshots explicitly.
@@ -249,6 +271,22 @@ The only additive proto change is `repeated Validation validations` on specializ
 - `InfraObservationResults.Case.validations`
 
 Integration results continue to use `checks`.
+
+## Migrating from the registry API
+
+The redesign is an immediate replacement, not a compatibility layer. Migrate concepts as follows:
+
+| Previous concept | Typed-suite replacement |
+| --- | --- |
+| Global registry and runner lookup | Construct a named `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, or `NewInfraObservationSuite` and call `AddCase` directly. |
+| `*evals.T` assertions | Use `*validation.Validator` for integration cases; specialized result builders expose `Validator()` and `Fail(error)`. |
+| Framework environments and setup/teardown | Use ordinary Go before the run and `defer` cleanup around it. |
+| Reporter configured on the runtime | Call `RunAndPublish` and pass `WithReporter`; use a multi-reporter explicitly for fan-out. |
+| `SLO*` constructors | Evaluate thresholds in case code and add protobuf-native `LoadTestResults_SloCheck` or `InfraSloCheck` values to the result builder. |
+| `ClientStreamTargetResult` | Return `loadgen.TargetResult` with a `StreamSample`, as shown in the load section. |
+| Registered ADK provider | Call `adk.Provider.Run`; place each returned protobuf-native `AgentEvalResults` value in a `Run` envelope and publish it with the chosen reporter. |
+
+The deleted `env`, `suite`, `registry`, `runner`, `mapper`, `execution`, `harness`, and `verdict` packages have no replacement packages. Their lifecycle and orchestration responsibilities now belong to normal Go code.
 
 ## Reporters
 

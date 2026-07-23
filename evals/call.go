@@ -6,8 +6,7 @@ import (
 )
 
 // Result is what Call returns: the typed response, transport error (if any),
-// and wall-clock latency. Assertions are the author's responsibility; Call
-// records nothing on T.
+// and wall-clock latency. Assertions are the author's responsibility.
 type Result[T any] struct {
 	Resp    T
 	Err     error
@@ -20,8 +19,8 @@ type Result[T any] struct {
 //	r := evals.Call(ctx, func(ctx context.Context) (*filespb.File, error) {
 //	    return clients.Files.GetFile(ctx, req)
 //	})
-//	if !t.NoErr("grpc", r.Err) { return }
-//	t.Max("latency", r.Latency, budget)
+//	v.Custom("grpc.status_ok", r.Err == nil)
+//	v.Custom("latency.within_budget", r.Latency <= budget)
 func Call[T any](ctx context.Context, fn func(context.Context) (T, error)) Result[T] {
 	start := time.Now()
 	resp, err := fn(ctx)

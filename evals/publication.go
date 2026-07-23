@@ -17,6 +17,8 @@ var newStandardReporter = func(ctx context.Context) (report.Reporter, error) {
 	return pubsubreport.New(ctx)
 }
 
+// publishRun deliberately uses a fresh bounded context. RunAndPublish must
+// publish partial results after the execution context is cancelled.
 func publishRun(_ context.Context, cfg runConfig, run *evalspb.Run) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultSuitePublishTimeout)
 	defer cancel()

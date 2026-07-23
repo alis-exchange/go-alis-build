@@ -413,19 +413,20 @@ func TestInProcess_DroppedCountUnderSaturation(t *testing.T) {
 }
 
 func TestInProcess_DroppedCountLongSaturation(t *testing.T) {
-	t.Parallel()
-
 	target := TransportTarget(func(context.Context) error {
-		time.Sleep(8 * time.Second)
+		// Keep the sole worker occupied beyond the scheduling window so exactly
+		// one request can be accepted. The old 8s/10s timing allowed a second
+		// request near 9s and made the assertion scheduler-dependent.
+		time.Sleep(1200 * time.Millisecond)
 		return nil
 	})
 	g := New()
 	p := Profile{
-		QPS:            1,
+		QPS:            10,
 		Concurrency:    1,
-		Duration:       10 * time.Second,
+		Duration:       time.Second,
 		Warmup:         0,
-		RequestTimeout: 30 * time.Second,
+		RequestTimeout: 3 * time.Second,
 	}
 	m, err := g.Run(context.Background(), p, target)
 	if err != nil {
@@ -434,7 +435,7 @@ func TestInProcess_DroppedCountLongSaturation(t *testing.T) {
 	if m.RequestCount != 1 {
 		t.Fatalf("RequestCount=%d, want 1", m.RequestCount)
 	}
-	// ~9 pacer-side drops over 10s at QPS=1, plus 0–1 worker-side.
+	// About nine pacer-side drops over one second at QPS=10.
 	if m.DroppedCount < 7 || m.DroppedCount > 12 {
 		t.Fatalf("DroppedCount=%d, want in [7, 12]", m.DroppedCount)
 	}

@@ -1,95 +1,82 @@
-// Package adk integrates the ADK (Agent Development Kit) evaluation
-// sublauncher into the evals runtime as a lazy [registry.AgentEvalProvider].
+// Package adk runs evaluation sets exposed by an ADK (Agent Development Kit)
+// sublauncher and converts its responses to protobuf-native eval results.
 //
-// Instead of registering static eval suites in Go, an ADK-backed agent
-// publishes its eval sets as data. This package discovers those sets over
-// HTTP at run time, filters them against the incoming case_ids, invokes
-// them via the sublauncher, and adapts the responses into the internal
-// [execution] and wire types the runner and mapper already understand.
+// The package does not register suites or publish results. [Provider.Run]
+// discovers matching eval sets at call time and returns one [ProviderResult]
+// per set. Each result contains the suite name, observed start and end times,
+// and an AgentEvalResults protobuf branch that a caller can place in a Run
+// envelope and send through a reporter.
 //
-// # Wiring
+// # Running a provider
 //
-// Register the ADK provider once at process init. Configuration lives on
-// the [Agent] struct that [NewProvider] wraps — there is no separate
-// registration table. Match the [Agent] fields to the deployed agent's
-// URL and app name (published by the ADK launcher):
+// Configuration lives on the [Agent] passed to [NewProvider]:
 //
 //	provider := adk.NewProvider(adk.Agent{
 //	    BaseURL:    "https://example-agent-...run.app",
-//	    PathPrefix: "/api", // default; override if the launcher was mounted elsewhere
+//	    PathPrefix: "/api",
 //	    AppName:    "example.agent.v1",
 //	    DefaultMetrics: []models.EvalMetric{
 //	        adk.ResponseMatchScore(0.7),
 //	    },
-//	    // Optional: declare judge provenance for observability. Populates
-//	    // AgentEvalResults.JudgeInfo{model,model_version} on the wire.
 //	    JudgeModel:        "gemini-2.5-pro",
 //	    JudgeModelVersion: "2025-06-05",
 //	})
-//	if err := evals.RegisterAgent(provider); err != nil {
-//	    panic(err)
-//	}
+//	results, err := provider.Run(ctx, filters)
 //
-// Case_ids follow the standard filter grammar. `agent-set` selects an
-// entire eval set; `agent-set.case-id` selects one entry inside it.
+// The provider returns normal Go errors. Callers decide whether an error should
+// stop their workflow or be represented as evaluation data.
+//
+// Case filters use the standard ADK grammar: "agent-set" selects an entire
+// eval set and "agent-set.case-id" selects one case within it.
+//
+// # Run envelopes and publication
+//
+// [ProviderResult.Results] is already the protobuf branch value. The caller
+// owns run identity, metadata, status rollup, and publication:
+//
+//	run := &evalspb.Run{
+//	    Name:       runName,
+//	    Type:       evalspb.Run_AGENT_EVAL,
+//	    Status:     rollup(result.Results.GetCases()),
+//	    StartTime:  timestamppb.New(result.StartTime),
+//	    EndTime:    timestamppb.New(result.EndTime),
+//	    CreateTime: timestamppb.Now(),
+//	    Data: &evalspb.Run_AgentEval{
+//	        AgentEval: result.Results,
+//	    },
+//	}
+//	err := reporter.ReportRun(ctx, run)
+//
+// This explicit envelope is intentional: the ADK adapter does not own suite
+// lifecycle or reporter choice.
+//
+// ADK exposes only total eval-set elapsed time. [Provider] divides that time
+// evenly across returned cases, so case durations are an approximation; the
+// provider result's start and end times preserve the measured set duration.
 //
 // # Judge provenance
 //
-// When any suite in the run uses LLM-as-judge metrics
-// ([final_response_match_v2], [rubric_based_*_v1], [hallucinations_v1],
-// [per_turn_user_simulator_quality_v1]), the mapper emits a
-// [alis.evals.v1.AgentEvalResults.JudgeInfo] sidecar carrying model
-// provenance and a synthesised judge call count. Two resolution rules:
+// [Agent.JudgeModel] is authoritative when set. Otherwise the provider probes
+// metric criteria in declaration order and uses the first configured judge
+// model. Set [Agent.JudgeModel] explicitly when stable wire provenance matters.
 //
-//   - [Agent.JudgeModel] is authoritative when non-empty. Set it
-//     explicitly for consistent wire output.
-//   - Otherwise the provider probes the caller-supplied metric criteria
-//     (in slice declaration order across [Agent.DefaultMetrics] or
-//     [Agent.MetricOverrides] for the current set) and uses the first
-//     non-empty `judgeModelOptions.judgeModel` found.
-//
-// Note the asymmetry with adk-python: its `JudgeModelOptions.judge_model`
-// defaults to `"gemini-2.5-flash"` when unset, while the Go helpers here
-// require callers to pass a model explicitly. If you rely on the ADK
-// backend's implicit default and do not set [Agent.JudgeModel], the wire
-// `model` field is empty even when real judge calls happen. Set it
-// explicitly.
-//
-// The per-suite `judge_call_count` counts LLM-as-judge metric result
-// entries in each case, not per-invocation samples — treat it as a
-// lower bound on judge cardinality.
+// Judge call count is synthesized from LLM-as-judge metric result entries, not
+// backend invocations, and should be treated as a lower-bound observation.
 //
 // # Dependencies
 //
-// This package depends on
-// `go.alis.build/adk/launchers/evals/evaluation/models` for the metric
-// types only, not the launcher's runtime code. Neuron binaries that
-// serve these evals must additionally import the launcher itself once
-// (typically as a blank import) so that the sublauncher's `/api/`
-// handlers — including `list_eval_sets` and `run_eval` — are installed
-// on the default mux:
+// This package imports ADK evaluation models but not the launcher runtime.
+// Neuron binaries serving the sublauncher must install its handlers, typically
+// with:
 //
 //	import _ "go.alis.build/adk/launchers/evals"
 //
-// All HTTP calls from this package are plain net/http; JSON payloads
-// mirror the sublauncher's public API.
-//
 // # Context and authentication
 //
-// This package is transport-agnostic. [NewHTTPClient] accepts any
-// [http.RoundTripper] via [WithTransport]; callers install whatever auth
-// their ADK sublauncher requires — bearer tokens, oauth2, Cloud Run ID
-// tokens, mTLS, or nothing at all for unauthenticated local endpoints:
+// [NewHTTPClient] accepts a custom [http.RoundTripper] through [WithTransport].
+// [Provider] uses an unauthenticated client by default; use [WithClientFactory]
+// to create an authenticated client when required.
 //
-//	client := adk.NewHTTPClient(baseURL,
-//	    adk.WithTransport(myAuthTransport),
-//	    adk.WithTimeout(30*time.Minute),
-//	)
-//
-// [Provider] uses an unauthenticated client by default. Wire a custom
-// factory via [WithClientFactory] when the sublauncher requires auth.
-//
-// [AudienceFromBaseURL] is a URL helper for consumers minting Cloud Run
-// ID tokens against a Cloud Run-hosted sublauncher; the client itself
-// does not use it.
+// [AudienceFromBaseURL] helps callers mint Cloud Run ID tokens. The ADK client
+// itself remains transport-agnostic.
 package adk

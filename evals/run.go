@@ -212,26 +212,8 @@ func (s *suiteCore) runOneCase(ctx context.Context, fc registeredCase) executedC
 func runIntegrationCase(ctx context.Context, suiteName string, fc registeredCase) executedCase {
 	fn, _ := fc.fn.(IntegrationCaseFunc)
 	v := validation.NewValidator()
-	var panicValue any
 	if fn != nil {
-		func() {
-			defer func() {
-				panicValue = recover()
-			}()
-			fn(ctx, v)
-		}()
-	}
-	if panicValue != nil {
-		return executedCase{
-			status: evalspb.Status_FAILED,
-			checks: []*evalspb.IntegrationTestResults_Case_Check{
-				{
-					Id:      panicCheckID,
-					Status:  evalspb.Status_FAILED,
-					Message: fmt.Sprintf("panic: %v", panicValue),
-				},
-			},
-		}
+		fn(ctx, v)
 	}
 	return integrationOutcome(suiteName, fc.name, v, 0)
 }
@@ -261,7 +243,6 @@ func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur
 			Message: msg,
 		})
 	}
-	_ = qualifiedCaseID(suiteName, caseName)
 	return executedCase{
 		name:     caseName,
 		status:   status,
