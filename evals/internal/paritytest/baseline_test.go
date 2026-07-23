@@ -34,11 +34,11 @@ func TestManifest_recordsCommonPackageVersion(t *testing.T) {
 	if manifest.CommonModule != "go.alis.build/common" {
 		t.Fatalf("common_module = %q, want go.alis.build/common", manifest.CommonModule)
 	}
-	if manifest.CommonVersion != "v1.1.14" {
-		t.Fatalf("common_version = %q, want v1.1.14 (update manifest when upgrading common)", manifest.CommonVersion)
+	if manifest.CommonVersion != "v1.1.15" {
+		t.Fatalf("common_version = %q, want v1.1.15 (update manifest when upgrading common)", manifest.CommonVersion)
 	}
-	if manifest.CommonSum != "h1:VqM/Grp6vw19uV0l8/du9CmvwWPlJASOtJeJooZgul4=" {
-		t.Fatalf("common_sum = %q, want v1.1.14 module sum", manifest.CommonSum)
+	if manifest.CommonSum != "h1:zHmXsV+mNL6COu/lpkUrkNTue2j2yFYG+KzD9fzm61Q=" {
+		t.Fatalf("common_sum = %q, want v1.1.15 module sum", manifest.CommonSum)
 	}
 	if manifest.DescriptorSHA256 == "" {
 		t.Fatal("evaluation_descriptor_sha256 is empty")

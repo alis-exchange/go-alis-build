@@ -30,7 +30,8 @@
           }
         ],
         "session_id": "sessions/agent-baseline-1",
-        "status": "PASSED"
+        "status": "PASSED",
+        "validations": []
       },
       {
         "duration": "2s",
@@ -53,7 +54,8 @@
           }
         ],
         "session_id": "sessions/agent-baseline-2",
-        "status": "FAILED"
+        "status": "FAILED",
+        "validations": []
       },
       {
         "duration": "0s",
@@ -67,7 +69,8 @@
           }
         ],
         "session_id": "",
-        "status": "NOT_EVALUATED"
+        "status": "NOT_EVALUATED",
+        "validations": []
       }
     ],
     "judge": {

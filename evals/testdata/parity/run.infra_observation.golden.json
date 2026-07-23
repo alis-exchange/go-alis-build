@@ -79,6 +79,7 @@
           }
         ],
         "status": "PASSED",
+        "validations": [],
         "window_end": "2023-11-14T22:13:25Z",
         "window_start": "2023-11-14T22:13:20Z"
       },
@@ -104,6 +105,7 @@
         "lookback": "900s",
         "spanner": [],
         "status": "FAILED",
+        "validations": [],
         "window_end": "2023-11-14T22:13:25Z",
         "window_start": "2023-11-14T22:13:20Z"
       }

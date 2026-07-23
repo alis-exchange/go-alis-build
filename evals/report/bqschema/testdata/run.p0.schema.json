@@ -624,25 +624,6 @@
                         "mode": "REPEATED",
                         "name": "infra_checks",
                         "type": "RECORD"
-                    },
-                    {
-                        "fields": [
-                            {
-                                "name": "id",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "status",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "message",
-                                "type": "STRING"
-                            }
-                        ],
-                        "mode": "REPEATED",
-                        "name": "validations",
-                        "type": "RECORD"
                     }
                 ],
                 "mode": "REPEATED",
@@ -721,25 +702,6 @@
                         ],
                         "mode": "REPEATED",
                         "name": "metrics",
-                        "type": "RECORD"
-                    },
-                    {
-                        "fields": [
-                            {
-                                "name": "id",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "status",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "message",
-                                "type": "STRING"
-                            }
-                        ],
-                        "mode": "REPEATED",
-                        "name": "validations",
                         "type": "RECORD"
                     }
                 ],
@@ -1078,25 +1040,6 @@
                         ],
                         "mode": "REPEATED",
                         "name": "infra_checks",
-                        "type": "RECORD"
-                    },
-                    {
-                        "fields": [
-                            {
-                                "name": "id",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "status",
-                                "type": "STRING"
-                            },
-                            {
-                                "name": "message",
-                                "type": "STRING"
-                            }
-                        ],
-                        "mode": "REPEATED",
-                        "name": "validations",
                         "type": "RECORD"
                     }
                 ],
