@@ -49,6 +49,10 @@ type Identity struct {
 	groupIds []string
 	// The accounts that the requester is part of
 	accounts map[string]*jwt.Account
+	// The user's active build account
+	activeBuildAccount *jwt.BuildAccount
+	// The user's active ideate account
+	activeIdeateAccount *jwt.IdeateAccount
 }
 
 func (r *Identity) ForwardV3Identity(ctx context.Context) (context.Context, error) {
@@ -138,6 +142,14 @@ func (r *Identity) Accounts() map[string]*jwt.Account {
 	return r.accounts
 }
 
+func (r *Identity) ActiveBuildAccount() *jwt.BuildAccount {
+	return r.activeBuildAccount
+}
+
+func (r *Identity) ActiveIdeateAccount() *jwt.IdeateAccount {
+	return r.activeIdeateAccount
+}
+
 // ExtractIdentityFromCtx returns the Identity making the request or for whom the request is being forwarded by a super admin.
 func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail string, superAdmins map[string]bool) (*Identity, error) {
 	// Looks in the specified header for a JWT token and extracts the requester from it.
@@ -168,6 +180,8 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			identity.email = payload.Email
 			identity.groupIds = payload.Groups
 			identity.accounts = payload.Accounts
+			identity.activeBuildAccount = payload.ActiveBuildAccount
+			identity.activeIdeateAccount = payload.ActiveIdeateAccount
 
 			// If the Identity is not a service account, see if we could extract the iam Policy object.
 			if !identity.IsServiceAccount() {
