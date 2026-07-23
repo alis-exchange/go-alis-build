@@ -21,15 +21,25 @@ const (
 
 type (
 	Identity struct {
-		Type     Type                // Type of the identity
-		ID       string              `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
-		Email    string              `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
-		Accounts map[string]*Account `json:"accounts"` // User's seats in their accounts
-		GroupIDs []string            `json:"groups"`   // IDs of the groups the user belongs to
-		Policy   string              `json:"policy"`   // Base64 encoded iam policy
-		Exp      int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
-		App      string              `json:"app"`      // Client ID (if any) of the registered third party app.
-		Scopes   []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
+		Type                Type                // Type of the identity
+		ID                  string              `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
+		Email               string              `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
+		Accounts            map[string]*Account `json:"accounts"` // User's seats in their accounts
+		GroupIDs            []string            `json:"groups"`   // IDs of the groups the user belongs to
+		Policy              string              `json:"policy"`   // Base64 encoded iam policy
+		Exp                 int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
+		App                 string              `json:"app"`      // Client ID (if any) of the registered third party app.
+		Scopes              []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
+		ActiveIdeateAccount *IdeateAccount      `json:"active_ideate_account"`
+		ActiveBuildAccount  *BuildAccount       `json:"active_build_account"`
+	}
+	IdeateAccount struct {
+		AccountID                string  `json:"account_id"`
+		IdeateAccountCreditLimit float64 `json:"ideate_account_credit_limit"`
+		IdeateUserCreditLimit    float64 `json:"ideate_user_credit_limit"`
+	}
+	BuildAccount struct {
+		AccountID string `json:"account_id"`
 	}
 	Type string
 	Seat struct {
