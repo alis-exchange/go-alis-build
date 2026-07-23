@@ -21,6 +21,11 @@ var (
 
 const panicCheckID = "_evals.panic"
 
+const (
+	caseValidationID  = "_evals.case"
+	judgeValidationID = "_evals.judge"
+)
+
 func resolveGoogleProjectID(cfg runConfig) string {
 	if cfg.googleProject != "" {
 		return cfg.googleProject
@@ -39,6 +44,10 @@ type executedCase struct {
 	duration    time.Duration
 	checks      []*evalspb.IntegrationTestResults_Case_Check
 	validations []*evalspb.Validation
+	sessionID   string
+	metrics     []*evalspb.AgentEvalResults_Case_Metric
+	judge       *evalspb.AgentEvalResults_JudgeInfo
+	judgeSkip   bool
 }
 
 func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered []registeredCase) []executedCase {
@@ -169,16 +178,131 @@ func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur
 	}
 }
 
+func validationsFromValidator(v *validation.Validator) []*evalspb.Validation {
+	rules := v.Rules()
+	validations := make([]*evalspb.Validation, 0, len(rules))
+	for _, r := range rules {
+		status := evalspb.Status_PASSED
+		var msg string
+		if !r.Satisfied() {
+			status = evalspb.Status_FAILED
+			msg = r.Rule()
+		}
+		validations = append(validations, &evalspb.Validation{
+			Id:      r.Rule(),
+			Status:  status,
+			Message: msg,
+		})
+	}
+	return validations
+}
+
+func reconcileAgentJudge(cases []executedCase) {
+	var declared *evalspb.AgentEvalResults_JudgeInfo
+	for i := range cases {
+		judge := cases[i].judge
+		if !hasAgentJudgeData(judge) {
+			continue
+		}
+		if declared == nil {
+			declared = judge
+			continue
+		}
+		if sameAgentJudgeDeclaration(declared, judge) {
+			continue
+		}
+		cases[i].judgeSkip = true
+		cases[i].status = evalspb.Status_FAILED
+		cases[i].validations = append(cases[i].validations, &evalspb.Validation{
+			Id:      judgeValidationID,
+			Status:  evalspb.Status_FAILED,
+			Message: "evals: agent judge model/version conflict",
+		})
+	}
+}
+
+func agentJudge(cases []executedCase) *evalspb.AgentEvalResults_JudgeInfo {
+	var out *evalspb.AgentEvalResults_JudgeInfo
+	for _, c := range cases {
+		if c.judgeSkip || !hasAgentJudgeData(c.judge) {
+			continue
+		}
+		if out == nil {
+			out = &evalspb.AgentEvalResults_JudgeInfo{
+				Model:           c.judge.GetModel(),
+				JudgeCallCount:  c.judge.GetJudgeCallCount(),
+				JudgeErrorCount: c.judge.GetJudgeErrorCount(),
+			}
+			if c.judge.ModelVersion != nil {
+				version := c.judge.GetModelVersion()
+				out.ModelVersion = &version
+			}
+			continue
+		}
+		out.JudgeCallCount += c.judge.GetJudgeCallCount()
+		out.JudgeErrorCount += c.judge.GetJudgeErrorCount()
+	}
+	return out
+}
+
+func hasAgentJudgeData(j *evalspb.AgentEvalResults_JudgeInfo) bool {
+	return j != nil &&
+		(j.GetModel() != "" ||
+			j.ModelVersion != nil ||
+			j.GetJudgeCallCount() != 0 ||
+			j.GetJudgeErrorCount() != 0)
+}
+
+func sameAgentJudgeDeclaration(a, b *evalspb.AgentEvalResults_JudgeInfo) bool {
+	return a.GetModel() == b.GetModel() && a.GetModelVersion() == b.GetModelVersion()
+}
+
 func runAgentEvalCase(ctx context.Context, suiteName string, fc registeredCase) executedCase {
 	fn, _ := fc.fn.(AgentEvalCaseFunc)
-	r := &AgentEvalResult{}
+	r := newAgentEvalResult()
 	if fn != nil {
 		fn(ctx, r)
 	}
 	_ = suiteName
+	return agentEvalOutcome(fc.name, r)
+}
+
+func agentEvalOutcome(caseName string, r *AgentEvalResult) executedCase {
+	validations := validationsFromValidator(r.Validator())
+	for _, err := range r.failures {
+		validations = append(validations, &evalspb.Validation{
+			Id:      caseValidationID,
+			Status:  evalspb.Status_FAILED,
+			Message: err.Error(),
+		})
+	}
+
+	status := evalspb.Status_NOT_EVALUATED
+	if r.sessionID != "" || len(r.metrics) > 0 || len(validations) > 0 || hasAgentJudgeData(r.judge) {
+		status = evalspb.Status_PASSED
+	}
+	for _, metric := range r.metrics {
+		if metric.GetStatus() == evalspb.Status_FAILED {
+			status = evalspb.Status_FAILED
+			break
+		}
+	}
+	if status != evalspb.Status_FAILED {
+		for _, v := range validations {
+			if v.GetStatus() == evalspb.Status_FAILED {
+				status = evalspb.Status_FAILED
+				break
+			}
+		}
+	}
+
 	return executedCase{
-		name:   fc.name,
-		status: evalspb.Status_PASSED,
+		name:        caseName,
+		status:      status,
+		validations: validations,
+		sessionID:   r.sessionID,
+		metrics:     r.metrics,
+		judge:       r.judge,
 	}
 }
 
@@ -209,6 +333,9 @@ func runInfraObservationCase(ctx context.Context, suiteName string, fc registere
 }
 
 func (s *suiteCore) materializeRun(cfg runConfig, cases []executedCase, start, end time.Time) *evalspb.Run {
+	if s.branch == branchAgentEval {
+		reconcileAgentJudge(cases)
+	}
 	runID := newUUID()
 	run := &evalspb.Run{
 		Name:            "runs/" + runID,
@@ -260,12 +387,18 @@ func (s *suiteCore) attachBranchData(run *evalspb.Run, cases []executedCase) {
 		protoCases := make([]*evalspb.AgentEvalResults_Case, len(cases))
 		for i, c := range cases {
 			protoCases[i] = &evalspb.AgentEvalResults_Case{
-				Id:       qualifiedCaseID(s.name, c.name),
-				Status:   c.status,
-				Duration: durationpb.New(c.duration),
+				Id:          qualifiedCaseID(s.name, c.name),
+				Status:      c.status,
+				Duration:    durationpb.New(c.duration),
+				SessionId:   c.sessionID,
+				Metrics:     c.metrics,
+				Validations: c.validations,
 			}
 		}
-		run.Data = &evalspb.Run_AgentEval{AgentEval: &evalspb.AgentEvalResults{Cases: protoCases}}
+		run.Data = &evalspb.Run_AgentEval{AgentEval: &evalspb.AgentEvalResults{
+			Cases: protoCases,
+			Judge: agentJudge(cases),
+		}}
 	case branchLoad:
 		protoCases := make([]*evalspb.LoadTestResults_Case, len(cases))
 		for i, c := range cases {
