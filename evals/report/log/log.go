@@ -37,7 +37,7 @@ func (Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 // Kept in sync manually to avoid importing the adk package into the
 // report/log package (which would pull ADK http/client machinery into
 // every deployment that only uses the log reporter). If you change this
-// map, update the one in evals/adk/judge.go too.
+// map, update the one in evals/adk/provider.go too.
 var judgeMetricNames = map[string]struct{}{
 	"final_response_match_v2":                       {},
 	"rubric_based_final_response_quality_v1":        {},

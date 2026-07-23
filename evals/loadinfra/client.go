@@ -11,6 +11,22 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+type clientContextKey struct{}
+
+// WithClient attaches a MetricClient to ctx for load case execution.
+func WithClient(ctx context.Context, client MetricClient) context.Context {
+	return context.WithValue(ctx, clientContextKey{}, client)
+}
+
+// ClientFromContext returns the MetricClient attached by [WithClient], or nil.
+func ClientFromContext(ctx context.Context) MetricClient {
+	if ctx == nil {
+		return nil
+	}
+	c, _ := ctx.Value(clientContextKey{}).(MetricClient)
+	return c
+}
+
 // MetricClient queries Cloud Monitoring time series. Production code uses
 // NewMetricClient; tests inject fakes at this boundary.
 type MetricClient interface {

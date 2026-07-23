@@ -2,8 +2,11 @@ package adk
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
+	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals/v1"
 )
 
@@ -137,4 +140,106 @@ func repeatedDuration(n int, total time.Duration) []time.Duration {
 		out[i] = each
 	}
 	return out
+}
+
+// filterPath is a parsed case filter ("suite" or "suite.case").
+type filterPath struct {
+	suite    string
+	caseName string
+}
+
+func parseFilterPaths(paths []string) ([]filterPath, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out := make([]filterPath, len(paths))
+	for i, path := range paths {
+		parsed, err := parseFilterPath(path)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = parsed
+	}
+	return out, nil
+}
+
+func parseFilterPath(path string) (filterPath, error) {
+	if path == "" {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q: empty filter path", path)
+	}
+	if strings.Count(path, ".") > 1 {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q: at most one '.' allowed", path)
+	}
+	suiteName, caseName, hasCase := strings.Cut(path, ".")
+	if suiteName == "" || hasCase && caseName == "" {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q", path)
+	}
+	return filterPath{suite: suiteName, caseName: caseName}, nil
+}
+
+// matchFilters returns whether setID is mentioned in filters, whether all cases
+// in the set should run, and which case IDs to run when wantAll is false.
+func matchFilters(parsed []filterPath, setID string) (wantAll bool, caseIDs []string, mentioned bool) {
+	if len(parsed) == 0 {
+		return true, nil, true
+	}
+
+	seen := make(map[string]struct{})
+	for _, f := range parsed {
+		if f.suite != setID {
+			continue
+		}
+		mentioned = true
+		if f.caseName == "" {
+			return true, nil, true
+		}
+		if _, ok := seen[f.caseName]; ok {
+			continue
+		}
+		seen[f.caseName] = struct{}{}
+		caseIDs = append(caseIDs, f.caseName)
+	}
+	if !mentioned {
+		return false, nil, false
+	}
+	return false, caseIDs, true
+}
+
+// judgeMetricNames is the exact set of metrics backed by an LLM judge.
+var judgeMetricNames = map[string]struct{}{
+	models.MetricFinalResponseMatchV2:                    {},
+	models.MetricRubricBasedFinalResponseQualityV1:       {},
+	models.MetricRubricBasedToolUseQualityV1:             {},
+	models.MetricRubricBasedMultiTurnTrajectoryQualityV1: {},
+	models.MetricHallucinationsV1:                        {},
+	models.MetricPerTurnUserSimulatorQualityV1:           {},
+}
+
+func isJudgeMetric(name string) bool {
+	_, ok := judgeMetricNames[name]
+	return ok
+}
+
+// probeJudgeModel returns the first configured judge model in declaration order.
+func probeJudgeModel(metrics []models.EvalMetric) string {
+	for _, m := range metrics {
+		if v, ok := m.Criterion.AsLlmJudge(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+			continue
+		}
+		if v, ok := m.Criterion.AsRubrics(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+			continue
+		}
+		if v, ok := m.Criterion.AsHallucinations(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+		}
+	}
+	return ""
 }
