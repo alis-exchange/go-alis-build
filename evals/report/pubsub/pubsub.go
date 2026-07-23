@@ -71,11 +71,11 @@ func (p *realPublisher) Stop() {
 // See the package documentation for the JSON payload contract and wiring
 // examples.
 type Reporter struct {
-	publisher      publisher       // publish seam; nil in partially constructed test reporters
-	topic          string          // bare ID or fully-qualified resource name
-	orderingKey    string          // empty disables message ordering
-	background     bool            // when true, ReportRun does not wait on publishResult.Get
-	publishTimeout time.Duration   // bounds each ReportRun via context.WithTimeout
+	publisher      publisher     // publish seam; nil in partially constructed test reporters
+	topic          string        // bare ID or fully-qualified resource name
+	orderingKey    string        // empty disables message ordering
+	background     bool          // when true, ReportRun does not wait on publishResult.Get
+	publishTimeout time.Duration // bounds each ReportRun via context.WithTimeout
 	// clientCloser is non-nil exactly when the Reporter owns the underlying
 	// *pubsub.Client (i.e. constructed via [New]). [NewWithClient] leaves it
 	// nil so [Reporter.Close] never closes a borrowed client.
@@ -304,7 +304,7 @@ func (r *Reporter) ReportRun(ctx context.Context, run *evalspb.Run) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.publishTimeout)
 	defer cancel()
-	data, err := marshalOptions.Marshal(run)
+	data, err := MarshalRunJSON(run)
 	if err != nil {
 		return ErrPublishMarshal{Topic: r.topic, Err: err}
 	}

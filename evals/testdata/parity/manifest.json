@@ -1,0 +1,9 @@
+{
+  "baseline_task": "capture-result-baseline",
+  "captured_at": "2026-07-23",
+  "common_module": "go.alis.build/common",
+  "common_sum": "h1:VqM/Grp6vw19uV0l8/du9CmvwWPlJASOtJeJooZgul4=",
+  "common_version": "v1.1.14",
+  "evaluation_descriptor_sha256": "35ad5bd7577eb5bcf947e3245f556e98d608032c19f911b2651ddf85b32d5c40",
+  "note": "Frozen before the fluent typed suite rewrite; do not update after P0 without explicit review."
+}

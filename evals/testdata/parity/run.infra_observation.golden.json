@@ -1,0 +1,117 @@
+{
+  "batch_id": "baseline-batch-id",
+  "create_time": "2023-11-14T22:13:26Z",
+  "end_time": "2023-11-14T22:13:25Z",
+  "google_project_id": "baseline-project",
+  "infra_observation": {
+    "cases": [
+      {
+        "cloud_run": [
+          {
+            "fetch_message": "observation complete",
+            "fetch_status": "INFRA_FETCH_STATUS_OK",
+            "id": "checkout-entry",
+            "metrics": {
+              "cpu_utilization_p99": 0.68,
+              "error_5xx_rate": 0.02,
+              "latency": {
+                "max_ms": 210,
+                "mean_ms": 18,
+                "min_ms": 3,
+                "p50_ms": 12,
+                "p95_ms": 55,
+                "p99_ms": 110
+              },
+              "max_instance_count": 4,
+              "memory_utilization_p99": 0.59,
+              "request_count": "99",
+              "startup_latency_p99": 390
+            },
+            "role": "INFRA_TARGET_ROLE_ENTRY",
+            "target": {
+              "project_id": "marvel-sm-prod-456",
+              "region": "africa-south1",
+              "revision": "checkout-00100",
+              "service_name": "checkout"
+            },
+            "window_end": "2023-11-14T22:13:25Z",
+            "window_start": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "id": "checkout-runtime.peak-window",
+        "infra_checks": [],
+        "lookback": "1800s",
+        "spanner": [
+          {
+            "fetch_message": "observation complete",
+            "fetch_status": "INFRA_FETCH_STATUS_OK",
+            "id": "checkout-db",
+            "metrics": {
+              "api_latency": {
+                "max_ms": 0,
+                "mean_ms": 0,
+                "min_ms": 0,
+                "p50_ms": 5,
+                "p95_ms": 0,
+                "p99_ms": 24
+              },
+              "cpu_utilization_max": 0.55,
+              "query_count": "18",
+              "query_error_count": "2",
+              "query_latency": {
+                "max_ms": 0,
+                "mean_ms": 0,
+                "min_ms": 0,
+                "p50_ms": 4,
+                "p95_ms": 0,
+                "p99_ms": 21
+              }
+            },
+            "role": "INFRA_TARGET_ROLE_DEPENDENCY",
+            "target": {
+              "database": "orders",
+              "instance_id": "checkout",
+              "location": "regional-europe-west1",
+              "project_id": "marvel-sm-prod-456"
+            },
+            "window_end": "2023-11-14T22:13:25Z",
+            "window_start": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "status": "PASSED",
+        "window_end": "2023-11-14T22:13:25Z",
+        "window_start": "2023-11-14T22:13:20Z"
+      },
+      {
+        "cloud_run": [
+          {
+            "fetch_message": "Monitoring API returned no usable data",
+            "fetch_status": "INFRA_FETCH_STATUS_UNAVAILABLE",
+            "id": "checkout-worker",
+            "metrics": null,
+            "role": "INFRA_TARGET_ROLE_DEPENDENCY",
+            "target": {
+              "project_id": "marvel-sm-prod-456",
+              "region": "africa-south1",
+              "service_name": "checkout-worker"
+            },
+            "window_end": "2023-11-14T22:13:25Z",
+            "window_start": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "id": "checkout-runtime.partial-fetch",
+        "infra_checks": [],
+        "lookback": "900s",
+        "spanner": [],
+        "status": "FAILED",
+        "window_end": "2023-11-14T22:13:25Z",
+        "window_start": "2023-11-14T22:13:20Z"
+      }
+    ]
+  },
+  "name": "runs/baseline-run-id",
+  "operation": "operations/baseline-op",
+  "start_time": "2023-11-14T22:13:20Z",
+  "status": "FAILED",
+  "type": "INFRA_OBSERVATION"
+}

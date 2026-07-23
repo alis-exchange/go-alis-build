@@ -1,0 +1,187 @@
+{
+  "batch_id": "baseline-batch-id",
+  "create_time": "2023-11-14T22:13:26Z",
+  "end_time": "2023-11-14T22:13:25Z",
+  "google_project_id": "baseline-project",
+  "load_test": {
+    "cases": [
+      {
+        "checks": [
+          {
+            "id": "latency.p99_ms",
+            "limit": 500,
+            "message": "",
+            "observed": 120,
+            "status": "PASSED",
+            "unit": "ms"
+          },
+          {
+            "id": "error_rate",
+            "limit": 1,
+            "message": "2.1% exceeds limit 1.0%",
+            "observed": 2.1,
+            "status": "FAILED",
+            "unit": "%"
+          }
+        ],
+        "cloud_run": [
+          {
+            "fetch_message": "all Cloud Run metrics fetched",
+            "fetch_status": "INFRA_FETCH_STATUS_OK",
+            "id": "checkout-entry",
+            "metrics": {
+              "cpu_utilization_p99": 0.72,
+              "error_5xx_rate": 0.01,
+              "latency": {
+                "max_ms": 250,
+                "mean_ms": 12,
+                "min_ms": 2,
+                "p50_ms": 8,
+                "p95_ms": 60,
+                "p99_ms": 120
+              },
+              "max_instance_count": 3,
+              "memory_utilization_p99": 0.64,
+              "request_count": "12",
+              "startup_latency_p99": 420
+            },
+            "role": "INFRA_TARGET_ROLE_ENTRY",
+            "target": {
+              "project_id": "marvel-sm-dev-123",
+              "region": "africa-south1",
+              "revision": "checkout-00042",
+              "service_name": "checkout"
+            },
+            "window_end": "2023-11-14T22:13:25Z",
+            "window_start": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "id": "checkout-capacity.steady-traffic",
+        "infra_checks": [],
+        "spanner": [
+          {
+            "fetch_message": "all Spanner metrics fetched",
+            "fetch_status": "INFRA_FETCH_STATUS_OK",
+            "id": "checkout-db",
+            "metrics": {
+              "api_latency": {
+                "max_ms": 0,
+                "mean_ms": 0,
+                "min_ms": 0,
+                "p50_ms": 4,
+                "p95_ms": 0,
+                "p99_ms": 20
+              },
+              "cpu_utilization_max": 0.42,
+              "query_count": "4",
+              "query_error_count": "1",
+              "query_latency": {
+                "max_ms": 0,
+                "mean_ms": 0,
+                "min_ms": 0,
+                "p50_ms": 3,
+                "p95_ms": 0,
+                "p99_ms": 18
+              }
+            },
+            "role": "INFRA_TARGET_ROLE_DEPENDENCY",
+            "target": {
+              "database": "orders",
+              "instance_id": "checkout",
+              "location": "regional-europe-west1",
+              "project_id": "marvel-sm-dev-123"
+            },
+            "window_end": "2023-11-14T22:13:25Z",
+            "window_start": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "status": "FAILED",
+        "summary": {
+          "actual_qps": 95,
+          "check_failed_count": "3",
+          "check_passed_count": "90",
+          "concurrency": 25,
+          "concurrency_stages": [
+            {
+              "duration": "0.500s",
+              "target": 10
+            },
+            {
+              "duration": "0.500s",
+              "target": 25
+            }
+          ],
+          "dropped_count": "5",
+          "duration": "1s",
+          "error_count": "2",
+          "errors_by_code": [
+            {
+              "key": "UNAVAILABLE",
+              "value": "2"
+            }
+          ],
+          "latency": {
+            "max_ms": 250,
+            "mean_ms": 12,
+            "min_ms": 2,
+            "p50_ms": 8,
+            "p95_ms": 60,
+            "p99_ms": 120
+          },
+          "mode": "MODERATE",
+          "qps_stages": [
+            {
+              "duration": "1s",
+              "target": 100
+            }
+          ],
+          "request_count": "95",
+          "stream": {
+            "messages_sent_total": "40",
+            "response_latency": {
+              "max_ms": 0,
+              "mean_ms": 0,
+              "min_ms": 0,
+              "p50_ms": 15,
+              "p95_ms": 0,
+              "p99_ms": 80
+            },
+            "stream_count": "10",
+            "total_duration": {
+              "max_ms": 140,
+              "mean_ms": 0,
+              "min_ms": 0,
+              "p50_ms": 20,
+              "p95_ms": 0,
+              "p99_ms": 100
+            },
+            "ttfb": {
+              "max_ms": 0,
+              "mean_ms": 0,
+              "min_ms": 0,
+              "p50_ms": 0,
+              "p95_ms": 0,
+              "p99_ms": 25
+            }
+          },
+          "target_qps": 100
+        },
+        "tags": [
+          {
+            "key": "env",
+            "value": "staging"
+          },
+          {
+            "key": "rpc",
+            "value": "CreateOrder"
+          }
+        ]
+      }
+    ]
+  },
+  "name": "runs/baseline-run-id",
+  "operation": "operations/baseline-op",
+  "start_time": "2023-11-14T22:13:20Z",
+  "status": "FAILED",
+  "type": "LOAD_TEST"
+}
