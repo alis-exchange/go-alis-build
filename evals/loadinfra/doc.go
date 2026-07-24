@@ -12,9 +12,10 @@
 //
 // # Targets
 //
-// Declare [CloudRunTarget] and [SpannerTarget] on load or infra-observe suites.
-// Cloud Run requires exactly one [RoleEntry]; Spanner targets are always
-// DEPENDENCY on the wire. Target IDs must be unique across kinds.
+// Declare [CloudRunTarget] and [SpannerTarget] in normal Go code and pass them
+// to [Observe] from a load or infra observation case. Cloud Run requires
+// exactly one [RoleEntry]; Spanner targets are always DEPENDENCY on the wire.
+// Target IDs must be unique across kinds.
 //
 // # Fetch semantics (v1)
 //
@@ -25,9 +26,10 @@
 //
 // # Client injection
 //
-// Production code constructs a client with [NewMetricClient]. The runner attaches
-// it to context via [WithClient]; case adapters read it with [ClientFromContext].
-// Tests inject [FakeMetricClient] at the same boundary.
+// Production code constructs a client with [NewMetricClient]. Callers may pass
+// the client directly to [Observe] or attach it to context via [WithClient] for
+// their own case helper code. Tests inject [FakeMetricClient] at the same
+// boundary.
 //
 // Example (standalone):
 //

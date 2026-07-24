@@ -1,26 +1,23 @@
+---
+title: packages
+description: Current package map.
+tags: [packages]
+---
+
 # Packages
 
-One page per Go subpackage in `go.alis.build/evals`.
+| Package | Purpose |
+| --- | --- |
+| `go.alis.build/evals` | Typed suites, builders, options, call/stream helpers, scoring helpers. |
+| `go.alis.build/evals/adk` | ADK helper and protobuf-native agent eval conversion. |
+| `go.alis.build/evals/loadgen` | Focused load generation and `Summary` conversion. |
+| `go.alis.build/evals/loadinfra` | Focused Cloud Monitoring collection and protobuf snapshots. |
+| `go.alis.build/evals/report` | Reporter interface and fan-out combinators. |
+| `go.alis.build/evals/report/log` | alog summary reporter. |
+| `go.alis.build/evals/report/pubsub` | Pub/Sub reporter for protojson `Run` payloads. |
+| `go.alis.build/evals/report/bigquery` | BigQuery streaming insert reporter. |
+| `go.alis.build/evals/report/bqschema` | Canonical BigQuery schema helpers. |
+| `go.alis.build/evals/errors` | gRPC status bridging for typed errors. |
 
-# Public authoring surface
-
-* [`evals`](/packages/evals.md) - the root package. `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, `NewInfraObserveSuite`, `T`, `Call`, `Rouge1F1`, SLO constructors, registration functions.
-
-# Runtime subpackages
-
-* [`evals/adk`](/packages/adk.md) - transport-agnostic ADK evaluation-launcher client and lazy `AgentEvalProvider`.
-* [`evals/env`](/packages/env.md) - shared environment registration and activation.
-* [`evals/errors`](/packages/errors.md) - `EvalError` interface and gRPC translation helpers.
-* [`evals/execution`](/packages/execution.md) - in-process result types (timing, provenance; shares evalspb Status and infra snapshots).
-* [`evals/loadgen`](/packages/loadgen.md) - embedded load generator.
-* [`evals/loadinfra`](/packages/loadinfra.md) - Cloud Monitoring fetch boundary for infra observation.
-* [`evals/mapper`](/packages/mapper.md) - `execution` → `evalspb.Run` translation.
-* [`evals/registry`](/packages/registry.md) - registered suites, filter grammar, selection validation.
-* [`evals/report`](/packages/report.md) - `Reporter` interface + `NoOpReporter`, `MultiReporter`.
-* [`evals/report/log`](/packages/report-log.md) - default log reporter (`log.Reporter`).
-* [`evals/report/bqschema`](/packages/report-bqschema.md) - shared BigQuery schema + `EnsureTable` provisioning.
-* [`evals/report/bigquery`](/packages/report-bigquery.md) - BigQuery streaming reporter.
-* [`evals/report/pubsub`](/packages/report-pubsub.md) - JSON Pub/Sub reporter for bare `evalspb.Run`.
-* [`evals/runner`](/packages/runner.md) - environment activation, suite execution, panic recovery.
-* [`evals/harness`](/packages/harness.md) - execute → map → report orchestration for resume handlers.
-* [`evals/suite`](/packages/suite.md) - internal `TestSuite`, `EvalSuite`, `LoadSuite`, and `InfraObserveSuite` primitives.
+Deleted registry-era packages are intentionally absent: `env`, `suite`,
+`registry`, `runner`, `mapper`, `execution`, `harness`, and `verdict`.

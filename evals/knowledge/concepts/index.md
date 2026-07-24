@@ -1,12 +1,44 @@
+---
+title: concepts
+description: Core concepts in the typed evals API.
+tags: [concepts]
+---
+
 # Concepts
 
-Reusable abstractions that appear throughout the framework.
+## Suite
 
-* [Suite](/concepts/suite.md) - a named group of related cases plus optional environment dependencies and lifecycle hooks.
-* [Case](/concepts/case.md) - the unit of execution — a `func(ctx, *T)` (test/eval) or a `ResultTarget` + SLOs (load).
-* [T recorder](/concepts/t-recorder.md) - per-case handle that records assertion leaves for test and eval cases.
-* [Environment](/concepts/environment.md) - shared setup/teardown identified by name and activated once per LRO.
-* [Registry](/concepts/registry.md) - default or isolated publish point for suites and lazy providers.
-* [Reporter](/concepts/reporter.md) - sink that receives each completed `Run` proto.
-* [Run](/concepts/run.md) - the top-level wire envelope covering all four suite kinds.
-* [Status](/concepts/status.md) - the four-value enum (`STATUS_UNSPECIFIED`, `PASSED`, `FAILED`, `NOT_EVALUATED`) used everywhere.
+A suite is a named collection of cases for one result branch. The constructor
+selects the branch:
+
+- `NewIntegrationSuite`
+- `NewAgentEvalSuite`
+- `NewLoadSuite`
+- `NewInfraObservationSuite`
+
+## Case
+
+A case is a named function added with `AddCase("name", fn)`. Case IDs are
+qualified on the wire as `{suite}.{case}`.
+
+## Execution
+
+`Run` executes cases and returns the materialized protobuf run without
+publishing. `RunAndPublish` executes the same path and then reports the run.
+
+Default concurrency is one active case. `WithMaxConcurrency(n)` allows bounded
+parallelism while preserving result order.
+
+## Lifecycle
+
+There is no framework-managed environment registry. Use normal Go:
+
+- call setup before `Run`;
+- use `defer` for cleanup;
+- construct clients in the case or pass them through closures;
+- use `context.WithoutCancel` when cleanup must outlive a cancelled run context.
+
+## Result contract
+
+The emitted `evalspb.Run` shape remains compatible with the P0 parity fixtures.
+Specialized cases add `validations`; integration cases continue using `checks`.

@@ -12,10 +12,10 @@ import (
 // literals to avoid a runtime dep on the launcher's `models` package
 // (which pulls a large transitive graph). This test imports `models`
 // test-only and asserts that our literal set matches the constant set
-// that the adk/judge.go mirror already binds by symbol.
+// that the adk/provider.go mirror already binds by symbol.
 //
 // If this test fails: (a) update log.judgeMetricNames to match the
-// current constant values, and (b) update the mirror in adk/judge.go
+// current constant values, and (b) update the mirror in adk/provider.go
 // if it also drifted.
 func TestJudgeMetricNamesInSyncWithLauncherConstants(t *testing.T) {
 	t.Parallel()

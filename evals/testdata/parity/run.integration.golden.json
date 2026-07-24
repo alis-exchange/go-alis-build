@@ -1,0 +1,61 @@
+{
+  "batch_id": "baseline-batch-id",
+  "create_time": "2023-11-14T22:13:26Z",
+  "end_time": "2023-11-14T22:13:25Z",
+  "google_project_id": "baseline-project",
+  "integration_test": {
+    "cases": [
+      {
+        "checks": [
+          {
+            "id": "grpc.status_ok",
+            "message": "",
+            "status": "PASSED"
+          },
+          {
+            "id": "order.id_present",
+            "message": "",
+            "status": "PASSED"
+          }
+        ],
+        "duration": "1.500s",
+        "id": "checkout-regression.creates-order",
+        "status": "PASSED"
+      },
+      {
+        "checks": [
+          {
+            "id": "grpc.status_ok",
+            "message": "",
+            "status": "PASSED"
+          },
+          {
+            "id": "latency.p99_ms",
+            "message": "p99 842ms exceeds limit 500ms",
+            "status": "FAILED"
+          }
+        ],
+        "duration": "2.200s",
+        "id": "checkout-regression.latency-budget",
+        "status": "FAILED"
+      },
+      {
+        "checks": [
+          {
+            "id": "_evals.skipped",
+            "message": "run cancelled",
+            "status": "NOT_EVALUATED"
+          }
+        ],
+        "duration": "0s",
+        "id": "checkout-regression.cancelled-case",
+        "status": "NOT_EVALUATED"
+      }
+    ]
+  },
+  "name": "runs/baseline-run-id",
+  "operation": "operations/baseline-op",
+  "start_time": "2023-11-14T22:13:20Z",
+  "status": "FAILED",
+  "type": "INTEGRATION_TEST"
+}

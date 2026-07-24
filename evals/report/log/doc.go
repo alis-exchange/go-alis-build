@@ -14,14 +14,14 @@
 //	    logreport "go.alis.build/evals/report/log"
 //	)
 //
-//	services.TestServiceServer.Reporter = logreport.Reporter{}
+//	run, err := suite.RunAndPublish(ctx, evals.WithReporter(logreport.Reporter{}))
 //
 // Fan out alongside other sinks:
 //
-//	services.TestServiceServer.Reporter = report.MultiReporter{
+//	run, err := suite.RunAndPublish(ctx, evals.WithReporter(report.MultiReporter{
 //	    logreport.Reporter{},
 //	    myPubSubReporter{topic: "eval-runs"},
-//	}
+//	}))
 //
 // # Judge drift diagnostic
 //

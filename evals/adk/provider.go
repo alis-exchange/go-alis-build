@@ -2,10 +2,12 @@ package adk
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
-	"go.alis.build/evals/execution"
-	"go.alis.build/evals/suite"
+	"go.alis.build/adk/launchers/evals/evaluation/models"
+	evalspb "go.alis.build/common/alis/evals/v1"
 )
 
 // clientFactory constructs a [Client] for one provider run; overridden in tests
@@ -22,6 +24,14 @@ type Provider struct {
 
 // ProviderOption configures a Provider.
 type ProviderOption func(*Provider)
+
+// ProviderResult is one ADK eval set materialized as protobuf-native results.
+type ProviderResult struct {
+	SuiteName string
+	StartTime time.Time
+	EndTime   time.Time
+	Results   *evalspb.AgentEvalResults
+}
 
 // WithClientFactory overrides the default HTTP client factory (for tests).
 func WithClientFactory(fn clientFactory) ProviderOption {
@@ -50,8 +60,8 @@ func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 	return p
 }
 
-// Run discovers eval sets, runs filtered cases, and returns suite results.
-func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.SuiteResult, error) {
+// Run discovers eval sets, runs filtered cases, and returns protobuf-native results.
+func (p *Provider) Run(ctx context.Context, filters []string) ([]ProviderResult, error) {
 	if p == nil {
 		return nil, ErrNilProvider{}
 	}
@@ -69,12 +79,12 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 		return nil, ErrListEvalSets{Err: err}
 	}
 
-	parsed, err := suite.ParseFilterPaths(filters)
+	parsed, err := parseFilterPaths(filters)
 	if err != nil {
 		return nil, err
 	}
 
-	var out []execution.SuiteResult
+	var out []ProviderResult
 	for _, setID := range setIDs {
 		if p.agent.IncludeEvalSet != nil && !p.agent.IncludeEvalSet(setID) {
 			continue
@@ -101,37 +111,135 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]execution.Suite
 			return nil, ErrRunEval{SetID: setID, Err: err}
 		}
 
-		each := end.Sub(start) / time.Duration(max(len(results), 1))
-		cases := make([]execution.CaseResult, 0, len(results))
-		var suiteJudgeCalls int64
-		for _, r := range results {
-			cr := CaseFromRunEvalResult(setID, r, each)
-			suiteJudgeCalls += cr.JudgeCallCount
-			cases = append(cases, *cr)
-		}
-
-		// Resolve judge provenance for this suite. Agent.JudgeModel is
-		// authoritative; probeJudgeModel is a best-effort fallback that
-		// walks the caller-supplied metric criteria for this set. See
-		// Agent.JudgeModel godoc for the caveats around heterogeneous
-		// metric setups and the adk-python default asymmetry.
+		// Resolve judge provenance for this suite. Agent.JudgeModel is authoritative;
+		// probeJudgeModel is a best-effort fallback that walks caller-supplied metric
+		// criteria for this set.
 		judgeModel := p.agent.JudgeModel
 		if judgeModel == "" {
 			judgeModel = probeJudgeModel(params.Metrics)
 		}
-
-		out = append(out, execution.SuiteResult{
+		judge := SynthesizeJudgeContext(results, judgeModel, p.agent.JudgeModelVersion)
+		out = append(out, ProviderResult{
 			SuiteName: setID,
-			Cases:     cases,
 			StartTime: start,
 			EndTime:   end,
-			Judge: execution.JudgeInfo{
-				Model:        judgeModel,
-				ModelVersion: p.agent.JudgeModelVersion,
-			},
-			JudgeCallCount: suiteJudgeCalls,
+			Results:   AgentEvalResultsFromRunEvalResults(setID, results, repeatedDuration(len(results), end.Sub(start)), judge),
 		})
 	}
 
 	return out, nil
+}
+
+func repeatedDuration(n int, total time.Duration) []time.Duration {
+	if n == 0 {
+		return nil
+	}
+	each := total / time.Duration(n)
+	out := make([]time.Duration, n)
+	for i := range out {
+		out[i] = each
+	}
+	return out
+}
+
+// filterPath is a parsed case filter ("suite" or "suite.case").
+type filterPath struct {
+	suite    string
+	caseName string
+}
+
+func parseFilterPaths(paths []string) ([]filterPath, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out := make([]filterPath, len(paths))
+	for i, path := range paths {
+		parsed, err := parseFilterPath(path)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = parsed
+	}
+	return out, nil
+}
+
+func parseFilterPath(path string) (filterPath, error) {
+	if path == "" {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q: empty filter path", path)
+	}
+	if strings.Count(path, ".") > 1 {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q: at most one '.' allowed", path)
+	}
+	suiteName, caseName, hasCase := strings.Cut(path, ".")
+	if suiteName == "" || hasCase && caseName == "" {
+		return filterPath{}, fmt.Errorf("adk: invalid filter path %q", path)
+	}
+	return filterPath{suite: suiteName, caseName: caseName}, nil
+}
+
+// matchFilters returns whether setID is mentioned in filters, whether all cases
+// in the set should run, and which case IDs to run when wantAll is false.
+func matchFilters(parsed []filterPath, setID string) (wantAll bool, caseIDs []string, mentioned bool) {
+	if len(parsed) == 0 {
+		return true, nil, true
+	}
+
+	seen := make(map[string]struct{})
+	for _, f := range parsed {
+		if f.suite != setID {
+			continue
+		}
+		mentioned = true
+		if f.caseName == "" {
+			return true, nil, true
+		}
+		if _, ok := seen[f.caseName]; ok {
+			continue
+		}
+		seen[f.caseName] = struct{}{}
+		caseIDs = append(caseIDs, f.caseName)
+	}
+	if !mentioned {
+		return false, nil, false
+	}
+	return false, caseIDs, true
+}
+
+// judgeMetricNames is the exact set of metrics backed by an LLM judge.
+var judgeMetricNames = map[string]struct{}{
+	models.MetricFinalResponseMatchV2:                    {},
+	models.MetricRubricBasedFinalResponseQualityV1:       {},
+	models.MetricRubricBasedToolUseQualityV1:             {},
+	models.MetricRubricBasedMultiTurnTrajectoryQualityV1: {},
+	models.MetricHallucinationsV1:                        {},
+	models.MetricPerTurnUserSimulatorQualityV1:           {},
+}
+
+func isJudgeMetric(name string) bool {
+	_, ok := judgeMetricNames[name]
+	return ok
+}
+
+// probeJudgeModel returns the first configured judge model in declaration order.
+func probeJudgeModel(metrics []models.EvalMetric) string {
+	for _, m := range metrics {
+		if v, ok := m.Criterion.AsLlmJudge(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+			continue
+		}
+		if v, ok := m.Criterion.AsRubrics(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+			continue
+		}
+		if v, ok := m.Criterion.AsHallucinations(); ok {
+			if v.JudgeModelOptions.JudgeModel != "" {
+				return v.JudgeModelOptions.JudgeModel
+			}
+		}
+	}
+	return ""
 }

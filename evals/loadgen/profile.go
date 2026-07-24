@@ -1,10 +1,26 @@
 package loadgen
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
 )
+
+type abortOnSLOKey struct{}
+
+// ContextWithAbortOnSLOFailure marks ctx so load cases install an abort
+// check that cancels the generator when any declared SLO fails.
+func ContextWithAbortOnSLOFailure(ctx context.Context) context.Context {
+	return context.WithValue(ctx, abortOnSLOKey{}, true)
+}
+
+// AbortOnSLOFailure reports whether ctx was marked by
+// [ContextWithAbortOnSLOFailure].
+func AbortOnSLOFailure(ctx context.Context) bool {
+	v, _ := ctx.Value(abortOnSLOKey{}).(bool)
+	return v
+}
 
 // Stage is one step in a staged load profile. Target is queries per second
 // when used in QPSStages, or worker count when used in ConcurrencyStages.

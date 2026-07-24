@@ -82,11 +82,12 @@ func TestProvider_Run_discoversSets(t *testing.T) {
 	if results[0].SuiteName != "eval_set_1" {
 		t.Fatalf("suite = %q", results[0].SuiteName)
 	}
-	if len(results[0].Cases) != 1 || results[0].Cases[0].Name != "eval_set_1.hi" {
-		t.Fatalf("cases = %#v", results[0].Cases)
+	cases := results[0].Results.GetCases()
+	if len(cases) != 1 || cases[0].GetId() != "eval_set_1.hi" {
+		t.Fatalf("cases = %#v", cases)
 	}
-	if results[0].Cases[0].Status != evalspb.Status_PASSED {
-		t.Fatalf("status = %v", results[0].Cases[0].Status)
+	if cases[0].GetStatus() != evalspb.Status_PASSED {
+		t.Fatalf("status = %v", cases[0].GetStatus())
 	}
 }
 
@@ -141,21 +142,15 @@ func TestProvider_Run_populatesJudgeFromAgent(t *testing.T) {
 		t.Fatalf("results = %#v", results)
 	}
 	sr := results[0]
-	if sr.Judge.Model != "gemini-2.5-pro" {
-		t.Errorf("Judge.Model = %q, want gemini-2.5-pro", sr.Judge.Model)
+	if sr.Results.GetJudge().GetModel() != "gemini-2.5-pro" {
+		t.Errorf("Judge.Model = %q, want gemini-2.5-pro", sr.Results.GetJudge().GetModel())
 	}
-	if sr.Judge.ModelVersion != "2025-06-05" {
-		t.Errorf("Judge.ModelVersion = %q, want 2025-06-05", sr.Judge.ModelVersion)
+	if sr.Results.GetJudge().GetModelVersion() != "2025-06-05" {
+		t.Errorf("Judge.ModelVersion = %q, want 2025-06-05", sr.Results.GetJudge().GetModelVersion())
 	}
 	// 2 judge metrics total: rubric_based_final_response_quality_v1 (c1) and hallucinations_v1 (c2).
-	if sr.JudgeCallCount != 2 {
-		t.Errorf("SuiteResult.JudgeCallCount = %d, want 2", sr.JudgeCallCount)
-	}
-	if got := sr.Cases[0].JudgeCallCount; got != 1 {
-		t.Errorf("Cases[0].JudgeCallCount = %d, want 1", got)
-	}
-	if got := sr.Cases[1].JudgeCallCount; got != 1 {
-		t.Errorf("Cases[1].JudgeCallCount = %d, want 1", got)
+	if sr.Results.GetJudge().GetJudgeCallCount() != 2 {
+		t.Errorf("Judge.JudgeCallCount = %d, want 2", sr.Results.GetJudge().GetJudgeCallCount())
 	}
 }
 
@@ -194,14 +189,14 @@ func TestProvider_Run_probesJudgeModelWhenAgentEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := results[0].Judge.Model, "gemini-2.5-flash"; got != want {
+	if got, want := results[0].Results.GetJudge().GetModel(), "gemini-2.5-flash"; got != want {
 		t.Errorf("Judge.Model = %q, want %q (probed fallback)", got, want)
 	}
-	if results[0].Judge.ModelVersion != "" {
-		t.Errorf("Judge.ModelVersion = %q, want empty (no fallback source)", results[0].Judge.ModelVersion)
+	if results[0].Results.GetJudge().GetModelVersion() != "" {
+		t.Errorf("Judge.ModelVersion = %q, want empty (no fallback source)", results[0].Results.GetJudge().GetModelVersion())
 	}
-	if results[0].JudgeCallCount != 1 {
-		t.Errorf("SuiteResult.JudgeCallCount = %d, want 1", results[0].JudgeCallCount)
+	if results[0].Results.GetJudge().GetJudgeCallCount() != 1 {
+		t.Errorf("Judge.JudgeCallCount = %d, want 1", results[0].Results.GetJudge().GetJudgeCallCount())
 	}
 }
 
@@ -251,7 +246,7 @@ func TestProvider_Run_probesJudgeModelFromMetricOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := results[0].Judge.Model, "gemini-2.5-pro"; got != want {
+	if got, want := results[0].Results.GetJudge().GetModel(), "gemini-2.5-pro"; got != want {
 		t.Errorf("Judge.Model = %q, want %q (override set)", got, want)
 	}
 }
@@ -287,14 +282,11 @@ func TestProvider_Run_noJudgeWhenNothingConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := results[0].Judge.Model; got != "" {
+	if got := results[0].Results.GetJudge().GetModel(); got != "" {
 		t.Errorf("Judge.Model = %q, want empty", got)
 	}
-	if got := results[0].JudgeCallCount; got != 0 {
-		t.Errorf("SuiteResult.JudgeCallCount = %d, want 0", got)
-	}
-	if got := results[0].Cases[0].JudgeCallCount; got != 0 {
-		t.Errorf("Cases[0].JudgeCallCount = %d, want 0", got)
+	if got := results[0].Results.GetJudge().GetJudgeCallCount(); got != 0 {
+		t.Errorf("Judge.JudgeCallCount = %d, want 0", got)
 	}
 }
 

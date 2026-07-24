@@ -60,7 +60,6 @@
 //	    if err != nil {
 //	        return nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = r
 //	    return r, nil // Close() at server drain
 //	}
 //
@@ -75,23 +74,22 @@
 //	    pubsubreport "go.alis.build/evals/report/pubsub"
 //	)
 //
-//	func setupReporters(ctx context.Context, datasetID, tableID string) error {
+//	func setupReporters(ctx context.Context, datasetID, tableID string) (report.Reporter, error) {
 //	    productProject := os.Getenv("ALIS_OS_PRODUCT_PROJECT")
 //	    bq, err := bqreport.New(ctx, productProject, datasetID, tableID)
 //	    if err != nil {
-//	        return err
+//	        return nil, err
 //	    }
 //	    ps, err := pubsubreport.New(ctx)
 //	    if err != nil {
 //	        _ = bq.Close()
-//	        return err
+//	        return nil, err
 //	    }
-//	    services.TestServiceServer.Reporter = report.MultiReporter{
+//	    return report.MultiReporter{
 //	        logreport.Reporter{},
 //	        bq,
 //	        ps,
-//	    }
-//	    return nil // Close bq and ps at server drain
+//	    }, nil // Close bq and ps at server drain
 //	}
 //
 // # Delivery semantics

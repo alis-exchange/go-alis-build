@@ -1,0 +1,9 @@
+{
+  "baseline_task": "capture-result-baseline",
+  "captured_at": "2026-07-23",
+  "common_module": "go.alis.build/common",
+  "common_sum": "h1:zHmXsV+mNL6COu/lpkUrkNTue2j2yFYG+KzD9fzm61Q=",
+  "common_version": "v1.1.15",
+  "evaluation_descriptor_sha256": "84f84a492a3619af4e3b08ce08db9a7985880852d586de73a6816d48a6456782",
+  "note": "P0 run goldens refreshed after v1.1.15 define to include empty validations arrays under EmitUnpopulated; semantic fields unchanged."
+}

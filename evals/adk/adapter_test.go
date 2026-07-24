@@ -26,17 +26,17 @@ func TestCaseFromRunEvalResult_mapsFields(t *testing.T) {
 	}
 
 	got := adk.CaseFromRunEvalResult("eval_set_1", r, 2*time.Second)
-	if got.Name != "eval_set_1.case-1" {
-		t.Fatalf("name = %q, want eval_set_1.case-1", got.Name)
+	if got.GetId() != "eval_set_1.case-1" {
+		t.Fatalf("id = %q, want eval_set_1.case-1", got.GetId())
 	}
-	if got.SessionID != "sess-abc" {
-		t.Fatalf("session_id = %q", got.SessionID)
+	if got.GetSessionId() != "sess-abc" {
+		t.Fatalf("session_id = %q", got.GetSessionId())
 	}
-	if got.Status != evalspb.Status_PASSED {
-		t.Fatalf("status = %v", got.Status)
+	if got.GetStatus() != evalspb.Status_PASSED {
+		t.Fatalf("status = %v", got.GetStatus())
 	}
-	if len(got.Metrics) != 1 || got.Metrics[0].ID != "response_match_score" {
-		t.Fatalf("metrics = %+v", got.Metrics)
+	if len(got.GetMetrics()) != 1 || got.GetMetrics()[0].GetId() != "response_match_score" {
+		t.Fatalf("metrics = %+v", got.GetMetrics())
 	}
 }
 
@@ -56,7 +56,7 @@ func TestCaseFromRunEvalResult_failedMetricMessage(t *testing.T) {
 	}
 
 	got := adk.CaseFromRunEvalResult("eval_set_1", r, 0)
-	if got.Metrics[0].Message == "" {
+	if got.GetMetrics()[0].GetMessage() == "" {
 		t.Fatal("expected failure message on metric")
 	}
 }
@@ -84,14 +84,14 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 	}
 
 	got := adk.CaseFromRunEvalResult("eval_set_1", r, 0)
-	if len(got.Metrics[0].Rubric) != 1 {
-		t.Fatalf("rubric = %+v", got.Metrics[0].Rubric)
+	if len(got.GetMetrics()[0].GetRubric()) != 1 {
+		t.Fatalf("rubric = %+v", got.GetMetrics()[0].GetRubric())
 	}
-	if got.Metrics[0].Rubric[0].Status != evalspb.Status_FAILED {
-		t.Fatalf("rubric status = %v", got.Metrics[0].Rubric[0].Status)
+	if got.GetMetrics()[0].GetRubric()[0].GetStatus() != evalspb.Status_FAILED {
+		t.Fatalf("rubric status = %v", got.GetMetrics()[0].GetRubric()[0].GetStatus())
 	}
-	if got.Metrics[0].Rubric[0].Rationale != rationale {
-		t.Fatalf("rubric rationale = %q, want %q", got.Metrics[0].Rubric[0].Rationale, rationale)
+	if got.GetMetrics()[0].GetRubric()[0].GetRationale() != rationale {
+		t.Fatalf("rubric rationale = %q, want %q", got.GetMetrics()[0].GetRubric()[0].GetRationale(), rationale)
 	}
 }
 
