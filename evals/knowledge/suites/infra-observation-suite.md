@@ -32,3 +32,12 @@ suite := evals.NewInfraObservationSuite("checkout-runtime").
 An unavailable target snapshot fails the case without adding an extra
 validation row. `r.Fail(err)` remains available for ordinary Go errors that
 the developer wants represented as case failure.
+
+Added protobuf snapshots and SLO checks are cloned. The observation window is
+a singleton: the first `SetWindow` wins; duplicate window calls and nil
+protobuf values fail the case while retaining existing data. `Fail(nil)` is a
+no-op.
+
+An empty observation result is `NOT_EVALUATED`. Failed infra SLO checks, broken
+validations, unavailable snapshots, or `Fail(err)` fail the case while
+preserving partial results.

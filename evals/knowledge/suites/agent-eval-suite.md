@@ -24,5 +24,14 @@ suite := evals.NewAgentEvalSuite("assistant-quality").
 `r.Fail(err)` marks the case failed without discarding already recorded data.
 Validation rules are emitted under `AgentEvalResults.Case.validations`.
 
-The `evals/adk` package provides ADK-specific conversion helpers that return
-protobuf-native `AgentEvalResults` data.
+Builder values are cloned when added. `SetSessionID` and `SetJudgeInfo` are
+singletons: the first value wins and a repeated setter fails the case while
+retaining the first value. Nil metrics/judge values also fail the case.
+`Fail(nil)` is a no-op.
+
+An empty builder is `NOT_EVALUATED`. Failed metrics, broken validation rules,
+or `Fail(err)` fail the case while retaining partial data.
+
+The `evals/adk` package returns protobuf-native `AgentEvalResults` values. It
+does not add them to an `AgentEvalSuite`; see
+[ADK provider operation](../operations/adk.md).

@@ -88,7 +88,7 @@ func RunWithFixtures(ctx context.Context, client CheckoutClient) (*evalspb.Run, 
 
 `Run` executes cases and returns the materialized protobuf run. It does not report.
 
-`RunAndPublish` executes the same path and then calls a reporter. If no reporter is supplied, the suite publishes through the standard evals reporter path. Use `WithReporter` to replace that reporter for one run. To publish to more than one sink, pass `report.MultiReporter`, `report.All`, or another reporter implementation.
+`RunAndPublish` executes the same path and then calls a reporter. If no reporter is supplied, the suite lazily creates the standard evals reporter and closes it after publication. Use `WithReporter` to replace that reporter for one run; custom reporters are borrowed and are not closed by the suite. To publish to more than one sink, pass `report.MultiReporter`, `report.All`, or another reporter implementation.
 
 ```go
 r := report.MultiReporter{
@@ -99,6 +99,8 @@ run, err := suite.RunAndPublish(ctx, evals.WithReporter(r))
 ```
 
 Reporter replacement is deliberate: `WithReporter(a)` followed by `WithReporter(b)` leaves `b` as the reporter. Developers who want fan-out should specify a multi-reporter explicitly.
+
+`report.MultiReporter` is the fail-fast `report.FailFast` combinator. `report.All` invokes every reporter serially and joins all errors.
 
 `RunAndPublish` publishes partial cancelled runs. If the run context is cancelled, active case functions may return on their own after observing cancellation; otherwise the evals runtime waits for active cases to return because Go cannot safely stop arbitrary goroutines. Cases that never started are emitted as `NOT_EVALUATED` with the framework `_evals.skipped` marker for compatibility.
 
@@ -119,13 +121,26 @@ Suite and case configuration errors are deferred until `Run` / `RunAndPublish` s
 ## Execution semantics
 
 - A suite seals its case list on the first run.
-- Re-running a sealed suite is allowed.
+- Re-running a sealed suite is allowed, including concurrent runs.
 - Adding a case after sealing records a configuration error on the next run.
 - Cases run sequentially by default.
 - `WithMaxConcurrency` bounds parallel cases while preserving result order in the original `AddCase` order.
 - Case panics are recovered at the case boundary and mark that case failed.
 - Case failures are result data, not Go errors. Operational errors such as cancellation or reporter failure are returned as Go errors and still preserve the partial `*evalspb.Run` when available.
 - A suite with no cases is a valid no-op run and has status `PASSED`. A registered case that emits no evaluation data is `NOT_EVALUATED`.
+
+## Specialized result builders
+
+The three specialized builders share these rules:
+
+- `Validator()` returns a case-local validator; broken rules populate `validations` and fail the case.
+- `Fail(nil)` is a no-op. `Fail(err)` appends an ordered `_evals.case` validation and retains partial data.
+- Added protobuf messages are cloned, so later caller mutation cannot change the run.
+- Nil protobuf inputs fail the case without discarding previously added values.
+- Singleton setters keep their first value; repeated setters fail the case without replacing it.
+- An empty builder is `NOT_EVALUATED`.
+
+Agent session ID and judge info, load summary, and infra observation window are singleton values. Metrics, SLO checks, tags, validations, and snapshots preserve insertion order.
 
 ## Integration suites
 
@@ -173,7 +188,9 @@ suite := evals.NewAgentEvalSuite("assistant-quality").
 
 `Fail(err)` marks the case failed while preserving already-added result data. Builder validation failures are emitted under the additive `validations` field on specialized result branches.
 
-`evals/adk` remains available for ADK-specific helpers. Its provider and adapters return protobuf-native `AgentEvalResults` data rather than registering suites globally.
+`evals/adk` remains available for ADK-specific helpers. `Provider.Run` returns `[]adk.ProviderResult` containing suite names, measured set-level timestamps, and protobuf-native `*evalspb.AgentEvalResults`. It does not register suites or publish. The caller owns the outer `Run` envelope, metadata, status rollup, and reporter invocation.
+
+ADK exposes only total eval-set duration, so the provider divides it evenly across returned cases. Treat those case durations as approximations; `ProviderResult.StartTime` and `EndTime` preserve the measured set-level interval.
 
 ## Load suites
 
@@ -262,7 +279,7 @@ Standalone infra observation cases fail when an added Cloud Run or Spanner snaps
 
 ## Result contract
 
-The public API changed, but the emitted `evalspb.Run` contract is intentionally stable. The parity tests compare all four branch outputs against frozen P0 binary/JSON fixtures. Existing fields keep their branch-native placement and meaning.
+The public API changed, but existing `evalspb.Run` fields keep their branch-native placement and types. Parity tests compare normalized outputs for all four branches against frozen P0 binary/JSON fixtures. UUIDs, timestamps, and approved additive validation fields are normalized.
 
 The only additive proto change is `repeated Validation validations` on specialized cases:
 
@@ -271,6 +288,8 @@ The only additive proto change is `repeated Validation validations` on specializ
 - `InfraObservationResults.Case.validations`
 
 Integration results continue to use `checks`.
+
+`validation.Validator` exposes a rule description and satisfied state but not a separate legacy failed-check message. Integration check-message parity is therefore the approved limitation: failed check messages use the rule description.
 
 ## Migrating from the registry API
 

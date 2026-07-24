@@ -13,7 +13,7 @@ Each suite:
 1. is constructed with an explicit name;
 2. registers named cases with fluent `AddCase`;
 3. runs synchronously with default one active case;
-4. returns a deterministic branch-specific `*evalspb.Run`;
+4. preserves case order in a branch-specific `*evalspb.Run`;
 5. optionally publishes through `RunAndPublish`.
 
 The public runtime is intentionally small. Cases are normal functions and may
@@ -21,6 +21,10 @@ call normal Go setup/cleanup, clients, fixtures, and helper packages. The evals
 package owns only the evaluation envelope: case ordering, panic recovery,
 bounded concurrency, cancellation accounting, status rollup, timestamps, and
 publication.
+
+Run UUIDs and timestamps are intentionally nondeterministic. Determinism means
+that registration order, status calculation, and normalized result data are
+stable for equivalent case outcomes.
 
 Specialized branches use result builders that accept protobuf-native values.
 That keeps the existing result contract stable while removing older abstraction

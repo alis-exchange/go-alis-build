@@ -6,9 +6,10 @@ tags: [wire, proto, parity]
 
 # Run wire contract
 
-The API surface changed, but emitted `alis.evals.v1.Run` values remain
-compatible with the frozen P0 fixtures. Parity tests compare all four branch
-outputs against committed binary/JSON baselines.
+The API surface changed, while existing `alis.evals.v1.Run` fields keep their
+branch-native placement and types. Parity tests compare normalized outputs for
+all four branches against committed binary/JSON baselines. UUIDs, timestamps,
+and the approved additive validation fields are normalized for comparison.
 
 Existing result branches:
 
@@ -27,3 +28,8 @@ Specialized cases also expose additive `validations` fields:
 
 These additive fields carry developer/framework validation outcomes without
 moving existing result fields.
+
+One authoring limitation is explicit: `validation.Validator` provides an
+integration rule description and satisfied state, but not a separate legacy
+failed-check message. Integration check-message parity is therefore normalized;
+failed check messages use the rule description.

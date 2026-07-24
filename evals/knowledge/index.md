@@ -24,4 +24,5 @@ Start here:
 - [Suites](suites/index.md)
 - [Packages](packages/index.md)
 - [Operations](operations/lifecycle.md)
+- [ADK provider operation](operations/adk.md)
 - [Wire contract](wire-types/run.md)

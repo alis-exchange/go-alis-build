@@ -28,3 +28,11 @@ run, err := suite.Run(ctx)
 At case end the evals runtime reads `validator.Rules()` and writes integration
 `checks`. Broken rules fail the case. A case with no rules is
 `NOT_EVALUATED`.
+
+Each case receives a fresh validator. Rule declaration order becomes check
+order. The validator exposes a rule description and pass/fail state, but no
+separate failed-check message; failed integration check messages therefore use
+the rule description.
+
+Normal Go errors remain normal inside the case. Add an explicit validation rule
+when an error should affect the evaluation result.
