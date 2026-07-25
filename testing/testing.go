@@ -8,7 +8,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 	"go.alis.build/alog"
-	"go.alis.build/authz"
 	"go.alis.build/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -25,6 +24,8 @@ const (
 	InternalGw  Host = "internal-gw"
 	ConsumersGw Host = "consumers-gw"
 	Local8080   Host = "localhost:8080"
+
+	authzForwardingHeader = "x-alis-forwarded-authorization"
 )
 
 type GrpcServiceTester struct {
@@ -68,7 +69,7 @@ func (t *GrpcServiceTester) WithTestUser(id string, email string) {
 func (t *GrpcServiceTester) AddTestUserToCtx(ctx context.Context, outgoing bool) context.Context {
 	if t.testUserJwt != "" {
 		if outgoing {
-			ctx = metadata.AppendToOutgoingContext(ctx, authz.AuthzForwardingHeader, "Bearer "+t.testUserJwt)
+			ctx = metadata.AppendToOutgoingContext(ctx, authzForwardingHeader, "Bearer "+t.testUserJwt)
 		} else {
 			md, _ := metadata.FromIncomingContext(ctx)
 			newMD := metadata.Pairs("authorization", "Bearer "+t.testUserJwt)
