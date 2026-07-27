@@ -1,6 +1,6 @@
 ---
 title: evals knowledge
-description: Current knowledge bundle for go.alis.build/evals after typed-suite simplification.
+description: Reference for go.alis.build/evals typed suites and helper packages.
 tags: [evals, typed-suites, runs]
 ---
 

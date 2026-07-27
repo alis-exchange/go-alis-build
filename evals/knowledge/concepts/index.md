@@ -55,7 +55,7 @@ There is no framework-managed environment registry. Use normal Go:
 
 ## Result contract
 
-The emitted `evalspb.Run` shape remains compatible with the P0 parity fixtures.
+The emitted `evalspb.Run` keeps the established branch-native fields and types.
 Specialized cases add `validations`; integration cases continue using `checks`.
 
 A suite containing no cases is a valid no-op run with status `PASSED`. A

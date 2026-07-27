@@ -168,8 +168,8 @@ func (s *suiteCore) runType() evalspb.Run_Type {
 
 // publishRun deliberately uses a fresh bounded context. RunAndPublish must
 // publish partial results after the execution context is cancelled.
-func publishRun(_ context.Context, cfg runConfig, run *evalspb.Run) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultSuitePublishTimeout)
+func publishRun(runCtx context.Context, cfg runConfig, run *evalspb.Run) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), defaultSuitePublishTimeout)
 	defer cancel()
 
 	reporter := cfg.reporter

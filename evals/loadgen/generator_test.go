@@ -16,6 +16,22 @@ import (
 // without adding scheduler variance to worker execution time.
 func zeroLatencyTarget(context.Context, CallData) TargetResult { return TargetResult{} }
 
+func TestRun_usesDefaultGenerator(t *testing.T) {
+	t.Parallel()
+
+	metrics, err := Run(context.Background(), Profile{
+		QPS:         100,
+		Concurrency: 1,
+		Duration:    50 * time.Millisecond,
+	}, zeroLatencyTarget)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if metrics == nil {
+		t.Fatal("Run metrics = nil")
+	}
+}
+
 // TestInProcess_PacingAccuracy verifies that RequestCount is close to
 // QPS × Duration within a reasonable tolerance for a fast target. We do not
 // assert a tight bound: go test scheduling on shared CI can move things

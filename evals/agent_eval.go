@@ -70,6 +70,11 @@ func (r *AgentEvalResult) AddMetric(m *evalspb.AgentEvalResults_Case_Metric) {
 }
 
 // SetJudgeInfo declares case-level judge provenance and call counts.
+//
+// Successful case declarations are aggregated into the run-level JudgeInfo:
+// model and version must agree across cases, while call and token counts are
+// summed. A conflicting declaration fails that case with an "_evals.judge"
+// validation and its counts are excluded from the aggregate.
 func (r *AgentEvalResult) SetJudgeInfo(j *evalspb.AgentEvalResults_JudgeInfo) {
 	if j == nil {
 		r.Fail(errNilAgentJudgeInfo)

@@ -15,7 +15,7 @@ diagnostic snapshots:
 suite := evals.NewLoadSuite("checkout-capacity").
     AddCase("steady-traffic", func(ctx context.Context, r *evals.LoadResult) {
         profile := loadgen.Profile{QPS: 100, Concurrency: 25, Duration: time.Minute}
-        metrics, err := loadgen.New().Run(ctx, profile, target)
+        metrics, err := loadgen.Run(ctx, profile, target)
         if err != nil {
             r.Fail(err)
             return

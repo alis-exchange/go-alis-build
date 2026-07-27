@@ -9,10 +9,10 @@ import (
 	evalspb "go.alis.build/common/alis/evals/v1"
 )
 
-// Reporter writes a one-line summary of each completed Run to alog. It is
-// the default reporter for local development and any deployment that has no
-// external sink (Pub/Sub, BigQuery, Spanner, etc.) wired up. Passing runs are
-// logged at Info; failing runs at Warn so they stand out in Cloud Logging.
+// Reporter writes a one-line summary of each completed Run to alog. It is an
+// explicit alternative or addition to the standard Pub/Sub reporter used by
+// RunAndPublish. Passing runs are logged at Info; failing runs at Warn so they
+// stand out in Cloud Logging.
 type Reporter struct{}
 
 // ReportRun implements report.Reporter.

@@ -18,6 +18,11 @@ type Generator interface {
 	Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error)
 }
 
+// Run executes one load window using the default in-process generator.
+func Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error) {
+	return New().Run(ctx, p, target)
+}
+
 // New returns the default in-process Generator. Each Run spawns its own
 // goroutines; there is no shared state between runs.
 func New() Generator { return &inProcess{} }
@@ -53,7 +58,7 @@ type sample struct {
 //
 // Transport failures increment Metrics.ErrorCount and ErrorsByCode; semantic
 // check failures increment CheckFailedCount. Neither aborts the window. Only
-// ctx cancellation, abort-on-SLO, and invalid profile produce a returned
+// ctx cancellation, an abort check, and invalid profile produce a returned
 // error (with partial metrics for cancellation/abort).
 func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error) {
 	if target == nil {

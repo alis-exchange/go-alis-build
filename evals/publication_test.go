@@ -126,8 +126,10 @@ func TestRunAndPublish_returnsRunWhenReporterFails(t *testing.T) {
 func TestRunAndPublish_publishesPartialCancelledRun(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	rec := &publicationRecorder{}
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "trace-value")
+	ctx, cancel := context.WithCancel(ctx)
+	rec := &publicationRecorder{contextKey: contextKey{}}
 	run, err := NewAgentEvalSuite("publish-cancel").
 		AddCase("first", func(_ context.Context, r *AgentEvalResult) {
 			r.AddMetric(&evalspb.AgentEvalResults_Case_Metric{Id: "done", Status: evalspb.Status_PASSED})
@@ -149,6 +151,9 @@ func TestRunAndPublish_publishesPartialCancelledRun(t *testing.T) {
 	if rec.last != run {
 		t.Fatal("reported run differs from returned run")
 	}
+	if rec.contextValue != "trace-value" {
+		t.Fatalf("report context value = %v, want trace-value", rec.contextValue)
+	}
 }
 
 type publicationRecorder struct {
@@ -156,11 +161,17 @@ type publicationRecorder struct {
 	closed  int
 	last    *evalspb.Run
 	err     error
+
+	contextKey   any
+	contextValue any
 }
 
-func (r *publicationRecorder) ReportRun(_ context.Context, run *evalspb.Run) error {
+func (r *publicationRecorder) ReportRun(ctx context.Context, run *evalspb.Run) error {
 	r.reports++
 	r.last = run
+	if r.contextKey != nil {
+		r.contextValue = ctx.Value(r.contextKey)
+	}
 	return r.err
 }
 

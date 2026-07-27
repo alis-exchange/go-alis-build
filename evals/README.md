@@ -59,7 +59,6 @@ func RunCheckoutRegression(ctx context.Context, client CheckoutClient) (*evalspb
         })
 
     return suite.RunAndPublish(ctx,
-        evals.WithMaxConcurrency(1),
         evals.WithOperation("operations/manual-checkout-regression"),
     )
 }
@@ -104,7 +103,7 @@ Reporter replacement is deliberate: `WithReporter(a)` followed by `WithReporter(
 
 `RunAndPublish` publishes partial cancelled runs. If the run context is cancelled, active case functions may return on their own after observing cancellation; otherwise the evals runtime waits for active cases to return because Go cannot safely stop arbitrary goroutines. Cases that never started are emitted as `NOT_EVALUATED` with the framework `_evals.skipped` marker for compatibility.
 
-Publication gets its own 10-second timeout derived from `context.Background()`, not from the execution context. This lets `RunAndPublish` deliver a partial run after execution cancellation. Reporter failures and timeout errors are returned alongside the materialized run.
+Publication gets its own 10-second timeout derived with `context.WithoutCancel` from the execution context. This preserves context values while letting `RunAndPublish` deliver a partial run after execution cancellation. Reporter failures and timeout errors are returned alongside the materialized run.
 
 ## Run options
 
@@ -204,8 +203,7 @@ suite := evals.NewLoadSuite("checkout-capacity").
             Concurrency: 25,
             Duration:    time.Minute,
         }
-        generator := loadgen.New()
-        metrics, err := generator.Run(ctx, profile, target)
+        metrics, err := loadgen.Run(ctx, profile, target)
         if err != nil {
             r.Fail(err)
             return
@@ -279,9 +277,7 @@ Standalone infra observation cases fail when an added Cloud Run or Spanner snaps
 
 ## Result contract
 
-The public API changed, but existing `evalspb.Run` fields keep their branch-native placement and types. Parity tests compare normalized outputs for all four branches against frozen P0 binary/JSON fixtures. UUIDs, timestamps, and approved additive validation fields are normalized.
-
-The only additive proto change is `repeated Validation validations` on specialized cases:
+Existing `evalspb.Run` fields keep their branch-native placement and types. The result contract adds only `repeated Validation validations` to specialized cases:
 
 - `AgentEvalResults.Case.validations`
 - `LoadTestResults.Case.validations`
@@ -290,22 +286,6 @@ The only additive proto change is `repeated Validation validations` on specializ
 Integration results continue to use `checks`.
 
 `validation.Validator` exposes a rule description and satisfied state but not a separate legacy failed-check message. Integration check-message parity is therefore the approved limitation: failed check messages use the rule description.
-
-## Migrating from the registry API
-
-The redesign is an immediate replacement, not a compatibility layer. Migrate concepts as follows:
-
-| Previous concept | Typed-suite replacement |
-| --- | --- |
-| Global registry and runner lookup | Construct a named `NewIntegrationSuite`, `NewAgentEvalSuite`, `NewLoadSuite`, or `NewInfraObservationSuite` and call `AddCase` directly. |
-| `*evals.T` assertions | Use `*validation.Validator` for integration cases; specialized result builders expose `Validator()` and `Fail(error)`. |
-| Framework environments and setup/teardown | Use ordinary Go before the run and `defer` cleanup around it. |
-| Reporter configured on the runtime | Call `RunAndPublish` and pass `WithReporter`; use a multi-reporter explicitly for fan-out. |
-| `SLO*` constructors | Evaluate thresholds in case code and add protobuf-native `LoadTestResults_SloCheck` or `InfraSloCheck` values to the result builder. |
-| `ClientStreamTargetResult` | Return `loadgen.TargetResult` with a `StreamSample`, as shown in the load section. |
-| Registered ADK provider | Call `adk.Provider.Run`; place each returned protobuf-native `AgentEvalResults` value in a `Run` envelope and publish it with the chosen reporter. |
-
-The deleted `env`, `suite`, `registry`, `runner`, `mapper`, `execution`, `harness`, and `verdict` packages have no replacement packages. Their lifecycle and orchestration responsibilities now belong to normal Go code.
 
 ## Reporters
 
@@ -338,4 +318,4 @@ For Pub/Sub, the reporter project is the product project (`ALIS_OS_PRODUCT_PROJE
 | `go.alis.build/evals/report/...` | Log, Pub/Sub, BigQuery, and schema helpers. |
 | `go.alis.build/evals/errors` | gRPC status bridging for typed evals errors. |
 
-Deleted registry-era packages such as `env`, `suite`, `registry`, `runner`, `mapper`, `execution`, `harness`, and `verdict` are intentionally absent. Use ordinary Go code and the typed suite APIs instead.
+For help moving from the previous registry API, see [MIGRATION.md](MIGRATION.md).

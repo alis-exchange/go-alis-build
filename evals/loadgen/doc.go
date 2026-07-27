@@ -1,4 +1,4 @@
-// Package loadgen is a small, embedded load generator for the evals runner.
+// Package loadgen is a small, embedded load generator for evaluation cases.
 //
 // The design is deliberately narrow: one [Profile] describes a fixed-rate
 // load window, one [Pacer] schedules sends, a fixed pool of workers
@@ -10,11 +10,9 @@
 //
 // # Usage
 //
-// Case adapters obtain a generator from [New] and invoke [Generator.Run]
-// with a resolved profile and a target closure:
+// Call [Run] with a profile and target closure:
 //
-//	g := loadgen.New()
-//	m, err := g.Run(ctx, loadgen.Profile{
+//	m, err := loadgen.Run(ctx, loadgen.Profile{
 //	    QPS:            100,
 //	    Concurrency:    25,
 //	    Duration:       60*time.Second,
@@ -44,8 +42,7 @@
 // # Abort on SLO failure
 //
 // [Profile.AbortCheck] can cancel the window early when it returns true on
-// a partial metrics snapshot. The evals runner wires this from declared SLOs
-// when [loadgen.AbortOnSLOFailure] is set on the case context.
+// a partial metrics snapshot. Callers define the policy explicitly.
 //
 // # Concepts borrowed
 //

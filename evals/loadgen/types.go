@@ -17,9 +17,8 @@ type CallData struct {
 
 // TargetResult separates transport failures from semantic check failures.
 // Use TransportErr for RPC/transport problems; use CheckErr for assertions
-// that passed transport but failed a semantic predicate (for example score
-// thresholds). Check failures roll up to a failed case via a synthetic
-// "checks" SloCheckResult when no explicit SLO covers them.
+// that passed transport but failed a semantic predicate (for example a score
+// threshold). The generator counts these outcomes separately in Metrics.
 type TargetResult struct {
 	TransportErr error
 	CheckErr     error
