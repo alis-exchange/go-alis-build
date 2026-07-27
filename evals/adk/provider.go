@@ -50,6 +50,9 @@ func (r ProviderResult) Run() *evalspb.Run {
 	}
 }
 
+// rollupCases mirrors evals.rollupExecutedCases without importing the root
+// package, which would pull its standard Pub/Sub reporter dependency into adk.
+// Keep the FAILED > NOT_EVALUATED > PASSED precedence in sync with run.go.
 func rollupCases(cases []*evalspb.AgentEvalResults_Case) evalspb.Status {
 	if len(cases) == 0 {
 		return evalspb.Status_PASSED
