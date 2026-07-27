@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/report"
@@ -156,6 +157,29 @@ func TestRunAndPublish_publishesPartialCancelledRun(t *testing.T) {
 	}
 }
 
+func TestPublishRun_replacesExpiredExecutionDeadline(t *testing.T) {
+	t.Parallel()
+
+	type contextKey struct{}
+	parent := context.WithValue(context.Background(), contextKey{}, "trace-value")
+	ctx, cancel := context.WithDeadline(parent, time.Now().Add(-time.Second))
+	defer cancel()
+
+	rec := &publicationRecorder{contextKey: contextKey{}}
+	if err := publishRun(ctx, runConfig{reporter: rec}, &evalspb.Run{}); err != nil {
+		t.Fatalf("publishRun() error = %v", err)
+	}
+	if rec.contextErr != nil {
+		t.Fatalf("report context error = %v, want nil", rec.contextErr)
+	}
+	if rec.contextValue != "trace-value" {
+		t.Fatalf("report context value = %v, want trace-value", rec.contextValue)
+	}
+	if time.Until(rec.deadline) < defaultSuitePublishTimeout/2 {
+		t.Fatalf("report deadline = %v, want fresh publication deadline", rec.deadline)
+	}
+}
+
 type publicationRecorder struct {
 	reports int
 	closed  int
@@ -164,6 +188,8 @@ type publicationRecorder struct {
 
 	contextKey   any
 	contextValue any
+	contextErr   error
+	deadline     time.Time
 }
 
 func (r *publicationRecorder) ReportRun(ctx context.Context, run *evalspb.Run) error {
@@ -172,6 +198,8 @@ func (r *publicationRecorder) ReportRun(ctx context.Context, run *evalspb.Run) e
 	if r.contextKey != nil {
 		r.contextValue = ctx.Value(r.contextKey)
 	}
+	r.contextErr = ctx.Err()
+	r.deadline, _ = ctx.Deadline()
 	return r.err
 }
 

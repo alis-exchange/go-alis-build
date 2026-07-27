@@ -14,12 +14,15 @@ add protobuf snapshots directly:
 ```go
 suite := evals.NewInfraObservationSuite("checkout-runtime").
     AddCase("peak-window", func(ctx context.Context, r *evals.InfraObservationResult) {
-        r.SetWindow(30*time.Minute, window.Start, window.End)
-        obs, err := loadinfra.Observe(ctx, client, cloud, spanner, window, false, 1)
+        obs, err := loadinfra.ObserveLookback(ctx, client, loadinfra.Targets{
+            CloudRun: cloud,
+            Spanner:  spanner,
+        }, 30*time.Minute)
         if err != nil {
             r.Fail(err)
             return
         }
+        r.SetWindow(30*time.Minute, obs.Window.Start, obs.Window.End)
         for _, snapshot := range obs.CloudRun {
             r.AddCloudRunSnapshot(snapshot)
         }
@@ -41,3 +44,8 @@ no-op.
 An empty observation result is `NOT_EVALUATED`. Failed infra SLO checks, broken
 validations, unavailable snapshots, or `Fail(err)` fail the case while
 preserving partial results.
+
+For load-integrated diagnostics, use `ObserveLoad(ctx, client, targets,
+metrics)`. Advanced callers can provide an explicit `loadinfra.Request` to
+`Observe`; its named fields expose custom windows, query-end extension, and
+target concurrency without positional control flags.

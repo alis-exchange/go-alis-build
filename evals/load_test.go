@@ -33,6 +33,7 @@ func TestLoadResult_buildsCaseWithSummarySLOsSnapshotsTagsAndValidations(t *test
 	cloud := &evalspb.CloudRunTargetSnapshot{}
 	spanner := &evalspb.SpannerTargetSnapshot{}
 	infra := &evalspb.InfraSloCheck{CheckId: "cpu", Status: evalspb.Status_PASSED}
+	tag := &evalspb.LoadTestResults_StringEntry{Key: "source", Value: "proto"}
 
 	run, err := NewLoadSuite("load-builder").
 		AddCase("steady", func(_ context.Context, r *LoadResult) {
@@ -41,7 +42,8 @@ func TestLoadResult_buildsCaseWithSummarySLOsSnapshotsTagsAndValidations(t *test
 			}
 			r.SetSummary(summary)
 			r.AddSLOCheck(slo)
-			r.AddTag(&evalspb.LoadTestResults_StringEntry{Key: "rpc", Value: "Checkout"})
+			r.AddTag("rpc", "Checkout")
+			r.AddTagProto(tag)
 			r.AddCloudRunSnapshot(cloud)
 			r.AddSpannerSnapshot(spanner)
 			r.AddInfraSLOCheck(infra)
@@ -51,6 +53,7 @@ func TestLoadResult_buildsCaseWithSummarySLOsSnapshotsTagsAndValidations(t *test
 			summary.TargetQps = 999
 			slo.Id = "mutated"
 			infra.CheckId = "mutated"
+			tag.Value = "mutated"
 		}).
 		Run(context.Background())
 	if err != nil {
@@ -77,7 +80,10 @@ func TestLoadResult_buildsCaseWithSummarySLOsSnapshotsTagsAndValidations(t *test
 	if c.GetInfraChecks()[0].GetCheckId() != "cpu" {
 		t.Fatalf("infra slo id = %q, want cloned source value", c.GetInfraChecks()[0].GetCheckId())
 	}
-	if len(c.GetTags()) != 1 || c.GetTags()[0].GetKey() != "rpc" {
+	if len(c.GetTags()) != 2 ||
+		c.GetTags()[0].GetKey() != "rpc" ||
+		c.GetTags()[0].GetValue() != "Checkout" ||
+		c.GetTags()[1].GetValue() != "proto" {
 		t.Fatalf("tags = %+v, want insertion order tag", c.GetTags())
 	}
 	if len(c.GetCloudRun()) != 1 || len(c.GetSpanner()) != 1 {
@@ -172,7 +178,7 @@ func TestLoadResult_nilAndDuplicateBuilderInputsBecomeValidations(t *testing.T) 
 			r.SetSummary(&evalspb.LoadTestResults_Summary{RequestCount: 2})
 			r.SetSummary(nil)
 			r.AddSLOCheck(nil)
-			r.AddTag(nil)
+			r.AddTagProto(nil)
 			r.AddCloudRunSnapshot(nil)
 			r.AddSpannerSnapshot(nil)
 			r.AddInfraSLOCheck(nil)

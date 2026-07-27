@@ -1,5 +1,6 @@
-// Package log implements the default [report.Reporter]: a one-line summary of
-// each completed evalspb.Run written via alog.
+// Package log implements an explicit [report.Reporter] that writes a one-line
+// summary of each completed evalspb.Run via alog. RunAndPublish uses the
+// standard Pub/Sub reporter by default.
 //
 // Passing runs log at Info; failing runs at Warn so they stand out in Cloud
 // Logging. Nil runs are a no-op; [Reporter.ReportRun] always returns nil.

@@ -20,9 +20,9 @@ results, err := provider.Run(ctx, filters)
 - measured `StartTime` and `EndTime`; and
 - protobuf-native `*evalspb.AgentEvalResults` in `Results`.
 
-The caller owns the outer `*evalspb.Run`: generate its identity, set metadata
-and status, attach `Results` through `Run_AgentEval`, and send it through the
-chosen `report.Reporter`.
+Call `result.Run()` to construct the branch-correct `*evalspb.Run` with its
+identity, measured timestamps, and case-status rollup. The caller sets optional
+metadata and sends it through the chosen `report.Reporter`.
 
 ADK exposes total elapsed time for an eval-set execution, not an independent
 duration for each returned case. The provider divides the total evenly across

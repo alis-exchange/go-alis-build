@@ -10,6 +10,7 @@ import (
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/loadgen"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -23,6 +24,8 @@ const (
 
 // ObserveResult holds infra snapshots for one observation window.
 type ObserveResult struct {
+	// Window is the reported interval shared by every returned snapshot.
+	Window ObservationWindow
 	// CloudRun holds one snapshot per declared Cloud Run target, including
 	// targets with zero request_count.
 	CloudRun []*evalspb.CloudRunTargetSnapshot
@@ -31,50 +34,87 @@ type ObserveResult struct {
 	Spanner []*evalspb.SpannerTargetSnapshot
 }
 
-// Observe fetches Cloud Run and Spanner snapshots for all declared targets over
-// the reported window w. Load-integrated callers pass WindowFromMetrics with
-// extendQueryEnd true so Monitoring queries extend w.End forward by per-kind
-// settle padding. Standalone callers pass WindowLookback with extendQueryEnd
-// false so queries use the settled window as-is.
-//
-// targetConcurrency caps concurrent per-target fetches; zero or negative uses
+// Request describes one custom-window infrastructure observation.
+type Request struct {
+	// Client queries Cloud Monitoring.
+	Client MetricClient
+	// Targets declares the services and databases to observe.
+	Targets Targets
+	// Window is the interval reported on returned snapshots.
+	Window ObservationWindow
+	// ExtendQueryEnd adds per-kind ingestion padding to Monitoring queries
+	// without changing the reported window.
+	ExtendQueryEnd bool
+	// TargetConcurrency bounds simultaneous target observations. Values below
+	// one use DefaultTargetConcurrency.
+	TargetConcurrency int
+}
+
+// ObserveLoad observes the measurement window from a generated load run.
+// Monitoring query ends are extended by each target kind's settle padding,
+// while snapshots retain the original measurement window. Nil metrics return
+// an error without querying Monitoring.
+func ObserveLoad(ctx context.Context, client MetricClient, targets Targets, metrics *loadgen.Metrics) (ObserveResult, error) {
+	if metrics == nil {
+		return ObserveResult{}, fmt.Errorf("loadinfra: nil load metrics")
+	}
+	return Observe(ctx, Request{
+		Client:         client,
+		Targets:        targets,
+		Window:         windowFromMetrics(metrics),
+		ExtendQueryEnd: true,
+	})
+}
+
+// ObserveLookback observes a settled window ending before Monitoring's
+// visibility delay for the declared target kinds.
+func ObserveLookback(ctx context.Context, client MetricClient, targets Targets, lookback time.Duration) (ObserveResult, error) {
+	return Observe(ctx, Request{
+		Client:  client,
+		Targets: targets,
+		Window:  lookbackWindow(lookback, time.Now().UTC(), targets),
+	})
+}
+
+// Observe fetches snapshots for a caller-defined reported window. A positive
+// TargetConcurrency bounds concurrent target fetches; zero or negative uses
 // [DefaultTargetConcurrency].
-func Observe(ctx context.Context, client MetricClient, cloud []CloudRunTarget, spanner []SpannerTarget, w ObservationWindow, extendQueryEnd bool, targetConcurrency int) (ObserveResult, error) {
-	if client == nil {
+func Observe(ctx context.Context, req Request) (ObserveResult, error) {
+	if req.Client == nil {
 		return ObserveResult{}, fmt.Errorf("loadinfra: nil MetricClient")
 	}
-	if len(cloud) == 0 && len(spanner) == 0 {
-		return ObserveResult{}, nil
+	if len(req.Targets.CloudRun) == 0 && len(req.Targets.Spanner) == 0 {
+		return ObserveResult{Window: req.Window}, nil
 	}
 
-	limit := targetConcurrencyLimit(targetConcurrency)
+	limit := targetConcurrencyLimit(req.TargetConcurrency)
 	sem := make(chan struct{}, limit)
 
 	var (
 		mu  sync.Mutex
-		out ObserveResult
+		out = ObserveResult{Window: req.Window}
 		wg  sync.WaitGroup
 	)
 
-	for _, target := range cloud {
+	for _, target := range req.Targets.CloudRun {
 		wg.Add(1)
 		go func(t CloudRunTarget) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			snap := observeCloudRun(ctx, client, t, w, extendQueryEnd)
+			snap := observeCloudRun(ctx, req.Client, t, req.Window, req.ExtendQueryEnd)
 			mu.Lock()
 			out.CloudRun = append(out.CloudRun, snap)
 			mu.Unlock()
 		}(target)
 	}
-	for _, target := range spanner {
+	for _, target := range req.Targets.Spanner {
 		wg.Add(1)
 		go func(t SpannerTarget) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			snap := observeSpanner(ctx, client, t, w, extendQueryEnd)
+			snap := observeSpanner(ctx, req.Client, t, req.Window, req.ExtendQueryEnd)
 			mu.Lock()
 			out.Spanner = append(out.Spanner, snap)
 			mu.Unlock()

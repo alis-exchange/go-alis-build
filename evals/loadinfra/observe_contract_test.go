@@ -7,7 +7,83 @@ import (
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"go.alis.build/evals/loadgen"
 )
+
+func TestObserveLoad_derivesAndExtendsMeasurementWindow(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
+	end := start.Add(5 * time.Minute)
+	target := CloudRunTarget{ID: "checkout", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "checkout"}
+	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(1),
+	}}
+
+	got, err := ObserveLoad(context.Background(), client, Targets{
+		CloudRun: []CloudRunTarget{target},
+	}, &loadgen.Metrics{MeasurementStart: start, MeasurementEnd: end})
+	if err != nil {
+		t.Fatalf("ObserveLoad() error = %v", err)
+	}
+	if got.Window.Start != start || got.Window.End != end {
+		t.Fatalf("result window = %+v, want %v..%v", got.Window, start, end)
+	}
+	snapshot := got.CloudRun[0]
+	if !snapshot.GetWindowStart().AsTime().Equal(start) || !snapshot.GetWindowEnd().AsTime().Equal(end) {
+		t.Fatalf("reported window = %v..%v, want %v..%v", snapshot.GetWindowStart().AsTime(), snapshot.GetWindowEnd().AsTime(), start, end)
+	}
+	if want := end.Add(CloudRunSettlePadding); !client.LastIntervalEnd.Equal(want) {
+		t.Fatalf("query end = %v, want %v", client.LastIntervalEnd, want)
+	}
+}
+
+func TestObserveLoad_rejectsNilMetricsWithoutQuerying(t *testing.T) {
+	t.Parallel()
+
+	client := &FakeMetricClient{}
+	_, err := ObserveLoad(context.Background(), client, Targets{
+		CloudRun: []CloudRunTarget{{ID: "checkout"}},
+	}, nil)
+	if err == nil || err.Error() != "loadinfra: nil load metrics" {
+		t.Fatalf("ObserveLoad() error = %v, want nil load metrics", err)
+	}
+	if client.Calls != 0 {
+		t.Fatalf("Monitoring calls = %d, want 0", client.Calls)
+	}
+}
+
+func TestObserveLookback_settlesForTargetKinds(t *testing.T) {
+	t.Parallel()
+
+	const lookback = 30 * time.Minute
+	target := SpannerTarget{ID: "orders", ProjectID: "p", InstanceID: "i", Location: "r", Database: "d"}
+	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+		spannerMetricFilter(target, spMetricQueryCount): int64Series(1),
+	}}
+	before := time.Now().UTC().Add(-SpannerSettlePadding)
+	got, err := ObserveLookback(context.Background(), client, Targets{
+		Spanner: []SpannerTarget{target},
+	}, lookback)
+	after := time.Now().UTC().Add(-SpannerSettlePadding)
+	if err != nil {
+		t.Fatalf("ObserveLookback() error = %v", err)
+	}
+	end := got.Spanner[0].GetWindowEnd().AsTime()
+	start := got.Spanner[0].GetWindowStart().AsTime()
+	if got.Window.Start != start || got.Window.End != end {
+		t.Fatalf("result window = %+v, want %v..%v", got.Window, start, end)
+	}
+	if end.Before(before) || end.After(after) {
+		t.Fatalf("settled end = %v, want between %v and %v", end, before, after)
+	}
+	if end.Sub(start) != lookback {
+		t.Fatalf("reported lookback = %v, want %v", end.Sub(start), lookback)
+	}
+	if !client.LastIntervalEnd.Equal(end) {
+		t.Fatalf("query end = %v, want unextended reported end %v", client.LastIntervalEnd, end)
+	}
+}
 
 func TestObserve_returnsSnapshotsInDeterministicTargetOrder(t *testing.T) {
 	t.Parallel()
@@ -32,9 +108,9 @@ func TestObserve_returnsSnapshotsInDeterministicTargetOrder(t *testing.T) {
 		client.ByFilter[spannerMetricFilter(target, spMetricQueryCount)] = int64Series(1)
 	}
 
-	got, err := Observe(context.Background(), client, cloud, spanner, window, false, 1)
+	got, err := observeForTest(context.Background(), client, cloud, spanner, window, false, 1)
 	if err != nil {
-		t.Fatalf("Observe() error = %v", err)
+		t.Fatalf("observeForTest() error = %v", err)
 	}
 	if got.CloudRun[0].GetId() != "a-api" || got.CloudRun[1].GetId() != "z-api" {
 		t.Fatalf("cloud order = [%s %s], want [a-api z-api]", got.CloudRun[0].GetId(), got.CloudRun[1].GetId())
@@ -64,9 +140,9 @@ func TestObserve_preservesTargetMetadataRolesAndReportedWindow(t *testing.T) {
 		spannerMetricFilter(spanner, spMetricQueryCount):  int64Series(1),
 	}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{cloud}, []SpannerTarget{spanner}, window, true, 0)
+	got, err := observeForTest(context.Background(), client, []CloudRunTarget{cloud}, []SpannerTarget{spanner}, window, true, 0)
 	if err != nil {
-		t.Fatalf("Observe() error = %v", err)
+		t.Fatalf("observeForTest() error = %v", err)
 	}
 	cr := got.CloudRun[0]
 	if cr.GetRole() != evalspb.InfraTargetRole_INFRA_TARGET_ROLE_ENTRY {
@@ -101,15 +177,16 @@ func TestObserve_standaloneQueriesUseSettledWindowAsReported(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
-	window := WindowLookback(30*time.Minute, now, SettleDuration(true, false))
+	targets := Targets{CloudRun: []CloudRunTarget{{}}}
+	window := lookbackWindow(30*time.Minute, now, targets)
 	target := CloudRunTarget{ID: "checkout-api", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "checkout"}
 	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
 		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(1),
 	}}
 
-	got, err := Observe(context.Background(), client, []CloudRunTarget{target}, nil, window, false, 0)
+	got, err := observeForTest(context.Background(), client, []CloudRunTarget{target}, nil, window, false, 0)
 	if err != nil {
-		t.Fatalf("Observe() error = %v", err)
+		t.Fatalf("observeForTest() error = %v", err)
 	}
 	if !client.LastIntervalEnd.Equal(window.End) {
 		t.Fatalf("query end = %v, want settled reported end %v", client.LastIntervalEnd, window.End)

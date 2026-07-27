@@ -37,8 +37,9 @@ Reporter errors do not discard the run: `RunAndPublish` returns both the
 materialized run and the operational error.
 
 Partial cancelled runs are still published. Publication uses
-`context.WithoutCancel` to retain execution-context values, then applies a fresh
-10-second timeout, so execution cancellation does not immediately cancel
+`context.WithoutCancel` to retain execution-context values while removing its
+cancellation and deadline, then applies a fresh 10-second timeout. Execution
+cancellation or deadline expiry therefore does not immediately cancel
 delivery.
 
 The standard Pub/Sub topic is `alis.evals.v1.Run`. Pub/Sub and BigQuery sinks

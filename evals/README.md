@@ -103,7 +103,7 @@ Reporter replacement is deliberate: `WithReporter(a)` followed by `WithReporter(
 
 `RunAndPublish` publishes partial cancelled runs. If the run context is cancelled, active case functions may return on their own after observing cancellation; otherwise the evals runtime waits for active cases to return because Go cannot safely stop arbitrary goroutines. Cases that never started are emitted as `NOT_EVALUATED` with the framework `_evals.skipped` marker for compatibility.
 
-Publication gets its own 10-second timeout derived with `context.WithoutCancel` from the execution context. This preserves context values while letting `RunAndPublish` deliver a partial run after execution cancellation. Reporter failures and timeout errors are returned alongside the materialized run.
+Publication gets its own 10-second timeout derived with `context.WithoutCancel` from the execution context. This preserves context values while removing the execution context's cancellation and deadline before applying the fresh publication deadline. `RunAndPublish` can therefore deliver a partial run after execution cancellation or expiry. Reporter failures and timeout errors are returned alongside the materialized run.
 
 ## Run options
 
@@ -187,7 +187,7 @@ suite := evals.NewAgentEvalSuite("assistant-quality").
 
 `Fail(err)` marks the case failed while preserving already-added result data. Builder validation failures are emitted under the additive `validations` field on specialized result branches.
 
-`evals/adk` remains available for ADK-specific helpers. `Provider.Run` returns `[]adk.ProviderResult` containing suite names, measured set-level timestamps, and protobuf-native `*evalspb.AgentEvalResults`. It does not register suites or publish. The caller owns the outer `Run` envelope, metadata, status rollup, and reporter invocation.
+`evals/adk` remains available for ADK-specific helpers. `Provider.Run` returns `[]adk.ProviderResult` containing suite names, measured set-level timestamps, and protobuf-native `*evalspb.AgentEvalResults`. Calling `ProviderResult.Run()` constructs a complete agent-eval envelope with status rollup but does not publish it. The caller owns metadata and reporter invocation.
 
 ADK exposes only total eval-set duration, so the provider divides it evenly across returned cases. Treat those case durations as approximations; `ProviderResult.StartTime` and `EndTime` preserve the measured set-level interval.
 
@@ -208,7 +208,7 @@ suite := evals.NewLoadSuite("checkout-capacity").
             r.Fail(err)
             return
         }
-        r.SetSummary(loadgen.Summary(evalspb.RunLoadTestRequest_MODERATE, profile, metrics))
+        r.SetSummary(loadgen.Summary(loadgen.Moderate, profile, metrics))
         r.AddSLOCheck(&evalspb.LoadTestResults_SloCheck{
             Id:       "latency.p99_ms",
             Status:   evalspb.Status_PASSED,
@@ -216,11 +216,32 @@ suite := evals.NewLoadSuite("checkout-capacity").
             Limit:    500,
             Unit:     "ms",
         })
-        r.AddTag(&evalspb.LoadTestResults_StringEntry{Key: "rpc", Value: "CreateOrder"})
+        r.AddTag("rpc", "CreateOrder")
     })
 ```
 
 Default concurrency is one active case. `WithMaxConcurrency` can run load cases in parallel, but parallel load cases combine their traffic and can distort measurements. Use it only when the combined traffic is the scenario being evaluated.
+
+For load-integrated infrastructure diagnostics, observe the exact measurement
+window and add the returned snapshots explicitly:
+
+```go
+observed, err := loadinfra.ObserveLoad(ctx, metricClient, targets, metrics)
+if err != nil {
+    r.Fail(err)
+    return
+}
+for _, snapshot := range observed.CloudRun {
+    r.AddCloudRunSnapshot(snapshot)
+}
+for _, snapshot := range observed.Spanner {
+    r.AddSpannerSnapshot(snapshot)
+}
+```
+
+`ObserveLoad` requires non-nil metrics. Use `ObserveLookback` for standalone
+settled windows or `Observe` with a named `loadinfra.Request` for a custom
+window and target concurrency.
 
 For client-streaming load targets, copy the timing returned by `evals.CallClientStream` into the load generator's protobuf-independent stream sample:
 
@@ -248,10 +269,6 @@ Infra observation cases receive `*evals.InfraObservationResult`. Use `evals/load
 ```go
 suite := evals.NewInfraObservationSuite("checkout-runtime").
     AddCase("peak-window", func(ctx context.Context, r *evals.InfraObservationResult) {
-        end := time.Now().UTC().Add(-loadinfra.SettleDuration(true, true))
-        window := loadinfra.ObservationWindow{Start: end.Add(-30 * time.Minute), End: end}
-        r.SetWindow(30*time.Minute, window.Start, window.End)
-
         client, err := loadinfra.NewMetricClient(ctx)
         if err != nil {
             r.Fail(err)
@@ -259,11 +276,15 @@ suite := evals.NewInfraObservationSuite("checkout-runtime").
         }
         defer client.Close()
 
-        obs, err := loadinfra.Observe(ctx, client, cloudTargets, spannerTargets, window, false, 1)
+        obs, err := loadinfra.ObserveLookback(ctx, client, loadinfra.Targets{
+            CloudRun: cloudTargets,
+            Spanner:  spannerTargets,
+        }, 30*time.Minute)
         if err != nil {
             r.Fail(err)
             return
         }
+        r.SetWindow(30*time.Minute, obs.Window.Start, obs.Window.End)
         for _, snapshot := range obs.CloudRun {
             r.AddCloudRunSnapshot(snapshot)
         }
@@ -286,6 +307,9 @@ Existing `evalspb.Run` fields keep their branch-native placement and types. The 
 Integration results continue to use `checks`.
 
 `validation.Validator` exposes a rule description and satisfied state but not a separate legacy failed-check message. Integration check-message parity is therefore the approved limitation: failed check messages use the rule description.
+
+Maintainer details for the normalized four-branch parity gate are documented
+in [knowledge/wire-types/run.md](knowledge/wire-types/run.md).
 
 ## Reporters
 

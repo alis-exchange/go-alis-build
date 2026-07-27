@@ -4,8 +4,8 @@
 // The package does not register suites or publish results. [Provider.Run]
 // discovers matching eval sets at call time and returns one [ProviderResult]
 // per set. Each result contains the suite name, observed start and end times,
-// and an AgentEvalResults protobuf branch that a caller can place in a Run
-// envelope and send through a reporter.
+// and an AgentEvalResults protobuf branch. [ProviderResult.Run] builds the
+// complete Run envelope without publishing it.
 //
 // # Running a provider
 //
@@ -31,24 +31,16 @@
 //
 // # Run envelopes and publication
 //
-// [ProviderResult.Results] is already the protobuf branch value. The caller
-// owns run identity, metadata, status rollup, and publication:
+// [ProviderResult.Run] supplies identity, timestamps, branch data, and status
+// rollup. The caller owns metadata and publication:
 //
-//	run := &evalspb.Run{
-//	    Name:       runName,
-//	    Type:       evalspb.Run_AGENT_EVAL,
-//	    Status:     rollup(result.Results.GetCases()),
-//	    StartTime:  timestamppb.New(result.StartTime),
-//	    EndTime:    timestamppb.New(result.EndTime),
-//	    CreateTime: timestamppb.Now(),
-//	    Data: &evalspb.Run_AgentEval{
-//	        AgentEval: result.Results,
-//	    },
-//	}
+//	run := result.Run()
+//	run.Operation = operation
 //	err := reporter.ReportRun(ctx, run)
 //
-// This explicit envelope is intentional: the ADK adapter does not own suite
-// lifecycle or reporter choice.
+// Envelope construction does not give the ADK adapter suite lifecycle or
+// reporter ownership. [ProviderResult.Results] remains available when callers
+// need only the protobuf branch.
 //
 // ADK exposes only total eval-set elapsed time. [Provider] divides that time
 // evenly across returned cases, so case durations are an approximation; the

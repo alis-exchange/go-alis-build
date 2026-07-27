@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // clientFactory constructs a [Client] for one provider run; overridden in tests
@@ -31,6 +33,37 @@ type ProviderResult struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Results   *evalspb.AgentEvalResults
+}
+
+// Run materializes a complete agent-eval run envelope without publishing it.
+func (r ProviderResult) Run() *evalspb.Run {
+	return &evalspb.Run{
+		Name:       "runs/" + uuid.NewString(),
+		Type:       evalspb.Run_AGENT_EVAL,
+		Status:     rollupCases(r.Results.GetCases()),
+		StartTime:  timestamppb.New(r.StartTime),
+		EndTime:    timestamppb.New(r.EndTime),
+		CreateTime: timestamppb.Now(),
+		Data: &evalspb.Run_AgentEval{
+			AgentEval: r.Results,
+		},
+	}
+}
+
+func rollupCases(cases []*evalspb.AgentEvalResults_Case) evalspb.Status {
+	if len(cases) == 0 {
+		return evalspb.Status_PASSED
+	}
+	status := evalspb.Status_PASSED
+	for _, c := range cases {
+		switch c.GetStatus() {
+		case evalspb.Status_FAILED:
+			return evalspb.Status_FAILED
+		case evalspb.Status_NOT_EVALUATED:
+			status = evalspb.Status_NOT_EVALUATED
+		}
+	}
+	return status
 }
 
 // WithClientFactory overrides the default HTTP client factory (for tests).

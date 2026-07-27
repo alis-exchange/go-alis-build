@@ -1,25 +1,25 @@
 // Package loadinfra fetches Cloud Run and Spanner server-side metrics from
 // Cloud Monitoring for load-integrated and standalone infra observation runs.
 //
-// # Windows
+// # Observation modes
 //
-// An [ObservationWindow] is inclusive-start, exclusive-end (UTC). Load-integrated
-// callers derive it from [WindowFromMetrics] (warmup excluded). Standalone
-// callers use [WindowLookback] after [SettleDuration] so recently ingested
-// data is visible. Load-integrated [Observe] calls extend Monitoring query
-// intervals via [CloudRunQueryWindow] and [SpannerQueryWindow]; standalone
-// callers pass extendQueryEnd false so queries use the settled window as-is.
+// [ObserveLoad] observes the measurement timestamps in loadgen metrics and
+// extends Monitoring queries for ingestion delay. [ObserveLookback] resolves a
+// settled standalone window from a duration. Advanced callers use [Observe]
+// with a named [Request] for a custom window. An [ObservationWindow] is
+// inclusive-start, exclusive-end (UTC).
 //
 // # Targets
 //
-// Declare [CloudRunTarget] and [SpannerTarget] in normal Go code and pass them
-// to [Observe] from a load or infra observation case. Cloud Run requires
-// exactly one [RoleEntry]; Spanner targets are always DEPENDENCY on the wire.
-// Target IDs must be unique across kinds.
+// Declare [CloudRunTarget] and [SpannerTarget] in a [Targets] value and pass it
+// to an observation function. Cloud Run requires exactly one [RoleEntry];
+// Spanner targets are always DEPENDENCY on the wire. Target IDs must be unique
+// across kinds.
 //
 // # Fetch semantics (v1)
 //
-// [Observe] fetches all declared targets concurrently (30s per-target timeout).
+// Observation fetches all declared targets concurrently (30s per-target
+// timeout).
 // Per-target failures are recorded on the snapshot (FetchStatus, FetchMessage);
 // they do not fail the parent load or infra-observe case. Partial metric gaps
 // within a target still yield OK with a partial-failure message.
@@ -35,6 +35,6 @@
 //
 //	client, _ := loadinfra.NewMetricClient(ctx)
 //	defer client.Close()
-//	w := loadinfra.WindowLookback(30*time.Minute, time.Now(), loadinfra.SettleDuration(true, true))
-//	obs, err := loadinfra.Observe(ctx, client, cloud, spanner, w, false)
+//	targets := loadinfra.Targets{CloudRun: cloud, Spanner: spanner}
+//	obs, err := loadinfra.ObserveLookback(ctx, client, targets, 30*time.Minute)
 package loadinfra

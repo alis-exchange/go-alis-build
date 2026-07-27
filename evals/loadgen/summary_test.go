@@ -9,6 +9,27 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+func TestMode_preservesWireValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		got  Mode
+		want evalspb.RunLoadTestRequest_Mode
+	}{
+		{ModeUnspecified, evalspb.RunLoadTestRequest_MODE_UNSPECIFIED},
+		{Minimal, evalspb.RunLoadTestRequest_MINIMAL},
+		{Conservative, evalspb.RunLoadTestRequest_CONSERVATIVE},
+		{Moderate, evalspb.RunLoadTestRequest_MODERATE},
+		{High, evalspb.RunLoadTestRequest_HIGH},
+		{Ludicrous, evalspb.RunLoadTestRequest_LUDICROUS},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Fatalf("mode = %v, want wire value %v", tt.got, tt.want)
+		}
+	}
+}
+
 func TestSummary_mapsMetricsProfileAndStages(t *testing.T) {
 	t.Parallel()
 
@@ -48,7 +69,7 @@ func TestSummary_mapsMetricsProfileAndStages(t *testing.T) {
 		},
 	}
 
-	got := Summary(evalspb.RunLoadTestRequest_HIGH, profile, metrics)
+	got := Summary(High, profile, metrics)
 	want := &evalspb.LoadTestResults_Summary{
 		Mode:             evalspb.RunLoadTestRequest_HIGH,
 		TargetQps:        150,
@@ -89,7 +110,7 @@ func TestSummary_mapsMetricsProfileAndStages(t *testing.T) {
 func TestSummary_mapsStreamSummary(t *testing.T) {
 	t.Parallel()
 
-	got := Summary(evalspb.RunLoadTestRequest_MODERATE, Profile{
+	got := Summary(Moderate, Profile{
 		QPS:         10,
 		Concurrency: 2,
 		Duration:    time.Second,
@@ -124,10 +145,10 @@ func TestSummary_mapsStreamSummary(t *testing.T) {
 func TestSummary_nilAndZeroBehavior(t *testing.T) {
 	t.Parallel()
 
-	if got := Summary(evalspb.RunLoadTestRequest_MINIMAL, Profile{}, nil); got != nil {
+	if got := Summary(Minimal, Profile{}, nil); got != nil {
 		t.Fatalf("Summary(nil metrics) = %v, want nil", got)
 	}
-	got := Summary(evalspb.RunLoadTestRequest_MINIMAL, Profile{}, &Metrics{})
+	got := Summary(Minimal, Profile{}, &Metrics{})
 	if got == nil {
 		t.Fatal("Summary(zero metrics) = nil, want zero summary")
 	}

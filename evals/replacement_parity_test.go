@@ -159,7 +159,7 @@ func buildLoadParityRun(t *testing.T) *evalspb.Run {
 					r.AddSLOCheck(check)
 				}
 				for _, tag := range wantCase.GetTags() {
-					r.AddTag(tag)
+					r.AddTagProto(tag)
 				}
 				for _, snapshot := range wantCase.GetCloudRun() {
 					r.AddCloudRunSnapshot(snapshot)

@@ -166,8 +166,10 @@ func (s *suiteCore) runType() evalspb.Run_Type {
 	}
 }
 
-// publishRun deliberately uses a fresh bounded context. RunAndPublish must
-// publish partial results after the execution context is cancelled.
+// publishRun deliberately uses a fresh bounded context. WithoutCancel retains
+// values but removes execution cancellation and deadlines; WithTimeout then
+// applies the publication-specific bound. RunAndPublish can therefore publish
+// partial results after the execution context is cancelled or expires.
 func publishRun(runCtx context.Context, cfg runConfig, run *evalspb.Run) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), defaultSuitePublishTimeout)
 	defer cancel()

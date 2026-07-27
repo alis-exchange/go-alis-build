@@ -49,6 +49,14 @@ type SpannerTarget struct {
 	Database string
 }
 
+// Targets groups the infrastructure targets observed together.
+type Targets struct {
+	// CloudRun contains service targets.
+	CloudRun []CloudRunTarget
+	// Spanner contains database targets.
+	Spanner []SpannerTarget
+}
+
 const (
 	// CloudRunSettlePadding is the visibility delay applied when settling
 	// standalone windows or extending load-integrated query intervals.
@@ -66,58 +74,47 @@ type ObservationWindow struct {
 	End time.Time
 }
 
-// WindowFromMetrics derives the load-integrated observation window from
-// loadgen measurement timestamps (warmup excluded).
-func WindowFromMetrics(m *loadgen.Metrics) ObservationWindow {
+func windowFromMetrics(m *loadgen.Metrics) ObservationWindow {
 	if m == nil {
 		return ObservationWindow{}
 	}
 	return ObservationWindow{Start: m.MeasurementStart, End: m.MeasurementEnd}
 }
 
-// SettleDuration returns the per-kind visibility delay used when settling
-// standalone lookback windows. When both target kinds are present, the larger
-// Spanner delay applies.
-func SettleDuration(hasCloudRun, hasSpanner bool) time.Duration {
+func settleDuration(targets Targets) time.Duration {
 	switch {
-	case hasSpanner:
+	case len(targets.Spanner) > 0:
 		return SpannerSettlePadding
-	case hasCloudRun:
+	case len(targets.CloudRun) > 0:
 		return CloudRunSettlePadding
 	default:
 		return 0
 	}
 }
 
-// WindowLookback resolves a settled standalone observation window:
-// window_end = now - settle, window_start = window_end - lookback.
-func WindowLookback(lookback time.Duration, now time.Time, settle time.Duration) ObservationWindow {
-	end := now.Add(-settle)
+func lookbackWindow(lookback time.Duration, now time.Time, targets Targets) ObservationWindow {
+	end := now.Add(-settleDuration(targets))
 	return ObservationWindow{Start: end.Add(-lookback), End: end}
 }
 
-// CloudRunQueryWindow extends the reported window end so recently ingested
-// Cloud Run data is included.
-func CloudRunQueryWindow(w ObservationWindow) ObservationWindow {
+func cloudRunQueryWindowExtended(w ObservationWindow) ObservationWindow {
 	return ObservationWindow{Start: w.Start, End: w.End.Add(CloudRunSettlePadding)}
 }
 
-// SpannerQueryWindow extends the reported window end so recently ingested
-// Spanner data is included.
-func SpannerQueryWindow(w ObservationWindow) ObservationWindow {
+func spannerQueryWindowExtended(w ObservationWindow) ObservationWindow {
 	return ObservationWindow{Start: w.Start, End: w.End.Add(SpannerSettlePadding)}
 }
 
 func cloudRunQueryWindow(w ObservationWindow, extend bool) ObservationWindow {
 	if extend {
-		return CloudRunQueryWindow(w)
+		return cloudRunQueryWindowExtended(w)
 	}
 	return w
 }
 
 func spannerQueryWindow(w ObservationWindow, extend bool) ObservationWindow {
 	if extend {
-		return SpannerQueryWindow(w)
+		return spannerQueryWindowExtended(w)
 	}
 	return w
 }

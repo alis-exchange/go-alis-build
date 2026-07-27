@@ -79,7 +79,12 @@ func (r *LoadResult) AddSLOCheck(check *evalspb.LoadTestResults_SloCheck) {
 }
 
 // AddTag appends an author-declared load tag.
-func (r *LoadResult) AddTag(tag *evalspb.LoadTestResults_StringEntry) {
+func (r *LoadResult) AddTag(key, value string) {
+	r.tags = append(r.tags, &evalspb.LoadTestResults_StringEntry{Key: key, Value: value})
+}
+
+// AddTagProto appends a protobuf-native load tag.
+func (r *LoadResult) AddTagProto(tag *evalspb.LoadTestResults_StringEntry) {
 	if tag == nil {
 		r.Fail(errNilLoadTag)
 		return

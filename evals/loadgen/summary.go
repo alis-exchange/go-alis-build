@@ -7,8 +7,26 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// Mode names the load intensity recorded in a result summary.
+type Mode = evalspb.RunLoadTestRequest_Mode
+
+const (
+	// ModeUnspecified records no declared intensity.
+	ModeUnspecified Mode = evalspb.RunLoadTestRequest_MODE_UNSPECIFIED
+	// Minimal records smoke or baseline intensity.
+	Minimal Mode = evalspb.RunLoadTestRequest_MINIMAL
+	// Conservative records intensity with headroom for shared infrastructure.
+	Conservative Mode = evalspb.RunLoadTestRequest_CONSERVATIVE
+	// Moderate records routine capacity-check intensity.
+	Moderate Mode = evalspb.RunLoadTestRequest_MODERATE
+	// High records strong load short of the maximum expected intensity.
+	High Mode = evalspb.RunLoadTestRequest_HIGH
+	// Ludicrous records the highest expected sustainable intensity.
+	Ludicrous Mode = evalspb.RunLoadTestRequest_LUDICROUS
+)
+
 // Summary converts generated load metrics into the wire summary shape.
-func Summary(mode evalspb.RunLoadTestRequest_Mode, profile Profile, metrics *Metrics) *evalspb.LoadTestResults_Summary {
+func Summary(mode Mode, profile Profile, metrics *Metrics) *evalspb.LoadTestResults_Summary {
 	if metrics == nil {
 		return nil
 	}

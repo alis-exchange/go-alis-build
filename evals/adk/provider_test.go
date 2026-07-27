@@ -5,12 +5,92 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals/v1"
 	"go.alis.build/evals/adk"
 )
+
+func TestProviderResult_Run_buildsCompleteEnvelopeAndRollsUpStatus(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
+	end := start.Add(time.Second)
+	results := &evalspb.AgentEvalResults{Cases: []*evalspb.AgentEvalResults_Case{
+		{Id: "suite.pending", Status: evalspb.Status_NOT_EVALUATED},
+		{Id: "suite.failed", Status: evalspb.Status_FAILED},
+	}}
+
+	run := (adk.ProviderResult{
+		SuiteName: "suite",
+		StartTime: start,
+		EndTime:   end,
+		Results:   results,
+	}).Run()
+
+	if !strings.HasPrefix(run.GetName(), "runs/") {
+		t.Fatalf("name = %q, want runs/{uuid}", run.GetName())
+	}
+	if run.GetType() != evalspb.Run_AGENT_EVAL || run.GetAgentEval() != results {
+		t.Fatalf("branch = %T, want original agent eval results", run.GetData())
+	}
+	if run.GetStatus() != evalspb.Status_FAILED {
+		t.Fatalf("status = %v, want FAILED", run.GetStatus())
+	}
+	if !run.GetStartTime().AsTime().Equal(start) || !run.GetEndTime().AsTime().Equal(end) {
+		t.Fatalf("timestamps = %v..%v, want %v..%v", run.GetStartTime(), run.GetEndTime(), start, end)
+	}
+	if run.GetCreateTime() == nil {
+		t.Fatal("create_time = nil")
+	}
+}
+
+func TestProviderResult_Run_statusPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		cases []*evalspb.AgentEvalResults_Case
+		want  evalspb.Status
+	}{
+		{name: "empty", want: evalspb.Status_PASSED},
+		{
+			name:  "passed",
+			cases: []*evalspb.AgentEvalResults_Case{{Status: evalspb.Status_PASSED}},
+			want:  evalspb.Status_PASSED,
+		},
+		{
+			name: "not evaluated",
+			cases: []*evalspb.AgentEvalResults_Case{
+				{Status: evalspb.Status_PASSED},
+				{Status: evalspb.Status_NOT_EVALUATED},
+			},
+			want: evalspb.Status_NOT_EVALUATED,
+		},
+		{
+			name: "failed wins",
+			cases: []*evalspb.AgentEvalResults_Case{
+				{Status: evalspb.Status_NOT_EVALUATED},
+				{Status: evalspb.Status_FAILED},
+			},
+			want: evalspb.Status_FAILED,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := (adk.ProviderResult{
+				Results: &evalspb.AgentEvalResults{Cases: tt.cases},
+			}).Run().GetStatus()
+			if got != tt.want {
+				t.Fatalf("status = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestHTTPClient_ListEvalSets(t *testing.T) {
 	t.Parallel()
