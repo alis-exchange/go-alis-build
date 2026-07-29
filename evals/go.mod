@@ -1,6 +1,6 @@
 module go.alis.build/evals
 
-go 1.26.1
+go 1.26.5
 
 require (
 	cloud.google.com/go/bigquery v1.79.0
@@ -8,13 +8,13 @@ require (
 	cloud.google.com/go/pubsub/v2 v2.6.1
 	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	github.com/google/uuid v1.6.0
-	go.alis.build/adk/launchers v1.0.9
+	go.alis.build/adk/launchers v1.0.11
 	go.alis.build/alog v0.1.0
-	go.alis.build/common v1.1.15
+	go.alis.build/common/alis/evals v1.4.0
 	go.alis.build/validation v1.0.7
 	go.einride.tech/protobuf-bigquery v0.29.0
-	google.golang.org/api v0.290.0
-	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a
+	google.golang.org/api v0.291.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
@@ -35,7 +35,7 @@ require (
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.18 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.19 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
@@ -51,7 +51,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/exp v0.0.0-20260718201538-764159d718ef // indirect
+	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
@@ -63,6 +63,6 @@ require (
 	golang.org/x/tools v0.48.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genai v1.65.0 // indirect
-	google.golang.org/genproto v0.0.0-20260720211330-0afa2a65878a // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
+	google.golang.org/genproto v0.0.0-20260727163830-6c54dddc4772 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260727163830-6c54dddc4772 // indirect
 )

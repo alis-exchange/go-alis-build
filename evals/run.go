@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/validation"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -19,14 +20,37 @@ var (
 	newUUID = uuid.NewString
 )
 
-const panicCheckID = "_evals.panic"
-const skippedCheckID = "_evals.skipped"
-const skippedMessage = "run cancelled"
+const (
+	panicCheckID   = "_evals.panic"
+	skippedCheckID = "_evals.skipped"
+	skippedMessage = "run cancelled"
+)
 
 const (
 	caseValidationID  = "_evals.case"
 	judgeValidationID = "_evals.judge"
 )
+
+// caseWallTagKey carries a load case's true wall-clock time onto the wire.
+// LoadTestResults_Case has no duration field and the loadgen summary reports
+// the clamped measurement window, so without this tag a case that overran its
+// window is indistinguishable from one that finished on time.
+const caseWallTagKey = "_evals.case_wall_ms"
+
+// withCaseWallTag appends the framework wall-time tag without mutating the
+// case's author-declared tag slice. Sub-millisecond durations (skipped or
+// cancelled cases, unit-test stubs) add no tag.
+func withCaseWallTag(tags []*evalspb.LoadTestResults_StringEntry, wall time.Duration) []*evalspb.LoadTestResults_StringEntry {
+	if wall < time.Millisecond {
+		return tags
+	}
+	out := make([]*evalspb.LoadTestResults_StringEntry, 0, len(tags)+1)
+	out = append(out, tags...)
+	return append(out, &evalspb.LoadTestResults_StringEntry{
+		Key:   caseWallTagKey,
+		Value: strconv.FormatInt(wall.Milliseconds(), 10),
+	})
+}
 
 func resolveGoogleProjectID(cfg runConfig) string {
 	if cfg.googleProject != "" {
@@ -594,7 +618,7 @@ func (s *suiteCore) attachBranchData(run *evalspb.Run, cases []executedCase) {
 				Status:      c.status,
 				Summary:     c.summary,
 				Checks:      c.loadChecks,
-				Tags:        c.tags,
+				Tags:        withCaseWallTag(c.tags, c.duration),
 				CloudRun:    c.cloudRun,
 				Spanner:     c.spanner,
 				InfraChecks: c.infraChecks,

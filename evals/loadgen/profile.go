@@ -33,7 +33,8 @@ type Profile struct {
 	// target rate but samples are discarded. Zero disables warmup.
 	Warmup time.Duration
 	// RequestTimeout bounds one call to the target function. Zero applies the
-	// default (30s), and Run always caps it by the remaining window.
+	// default (30s). Run additionally caps every call at the time left in the
+	// window plus the graceful ramp-down, measured from the window start.
 	RequestTimeout time.Duration
 	// QPSStages defines a piecewise load shape over Warmup+Duration. When
 	// non-empty, stage durations must sum to Warmup+Duration and override the
@@ -46,9 +47,12 @@ type Profile struct {
 	// ConcurrencyStages scales the worker pool over Warmup+Duration. When
 	// non-empty, stage durations must sum to Warmup+Duration.
 	ConcurrencyStages []Stage
-	// GracefulRampDown allows in-flight requests to complete after the
-	// measurement window ends. Samples scheduled at or after the measurement
-	// boundary are excluded from aggregates.
+	// GracefulRampDown bounds how long in-flight requests may run past the
+	// window boundary before their workers are cancelled. Samples scheduled at
+	// or after the measurement boundary are excluded from aggregates. Zero
+	// applies a default of the resolved RequestTimeout capped at
+	// Warmup+Duration; ramp-down is never unbounded — a target that ignores
+	// its context is the only thing that can stall a run past this bound.
 	GracefulRampDown time.Duration
 	// AbortCheck cancels the window early when it returns true on a partial
 	// metrics snapshot (typically every 2s).
@@ -183,4 +187,19 @@ func (p Profile) resolvedRequestTimeout() time.Duration {
 		return defaultRequestTimeout
 	}
 	return p.RequestTimeout
+}
+
+// resolvedGracefulRampDown applies the default when GracefulRampDown is zero:
+// in-flight calls get up to the resolved request timeout (capped at the whole
+// window) to finish after the boundary before workers are cancelled. Callers
+// wanting an immediate cut can set a tiny explicit value.
+func (p Profile) resolvedGracefulRampDown(total time.Duration) time.Duration {
+	if p.GracefulRampDown > 0 {
+		return p.GracefulRampDown
+	}
+	d := p.resolvedRequestTimeout()
+	if d > total {
+		d = total
+	}
+	return d
 }

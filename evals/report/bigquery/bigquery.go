@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/evals/report/bqschema"
 	"go.einride.tech/protobuf-bigquery/encoding/protobq"
 	"google.golang.org/protobuf/encoding/protojson"

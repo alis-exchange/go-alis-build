@@ -52,7 +52,9 @@ func TransportTarget(fn func(context.Context) error) ResultTarget {
 // Metrics is the aggregate outcome of one load window, computed only from
 // samples that fell inside the measurement window (Warmup excluded).
 type Metrics struct {
-	// Duration is the wall-clock time covered by the measurement window.
+	// Duration is the configured measurement window on completed runs, and the
+	// elapsed measured time on cancelled or aborted runs. It never exceeds the
+	// configured window — see WallDuration for the true wall-clock time.
 	Duration time.Duration
 	// RequestCount is the number of requests whose result was observed inside
 	// the measurement window.
@@ -78,6 +80,12 @@ type Metrics struct {
 	MeasurementStart time.Time
 	// MeasurementEnd is the exclusive end of the measurement window.
 	MeasurementEnd time.Time
+	// WallDuration is the true wall-clock time of the whole run, from window
+	// start (including Warmup) through the last in-flight call and ramp-down.
+	// Unlike Duration — which is clamped to the configured measurement window
+	// — this exposes overrun, so callers can see when a window took longer
+	// than it reported.
+	WallDuration time.Duration
 }
 
 // StreamSummary aggregates streaming RPC metrics for one load window.

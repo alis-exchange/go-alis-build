@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -241,5 +242,39 @@ func TestLoadResult_usesProtobufNativeValues(t *testing.T) {
 	}
 	if !proto.Equal(c.GetChecks()[0], check) {
 		t.Fatalf("check = %v, want protobuf-native value %v", c.GetChecks()[0], check)
+	}
+}
+
+func TestLoadCase_wallTimeTagAppended(t *testing.T) {
+	t.Parallel()
+
+	run, err := NewLoadSuite("load-wall").
+		AddCase("slow-enough", func(_ context.Context, r *LoadResult) {
+			// Ensure the case takes >= 1ms of wall time so the framework
+			// appends the _evals.case_wall_ms tag.
+			time.Sleep(5 * time.Millisecond)
+			r.AddTag("rpc", "Checkout")
+		}).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	tags := run.GetLoadTest().GetCases()[0].GetTags()
+	var wall string
+	for _, tag := range tags {
+		if tag.GetKey() == caseWallTagKey {
+			wall = tag.GetValue()
+		}
+	}
+	if wall == "" {
+		t.Fatalf("tags %v missing %s", tags, caseWallTagKey)
+	}
+	ms, err := strconv.ParseInt(wall, 10, 64)
+	if err != nil || ms < 5 {
+		t.Fatalf("%s = %q, want integer >= 5", caseWallTagKey, wall)
+	}
+	// Author-declared tags must stay first and untouched.
+	if tags[0].GetKey() != "rpc" || tags[0].GetValue() != "Checkout" {
+		t.Fatalf("author tag not preserved: %v", tags)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 )
 
 // Reporter receives a materialized Run as soon as a suite completes.

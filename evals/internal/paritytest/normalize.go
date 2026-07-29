@@ -1,9 +1,10 @@
 package paritytest
 
 import (
+	"strings"
 	"time"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -47,5 +48,28 @@ func NormalizeRun(run *evalspb.Run, meta FixedRunMeta) *evalspb.Run {
 	} else {
 		out.BatchId = nil
 	}
+	stripFrameworkLoadTags(out)
 	return out
+}
+
+// stripFrameworkLoadTags removes framework-generated `_evals.` load tags
+// (for example the per-case wall-time tag) before golden comparison. The P0
+// baselines predate these tags, and their values vary between executions, so
+// they are deliberate divergences from the frozen fixtures rather than
+// mapping regressions.
+func stripFrameworkLoadTags(run *evalspb.Run) {
+	lt := run.GetLoadTest()
+	if lt == nil {
+		return
+	}
+	for _, c := range lt.GetCases() {
+		kept := c.GetTags()[:0]
+		for _, tag := range c.GetTags() {
+			if strings.HasPrefix(tag.GetKey(), "_evals.") {
+				continue
+			}
+			kept = append(kept, tag)
+		}
+		c.Tags = kept
+	}
 }

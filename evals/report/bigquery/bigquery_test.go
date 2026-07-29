@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/evals/report/bqschema"
 	"go.einride.tech/protobuf-bigquery/encoding/protobq"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -659,5 +659,7 @@ func (b *blockingInserter) Put(ctx context.Context, _ any) error {
 }
 
 // Ensure the test type actually implements the seam.
-var _ rowInserter = (*recordingInserter)(nil)
-var _ rowInserter = (*blockingInserter)(nil)
+var (
+	_ rowInserter = (*recordingInserter)(nil)
+	_ rowInserter = (*blockingInserter)(nil)
+)

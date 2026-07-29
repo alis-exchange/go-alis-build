@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/bigquery"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/evals/report/bqschema"
 	"go.alis.build/evals/report/pubsub"
 	"google.golang.org/protobuf/proto"

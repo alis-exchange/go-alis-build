@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/evals/internal/paritytest"
 	"go.alis.build/evals/report/pubsub"
 	"google.golang.org/protobuf/proto"

@@ -3,7 +3,7 @@ package evals
 import (
 	"context"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/validation"
 )
 

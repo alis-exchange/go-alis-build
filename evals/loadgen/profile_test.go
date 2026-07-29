@@ -93,3 +93,46 @@ func TestProfile_ResolvedRequestTimeout(t *testing.T) {
 		t.Fatalf("custom = %v, want 5s", got)
 	}
 }
+
+func TestProfile_resolvedGracefulRampDown(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		p     Profile
+		total time.Duration
+		want  time.Duration
+	}{
+		{
+			name:  "explicit value wins",
+			p:     Profile{GracefulRampDown: 7 * time.Second, RequestTimeout: time.Minute},
+			total: 10 * time.Minute,
+			want:  7 * time.Second,
+		},
+		{
+			name:  "zero defaults to request timeout",
+			p:     Profile{RequestTimeout: time.Minute},
+			total: 10 * time.Minute,
+			want:  time.Minute,
+		},
+		{
+			name:  "default capped at window",
+			p:     Profile{RequestTimeout: time.Minute},
+			total: 10 * time.Second,
+			want:  10 * time.Second,
+		},
+		{
+			name:  "zero request timeout falls back to default timeout",
+			p:     Profile{},
+			total: 10 * time.Minute,
+			want:  defaultRequestTimeout,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.p.resolvedGracefulRampDown(tc.total); got != tc.want {
+				t.Fatalf("resolvedGracefulRampDown(%v)=%v, want %v", tc.total, got, tc.want)
+			}
+		})
+	}
+}

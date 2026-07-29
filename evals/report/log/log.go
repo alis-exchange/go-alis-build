@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"go.alis.build/alog"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 )
 
 // Reporter writes a one-line summary of each completed Run to alog. It is an

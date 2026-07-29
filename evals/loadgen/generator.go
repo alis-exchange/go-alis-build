@@ -35,12 +35,15 @@ const saturationThreshold = 0.9
 // inProcess is the default [Generator] implementation; each Run is isolated.
 type inProcess struct{}
 
-// hdrConfig covers 1µs to 1h with 3 significant figures. Latencies above 1h
-// are extremely unlikely for a single RPC and would be clamped to the max.
+// hdrConfig covers 1µs to 6h with 3 significant figures. Load iterations can
+// legitimately run for hours (multi-GB upload pipelines), so the ceiling must
+// sit above any authored RequestTimeout; values beyond it are clamped to the
+// max, which silently flattens tail percentiles. HDR memory grows with the
+// log of the range, so the wider bound costs little.
 const (
-	hdrMinValueUs = 1                                   // minimum recordable latency in microseconds
-	hdrMaxValueUs = int64(time.Hour / time.Microsecond) // maximum recordable latency in microseconds
-	hdrSigFigs    = 3                                   // HDR histogram significant-figure precision
+	hdrMinValueUs = 1                                       // minimum recordable latency in microseconds
+	hdrMaxValueUs = int64(6 * time.Hour / time.Microsecond) // maximum recordable latency in microseconds
+	hdrSigFigs    = 3                                       // HDR histogram significant-figure precision
 )
 
 // sample is one completed request handed from a worker to the aggregator.
@@ -71,6 +74,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	total := p.Warmup + p.Duration
 	pacer := pacerForProfile(p, total)
 	maxWorkers := p.MaxConcurrency()
+	rampDown := p.resolvedGracefulRampDown(total)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -81,6 +85,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	var inFlight atomic.Int32
 
 	start := time.Now()
+	windowEnd := start.Add(total)
 	measurementStart := start.Add(p.Warmup)
 	measurementEnd := measurementStart.Add(p.Duration)
 	agg := newAggregator(measurementStart, measurementEnd, p.Duration, 0)
@@ -104,7 +109,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			runWorker(workerCtx, ticks, samples, target, reqTimeout, total, &inFlight, &reqNum, &dropped, id)
+			runWorker(workerCtx, ticks, samples, target, reqTimeout, windowEnd, rampDown, &inFlight, &reqNum, &dropped, id)
 		}(workerID)
 		workerMu.Lock()
 		stops = append(stops, cancel)
@@ -152,7 +157,12 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 		for {
 			elapsed := time.Since(start)
 			wait, stop := pacer.Pace(elapsed, sent)
-			if stop {
+			// Clamp scheduling to the window: a slot that lands at or past the
+			// boundary must not be dispatched. Without this the pacer sleeps up
+			// to 1/QPS past the end and dispatches one extra out-of-window tick
+			// whose execution is excluded from aggregates but still blocks
+			// ramp-down — pure wasted wall time.
+			if stop || elapsed+wait >= total {
 				return
 			}
 			if wait > 0 {
@@ -164,6 +174,9 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 				}
 			}
 			now := time.Now()
+			if now.Sub(start) >= total {
+				return
+			}
 			if inFlight.Load() >= maxConc {
 				// Drop when concurrency is saturated (open-loop). Advance sent so
 				// Pace schedules the next slot instead of spinning on wait==0.
@@ -190,36 +203,64 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 
 	<-pacerDone
 
-	if p.GracefulRampDown > 0 {
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
+	// Ramp-down is always bounded: in-flight calls get up to rampDown past the
+	// window boundary (their per-call contexts expire on the same schedule —
+	// see runWorker), then remaining workers are cancelled. A bare unbounded
+	// wg.Wait() here previously let one late iteration stall the run for a
+	// full extra request-timeout.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	if runCtx.Err() != nil {
+		// The run was cancelled or aborted: in-flight call contexts are
+		// already dead, so skip the ramp-down grace and cancel workers now.
+		workerMu.Lock()
+		for _, cancel := range stops {
+			cancel()
+		}
+		workerMu.Unlock()
+		<-done
+	} else {
+		rampTimer := time.NewTimer(rampDown)
 		select {
 		case <-done:
-		case <-time.After(p.GracefulRampDown):
+			rampTimer.Stop()
+		case <-rampTimer.C:
 			workerMu.Lock()
 			for _, cancel := range stops {
 				cancel()
 			}
 			workerMu.Unlock()
-			wg.Wait()
+			<-done
 		}
-	} else {
-		wg.Wait()
 	}
 
 	close(samples)
 	m := <-aggDone
 	m.DroppedCount = dropped.Load()
+	m.WallDuration = time.Since(start)
 
 	if ctxErr := runCtx.Err(); ctxErr != nil {
 		return m, ctxErr
 	}
 
+	// The schedule ran to completion: report the configured measurement window
+	// (the pacer no longer sleeps past the boundary, so the aggregator may
+	// finalize up to one scheduling interval early). Cancelled and aborted
+	// runs return above with elapsed-based partial numbers instead.
+	m.Duration = p.Duration
+	m.ActualQPS = float64(m.RequestCount) / p.Duration.Seconds()
+
 	targetQPS := p.EffectiveQPS()
-	if m.ActualQPS > 0 && m.ActualQPS < saturationThreshold*targetQPS {
+	if m.RequestCount == 0 {
+		// The worst degenerate window: nothing was recorded at all (Duration
+		// shorter than one iteration or than 1/QPS). ActualQPS is 0 here, so
+		// the saturation warning below would stay silent without this branch.
+		alog.Warnf(runCtx, "loadgen recorded zero in-window samples: target %.2f qps over %s window — Duration is likely shorter than one iteration or 1/QPS",
+			targetQPS, p.Duration)
+	} else if m.ActualQPS < saturationThreshold*targetQPS {
 		alog.Warnf(runCtx, "loadgen saturated: actual %.1f qps < target %.1f qps (concurrency=%d, mean latency %.1fms)",
 			m.ActualQPS, targetQPS, p.MaxConcurrency(), m.Latency.MeanMs)
 	}
@@ -537,24 +578,32 @@ func concurrencyAt(elapsed time.Duration, stages []Stage) int {
 // runWorker pulls ticks and executes the target with a per-request timeout.
 // Panics in the target are recovered and recorded as INTERNAL errors so the
 // window keeps running.
-func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sample, target ResultTarget, reqTimeout, windowTotal time.Duration, inFlight *atomic.Int32, reqNum *atomic.Uint64, dropped *atomic.Int64, workerID int) {
+func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sample, target ResultTarget, reqTimeout time.Duration, windowEnd time.Time, rampDown time.Duration, inFlight *atomic.Int32, reqNum *atomic.Uint64, dropped *atomic.Int64, workerID int) {
 	for sentAt := range ticks {
 		if err := parent.Err(); err != nil {
 			dropped.Add(1)
 			inFlight.Add(-1)
 			return
 		}
-		remaining := windowTotal - time.Since(sentAt)
+		// remaining is measured against the absolute window end, not the
+		// tick's own age: a tick dequeued late in the window must NOT get a
+		// fresh full budget, or tail iterations run a whole extra window past
+		// the boundary.
+		remaining := time.Until(windowEnd)
 		if remaining <= 0 {
-			// Ticks scheduled before the boundary but executed after it are excluded
-			// from aggregates; count as dropped so ActualQPS stays honest under ramp-down.
+			// Ticks dispatched before the boundary but picked up after it are
+			// excluded from aggregates; count as dropped so ActualQPS stays
+			// honest under ramp-down.
 			dropped.Add(1)
 			inFlight.Add(-1)
 			continue
 		}
+		// A call dispatched near the boundary may finish inside the bounded
+		// ramp-down grace instead of being cancelled exactly at the boundary;
+		// the run-level ramp-down timer enforces the same overall bound.
 		timeout := reqTimeout
-		if remaining < timeout {
-			timeout = remaining
+		if budget := remaining + rampDown; budget < timeout {
+			timeout = budget
 		}
 		reqCtx, cancel := context.WithTimeout(parent, timeout)
 		n := reqNum.Add(1)

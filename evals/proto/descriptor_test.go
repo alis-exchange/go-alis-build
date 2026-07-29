@@ -3,7 +3,7 @@ package proto
 import (
 	"testing"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 

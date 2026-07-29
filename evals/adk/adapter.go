@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/validation"
 )
 
@@ -71,7 +71,8 @@ func TestRun_aggregateConfigErrors(t *testing.T) {
 		AddCase("dup", noopIntegrationCase).
 		AddCase("nil-fn", nil)
 
-	_, err := s.Run(context.Background(),
+	_, err := s.Run(
+		context.Background(),
 		WithMaxConcurrency(0),
 		WithReporter(nil),
 		nil,
@@ -131,7 +132,8 @@ func TestRun_metadataPrecedenceAndSilentReporter(t *testing.T) {
 	s := NewIntegrationSuite("meta-"+t.Name()).
 		AddCase("case-a", noopIntegrationCase)
 
-	run, err := s.Run(context.Background(),
+	run, err := s.Run(
+		context.Background(),
 		WithBatchID("batch-1"),
 		WithOperation("operations/op-1"),
 		WithGoogleProjectID("override-project"),
@@ -364,6 +366,7 @@ func (s *IntegrationSuite) run(ctx context.Context, opts ...RunOption) (*evalspb
 func (s *AgentEvalSuite) add(name string, fn IntegrationCaseFunc) {
 	s.AddCase(name, func(ctx context.Context, _ *AgentEvalResult) { fn(ctx, validation.NewValidator()) })
 }
+
 func (s *AgentEvalSuite) run(ctx context.Context, opts ...RunOption) (*evalspb.Run, error) {
 	return s.Run(ctx, opts...)
 }
@@ -371,6 +374,7 @@ func (s *AgentEvalSuite) run(ctx context.Context, opts ...RunOption) (*evalspb.R
 func (s *LoadSuite) add(name string, fn IntegrationCaseFunc) {
 	s.AddCase(name, func(ctx context.Context, _ *LoadResult) { fn(ctx, validation.NewValidator()) })
 }
+
 func (s *LoadSuite) run(ctx context.Context, opts ...RunOption) (*evalspb.Run, error) {
 	return s.Run(ctx, opts...)
 }
@@ -378,6 +382,7 @@ func (s *LoadSuite) run(ctx context.Context, opts ...RunOption) (*evalspb.Run, e
 func (s *InfraObservationSuite) add(name string, fn IntegrationCaseFunc) {
 	s.AddCase(name, func(ctx context.Context, _ *InfraObservationResult) { fn(ctx, validation.NewValidator()) })
 }
+
 func (s *InfraObservationSuite) run(ctx context.Context, opts ...RunOption) (*evalspb.Run, error) {
 	return s.Run(ctx, opts...)
 }

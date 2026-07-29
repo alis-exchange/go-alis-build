@@ -273,6 +273,14 @@ func TestInProcess_Cancellation(t *testing.T) {
 	if m == nil {
 		t.Fatal("expected partial metrics on cancellation, got nil")
 	}
+	// Cancelled runs report elapsed-based partial numbers, never the full
+	// configured window, and still surface true wall time.
+	if m.Duration >= p.Duration {
+		t.Fatalf("Duration=%v, want < %v (elapsed partial on cancellation)", m.Duration, p.Duration)
+	}
+	if m.WallDuration <= 0 {
+		t.Fatalf("WallDuration=%v, want > 0", m.WallDuration)
+	}
 }
 
 // TestInProcess_PanicRecovered verifies that a panicking target is caught
@@ -771,5 +779,134 @@ func TestInProcess_ConcurrencyStepDownCountsDropped(t *testing.T) {
 	}
 	if m.DroppedCount == 0 {
 		t.Fatal("DroppedCount=0, want > 0 when concurrency steps down")
+	}
+}
+
+func TestInProcess_TailTickGetsNoFreshBudget(t *testing.T) {
+	t.Parallel()
+
+	// The target only ever finishes when its context is cancelled. A tick
+	// dispatched late in the window must have its call bounded by the time
+	// left in the window plus ramp-down — not by a fresh full RequestTimeout
+	// measured from its own dispatch (the historical bug).
+	target := TransportTarget(func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	g := New()
+	p := Profile{
+		QPS:              10,
+		Concurrency:      8,
+		Duration:         600 * time.Millisecond,
+		RequestTimeout:   2 * time.Second,
+		GracefulRampDown: 100 * time.Millisecond,
+	}
+	start := time.Now()
+	m, err := g.Run(context.Background(), p, target)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Under the old semantics a tick dispatched at ~500ms ran until ~1.1s
+	// (min(RequestTimeout, full window) from dispatch). Now everything must
+	// unwind by window end + ramp-down, with scheduler slack.
+	if limit := p.Duration + p.GracefulRampDown + 400*time.Millisecond; elapsed > limit {
+		t.Fatalf("run took %v, want <= %v (tail call got a fresh budget?)", elapsed, limit)
+	}
+	if m.WallDuration <= 0 {
+		t.Fatalf("WallDuration=%v, want > 0", m.WallDuration)
+	}
+}
+
+func TestInProcess_RampDownBoundedByDefault(t *testing.T) {
+	t.Parallel()
+
+	// GracefulRampDown unset: the default (resolved RequestTimeout capped at
+	// the window) must still bound the wait for in-flight calls — the old
+	// bare wg.Wait() blocked for a full extra RequestTimeout.
+	target := TransportTarget(func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	g := New()
+	p := Profile{
+		QPS:            20,
+		Concurrency:    4,
+		Duration:       200 * time.Millisecond,
+		RequestTimeout: 10 * time.Second,
+	}
+	start := time.Now()
+	_, err := g.Run(context.Background(), p, target)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Default ramp-down = min(10s, 200ms) = 200ms. Everything must unwind in
+	// roughly 2× the window, not the 10s request timeout.
+	if limit := time.Second; elapsed > limit {
+		t.Fatalf("run took %v, want <= %v (unbounded ramp-down?)", elapsed, limit)
+	}
+}
+
+func TestInProcess_PacerStopsAtWindowEnd(t *testing.T) {
+	t.Parallel()
+
+	// QPS < 1 with Duration < 1/QPS: the first scheduling slot lands past the
+	// window boundary, so nothing may be dispatched and the run must return
+	// promptly instead of sleeping to the out-of-window slot and executing it.
+	var calls atomic.Int64
+	target := TransportTarget(func(context.Context) error {
+		calls.Add(1)
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:            0.5,
+		Concurrency:    1,
+		Duration:       time.Second,
+		RequestTimeout: 5 * time.Second,
+	}
+	start := time.Now()
+	m, err := g.Run(context.Background(), p, target)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("target invoked %d times, want 0 (slot past window end)", got)
+	}
+	if m.RequestCount != 0 {
+		t.Fatalf("RequestCount=%d, want 0", m.RequestCount)
+	}
+	if elapsed > 700*time.Millisecond {
+		t.Fatalf("run took %v, want prompt return (pacer slept past boundary?)", elapsed)
+	}
+}
+
+func TestInProcess_WallDurationReported(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(context.Context) error { return nil })
+	g := New()
+	p := Profile{
+		QPS:            50,
+		Concurrency:    4,
+		Duration:       200 * time.Millisecond,
+		Warmup:         100 * time.Millisecond,
+		RequestTimeout: time.Second,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.Duration != p.Duration {
+		t.Fatalf("Duration=%v, want %v (configured window)", m.Duration, p.Duration)
+	}
+	// WallDuration spans warmup + window (minus at most one scheduling
+	// interval, plus ramp-down), so it must land near Warmup+Duration and
+	// never wildly beyond it for a fast target.
+	total := p.Warmup + p.Duration
+	if m.WallDuration < total/2 || m.WallDuration > total+time.Second {
+		t.Fatalf("WallDuration=%v, want ~%v", m.WallDuration, total)
 	}
 }

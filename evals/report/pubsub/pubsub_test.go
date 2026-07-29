@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -107,7 +107,7 @@ func TestReporter_ReportRun_marshalsJSONMatchesGolden(t *testing.T) {
 						Cases: []*evalspb.InfraObservationResults_Case{
 							{
 								Id: "peak.hourly", Status: evalspb.Status_PASSED,
-								Lookback: durationpb.New(30 * time.Minute),
+								Lookback:    durationpb.New(30 * time.Minute),
 								WindowStart: start, WindowEnd: end,
 							},
 						},

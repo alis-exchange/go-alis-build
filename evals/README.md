@@ -13,11 +13,11 @@ Developers define named suites directly in Go, add named cases fluently, run the
 
 ## Suite types
 
-| Suite | Constructor | Case function | Result branch |
-| --- | --- | --- | --- |
-| Integration | `evals.NewIntegrationSuite(name)` | `func(context.Context, *validation.Validator)` | `IntegrationTestResults` |
-| Agent eval | `evals.NewAgentEvalSuite(name)` | `func(context.Context, *evals.AgentEvalResult)` | `AgentEvalResults` |
-| Load | `evals.NewLoadSuite(name)` | `func(context.Context, *evals.LoadResult)` | `LoadTestResults` |
+| Suite             | Constructor                            | Case function                                          | Result branch             |
+| ----------------- | -------------------------------------- | ------------------------------------------------------ | ------------------------- |
+| Integration       | `evals.NewIntegrationSuite(name)`      | `func(context.Context, *validation.Validator)`         | `IntegrationTestResults`  |
+| Agent eval        | `evals.NewAgentEvalSuite(name)`        | `func(context.Context, *evals.AgentEvalResult)`        | `AgentEvalResults`        |
+| Load              | `evals.NewLoadSuite(name)`             | `func(context.Context, *evals.LoadResult)`             | `LoadTestResults`         |
 | Infra observation | `evals.NewInfraObservationSuite(name)` | `func(context.Context, *evals.InfraObservationResult)` | `InfraObservationResults` |
 
 Every suite supports:
@@ -39,7 +39,7 @@ import (
     "context"
     "time"
 
-    evalspb "go.alis.build/common/alis/evals/v1"
+    evalspb "go.alis.build/common/alis/evals"
     "go.alis.build/evals"
     "go.alis.build/validation"
 )
@@ -107,13 +107,13 @@ Publication gets its own 10-second timeout derived with `context.WithoutCancel` 
 
 ## Run options
 
-| Option | Behavior |
-| --- | --- |
-| `WithMaxConcurrency(n)` | Sets the maximum number of active cases. Default is `1` for every suite type. `n <= 0` is a configuration error. |
-| `WithReporter(r)` | Replaces the reporter used by `RunAndPublish`. Nil is a configuration error. |
-| `WithBatchID(id)` | Sets `Run.batch_id` when non-empty. |
-| `WithOperation(name)` | Sets `Run.operation` when non-empty. |
-| `WithGoogleProjectID(id)` | Sets `Run.google_project_id`. If omitted, `ALIS_OS_PROJECT` is used. |
+| Option                    | Behavior                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `WithMaxConcurrency(n)`   | Sets the maximum number of active cases. Default is `1` for every suite type. `n <= 0` is a configuration error. |
+| `WithReporter(r)`         | Replaces the reporter used by `RunAndPublish`. Nil is a configuration error.                                     |
+| `WithBatchID(id)`         | Sets `Run.batch_id` when non-empty.                                                                              |
+| `WithOperation(name)`     | Sets `Run.operation` when non-empty.                                                                             |
+| `WithGoogleProjectID(id)` | Sets `Run.google_project_id`. If omitted, `ALIS_OS_PROJECT` is used.                                             |
 
 Suite and case configuration errors are deferred until `Run` / `RunAndPublish` so fluent definitions can be built linearly and checked once.
 
@@ -332,14 +332,14 @@ For Pub/Sub, the reporter project is the product project (`ALIS_OS_PRODUCT_PROJE
 
 ## Package layout
 
-| Package | Purpose |
-| --- | --- |
-| `go.alis.build/evals` | Four typed suites, builders, run options, call/stream helpers, scoring helpers. |
-| `go.alis.build/evals/adk` | ADK launcher helpers and protobuf-native agent eval conversion. |
-| `go.alis.build/evals/loadgen` | Focused load generation algorithms and `Summary` conversion. No suite lifecycle. |
-| `go.alis.build/evals/loadinfra` | Focused Cloud Monitoring collection and protobuf snapshots. No suite lifecycle. |
-| `go.alis.build/evals/report` | Reporter interface and fan-out combinators. |
-| `go.alis.build/evals/report/...` | Log, Pub/Sub, BigQuery, and schema helpers. |
-| `go.alis.build/evals/errors` | gRPC status bridging for typed evals errors. |
+| Package                          | Purpose                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| `go.alis.build/evals`            | Four typed suites, builders, run options, call/stream helpers, scoring helpers.  |
+| `go.alis.build/evals/adk`        | ADK launcher helpers and protobuf-native agent eval conversion.                  |
+| `go.alis.build/evals/loadgen`    | Focused load generation algorithms and `Summary` conversion. No suite lifecycle. |
+| `go.alis.build/evals/loadinfra`  | Focused Cloud Monitoring collection and protobuf snapshots. No suite lifecycle.  |
+| `go.alis.build/evals/report`     | Reporter interface and fan-out combinators.                                      |
+| `go.alis.build/evals/report/...` | Log, Pub/Sub, BigQuery, and schema helpers.                                      |
+| `go.alis.build/evals/errors`     | gRPC status bridging for typed evals errors.                                     |
 
 For help moving from the previous registry API, see [MIGRATION.md](MIGRATION.md).

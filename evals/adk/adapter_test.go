@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"go.alis.build/evals/adk"
 )
 
@@ -98,7 +98,8 @@ func TestCaseFromRunEvalResult_rubricScores(t *testing.T) {
 func TestAgentEvalResultsFromRunEvalResults(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -122,7 +123,8 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOnWire(t *testing.T) 
 
 	rubricScore := 0.42
 	rationale := "response paraphrased the reference correctly but omitted the source citation"
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusFailed,
@@ -161,7 +163,8 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOmittedWhenEmpty(t *t
 	t.Parallel()
 
 	rubricScore := 0.9
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -194,7 +197,8 @@ func TestAgentEvalResultsFromRunEvalResults_rubricRationaleOmittedWhenEmpty(t *t
 func TestJudgeContext_CallCountRoundtrip(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -223,7 +227,8 @@ func TestJudgeContext_CallCountRoundtrip(t *testing.T) {
 func TestAgentEvalResults_JudgeNilWhenZeroValued(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		[]models.RunEvalResult{{
 			EvalID:          "case-1",
 			FinalEvalStatus: models.EvalStatusPassed,
@@ -239,7 +244,8 @@ func TestAgentEvalResults_JudgeNilWhenZeroValued(t *testing.T) {
 func TestAgentEvalResults_JudgeEmittedWhenOnlyCallCountSet(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		nil,
 		nil,
 		adk.JudgeContext{CallCount: 5},
@@ -259,7 +265,8 @@ func TestAgentEvalResults_JudgeEmittedWhenOnlyCallCountSet(t *testing.T) {
 func TestAgentEvalResults_JudgeEmittedWhenOnlyErrorCountSet(t *testing.T) {
 	t.Parallel()
 
-	proto := adk.AgentEvalResultsFromRunEvalResults("eval_set_1",
+	proto := adk.AgentEvalResultsFromRunEvalResults(
+		"eval_set_1",
 		nil,
 		nil,
 		adk.JudgeContext{ErrorCount: 2},

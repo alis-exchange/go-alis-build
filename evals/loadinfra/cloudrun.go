@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
-	evalspb "go.alis.build/common/alis/evals/v1"
+	evalspb "go.alis.build/common/alis/evals"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 

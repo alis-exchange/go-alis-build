@@ -31,7 +31,9 @@
 // [Profile.QPSStages] and [Profile.ConcurrencyStages] define piecewise load
 // shapes over Warmup+Duration. [Profile.QPSStageLinear] selects linear
 // interpolation between QPS stage targets (ghz-style). [Profile.GracefulRampDown]
-// allows in-flight requests to finish after the measurement boundary.
+// bounds how long in-flight requests may run past the measurement boundary
+// before their workers are cancelled; when zero it defaults to the resolved
+// request timeout capped at the window length. Ramp-down is never unbounded.
 //
 // # Stream metrics
 //
@@ -67,11 +69,19 @@
 //
 // When the worker pool cannot keep up, [Metrics.ActualQPS] falls below
 // the target rate. The generator emits an alog warning when
-// `ActualQPS < 0.9 × target QPS` so users notice they are measuring the
-// generator rather than the SUT. [Metrics.DroppedCount] counts scheduled
-// ticks that were not dispatched (pacer saturation or a full tick channel),
-// plus worker-side skips for ticks received after the window ended. It is
+// `ActualQPS < 0.9 × target QPS`, and a separate warning when a window
+// records zero in-window samples (Duration shorter than one iteration or
+// than 1/QPS), so users notice they are measuring the generator rather
+// than the SUT. [Metrics.DroppedCount] counts scheduled ticks that were
+// not dispatched (pacer saturation or a full tick channel), plus
+// worker-side skips for ticks picked up after the window ended. It is
 // not a spin or retry counter.
+//
+// Scheduling never extends the window: slots that would land at or past
+// Warmup+Duration are not dispatched, every per-call timeout is capped at
+// the time left in the window plus the ramp-down grace, and
+// [Metrics.WallDuration] reports the true wall-clock time of the run so
+// overrun is visible rather than hidden by the clamped [Metrics.Duration].
 //
 // # Error accounting
 //
