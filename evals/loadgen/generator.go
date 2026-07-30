@@ -121,7 +121,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 		go func(id int) {
 			defer wg.Done()
 			if p.ClosedLoop {
-				runClosedWorker(workerCtx, samples, &dropped, target, reqTimeout, windowEnd, rampDown, &reqNum, id)
+				runClosedWorker(workerCtx, samples, &dropped, target, reqTimeout, windowEnd, rampDown, p.FailureBackoff, &reqNum, id)
 				return
 			}
 			runWorker(workerCtx, ticks, samples, target, reqTimeout, windowEnd, rampDown, &inFlight, &reqNum, &dropped, id)
@@ -639,7 +639,12 @@ func runPacerLoop(runCtx context.Context, pacer Pacer, start time.Time, total ti
 // runWorker via runCall, so the run-level ramp-down bound holds unchanged.
 // Dispatch never drops: a new call starts exactly when the previous one
 // finishes; only boundary-truncated failures are excluded (as dropped).
-func runClosedWorker(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout time.Duration, windowEnd time.Time, rampDown time.Duration, reqNum *atomic.Uint64, workerID int) {
+func runClosedWorker(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout time.Duration, windowEnd time.Time, rampDown, failureBackoff time.Duration, reqNum *atomic.Uint64, workerID int) {
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
 	for {
 		if parent.Err() != nil {
 			return
@@ -649,7 +654,29 @@ func runClosedWorker(parent context.Context, samples chan<- sample, dropped *ato
 		if remaining <= 0 {
 			return
 		}
-		runCall(parent, samples, dropped, target, reqTimeout, remaining, rampDown, windowEnd, reqNum, workerID, now)
+		failed := runCall(parent, samples, dropped, target, reqTimeout, remaining, rampDown, windowEnd, reqNum, workerID, now)
+		if !failed || failureBackoff <= 0 {
+			continue
+		}
+		// Failure backoff: a rejected call can return in milliseconds, and
+		// without a floor the loop re-dispatches at whatever rate the
+		// rejection path sustains — a retry storm that hammers an already
+		// load-shedding service and can exhaust quotas shared with later
+		// cases. Stretch a failed iteration to at least failureBackoff,
+		// clamped to the window so backoff never eats into ramp-down.
+		wait := failureBackoff - time.Since(now)
+		if tail := windowEnd.Sub(time.Now()); wait > tail {
+			wait = tail
+		}
+		if wait <= 0 {
+			continue
+		}
+		timer.Reset(wait)
+		select {
+		case <-timer.C:
+		case <-parent.Done():
+			return
+		}
 	}
 }
 
@@ -708,7 +735,11 @@ func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sa
 //     also covers the ramp-down cutoff racing the truncated deadline: both
 //     end the same call at windowEnd+rampDown, both are generator-induced,
 //     and both must land in DroppedCount.
-func runCall(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout, remaining, rampDown time.Duration, windowEnd time.Time, reqNum *atomic.Uint64, workerID int, sentAt time.Time) {
+//
+// It reports whether the call was recorded as a transport failure, so the
+// closed-loop worker can apply its failure backoff; boundary-dropped calls
+// report false — the target did not fail, the run ended.
+func runCall(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout, remaining, rampDown time.Duration, windowEnd time.Time, reqNum *atomic.Uint64, workerID int, sentAt time.Time) bool {
 	timeout := reqTimeout
 	truncated := false
 	if budget := remaining + rampDown; budget < timeout {
@@ -722,9 +753,10 @@ func runCall(parent context.Context, samples chan<- sample, dropped *atomic.Int6
 	cancel()
 	if truncated && ctxEnded && isDeadlineOrCancel(result.TransportErr) && !time.Now().Before(windowEnd) {
 		dropped.Add(1)
-		return
+		return false
 	}
 	samples <- sample{sentAt: sentAt, latency: latency, result: result}
+	return result.TransportErr != nil
 }
 
 // isDeadlineOrCancel reports whether err is a context deadline/cancellation

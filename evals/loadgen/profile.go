@@ -70,6 +70,16 @@ type Profile struct {
 	// error counts. Window, warmup, per-request timeout, and ramp-down bounds
 	// apply unchanged.
 	ClosedLoop bool
+	// FailureBackoff (closed-loop only) stretches a failed iteration to at
+	// least this duration before the worker re-dispatches. Without it a
+	// rejected call that returns in milliseconds turns the loop into a retry
+	// storm at whatever rate the rejection path sustains — hammering a
+	// service that is already shedding load and exhausting quotas shared
+	// with later cases. Successful iterations are never throttled, so a
+	// healthy run keeps full closed-loop pressure. Zero disables backoff;
+	// setting it without ClosedLoop is invalid (paced dispatch is already
+	// rate-bounded).
+	FailureBackoff time.Duration
 	// AbortCheck cancels the window early when it returns true on a partial
 	// metrics snapshot (typically every 2s).
 	AbortCheck AbortCheck
@@ -99,6 +109,12 @@ func (p Profile) validate() error {
 	}
 	if p.GracefulRampDown < 0 {
 		return ErrInvalidProfile{Field: "GracefulRampDown", Got: p.GracefulRampDown.String(), Want: ">= 0"}
+	}
+	if p.FailureBackoff < 0 {
+		return ErrInvalidProfile{Field: "FailureBackoff", Got: p.FailureBackoff.String(), Want: ">= 0"}
+	}
+	if p.FailureBackoff > 0 && !p.ClosedLoop {
+		return ErrInvalidProfile{Field: "FailureBackoff", Got: p.FailureBackoff.String(), Want: "0 unless ClosedLoop (paced dispatch is already rate-bounded)"}
 	}
 	total := p.Warmup + p.Duration
 	if p.ClosedLoop {

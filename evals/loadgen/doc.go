@@ -78,6 +78,12 @@
 // TargetQps (there is no configured rate) and its intensity through
 // Concurrency.
 //
+// Closed-loop callers should set [Profile.FailureBackoff]: a rejected
+// call can return in milliseconds, and an unthrottled loop re-dispatches
+// at rejection speed — a retry storm against a service that is already
+// shedding load. Backoff stretches only failed iterations; healthy
+// throughput is never throttled.
+//
 // # Coordinated omission
 //
 // The pacer's absolute-offset scheduling makes this an open-loop

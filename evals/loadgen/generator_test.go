@@ -1068,3 +1068,65 @@ func TestInProcess_FirstSlotDispatchesImmediately(t *testing.T) {
 		t.Fatalf("first dispatch %v after start, want ~immediate (slot-0)", dispatchDelay)
 	}
 }
+
+// TestInProcess_ClosedLoopFailureBackoffBoundsRetryStorm pins the failure
+// backoff: a target that rejects instantly must not let the closed loop
+// re-dispatch at rejection speed. With backoff, worst-case attempts are
+// Concurrency × Duration/FailureBackoff (+1 in-flight each); without it a
+// deployed run recorded ~17k rejections in one window.
+func TestInProcess_ClosedLoopFailureBackoffBoundsRetryStorm(t *testing.T) {
+	t.Parallel()
+
+	reject := TransportTarget(func(context.Context) error {
+		return status.Error(codes.ResourceExhausted, "quota")
+	})
+	g := New()
+	p := Profile{
+		ClosedLoop:     true,
+		Concurrency:    4,
+		Duration:       500 * time.Millisecond,
+		RequestTimeout: time.Second,
+		FailureBackoff: 100 * time.Millisecond,
+	}
+	m, err := g.Run(context.Background(), p, reject)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// 4 workers × 5 backoff slots per window, plus one boundary dispatch
+	// each; generous slack for scheduling, but far below rejection speed.
+	if m.RequestCount > 40 {
+		t.Fatalf("RequestCount=%d, want <= 40 (failure backoff not applied)", m.RequestCount)
+	}
+	if m.RequestCount < 4 {
+		t.Fatalf("RequestCount=%d, want >= 4 (every worker probes at least once)", m.RequestCount)
+	}
+	if m.ErrorCount != m.RequestCount {
+		t.Fatalf("ErrorCount=%d, RequestCount=%d, want equal (every attempt rejected)", m.ErrorCount, m.RequestCount)
+	}
+
+	// Successful iterations must not be throttled: same profile, healthy
+	// target, the loop should turn far more iterations than the backoff
+	// ceiling would allow.
+	ok := TransportTarget(func(context.Context) error { return nil })
+	m2, err := g.Run(context.Background(), p, ok)
+	if err != nil {
+		t.Fatalf("Run(healthy): %v", err)
+	}
+	if m2.RequestCount <= 40 {
+		t.Fatalf("healthy RequestCount=%d, want > 40 (backoff throttled successes)", m2.RequestCount)
+	}
+}
+
+// TestProfile_FailureBackoffRequiresClosedLoop pins the validation coupling.
+func TestProfile_FailureBackoffRequiresClosedLoop(t *testing.T) {
+	t.Parallel()
+
+	p := Profile{QPS: 1, Concurrency: 1, Duration: time.Second, FailureBackoff: time.Second}
+	if err := p.Validate(); err == nil {
+		t.Fatal("Validate(FailureBackoff without ClosedLoop) succeeded, want error")
+	}
+	p = Profile{ClosedLoop: true, Concurrency: 1, Duration: time.Second, FailureBackoff: -time.Second}
+	if err := p.Validate(); err == nil {
+		t.Fatal("Validate(negative FailureBackoff) succeeded, want error")
+	}
+}
