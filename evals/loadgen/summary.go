@@ -26,13 +26,25 @@ const (
 )
 
 // Summary converts generated load metrics into the wire summary shape.
+//
+// For closed-loop profiles TargetQps carries the achieved rate
+// (metrics.ActualQPS) instead of the configured rate, which is necessarily 0:
+// the wire format has no dispatch-mode field, so a zero target would be
+// indistinguishable from a misconfigured profile and would turn downstream
+// actual/target saturation ratios into division by zero. A closed-loop run
+// attains its target by construction, so the achieved rate is the honest
+// substitute; the run's authored intensity is conveyed by Concurrency.
 func Summary(mode Mode, profile Profile, metrics *Metrics) *evalspb.LoadTestResults_Summary {
 	if metrics == nil {
 		return nil
 	}
+	targetQPS := profile.EffectiveQPS()
+	if profile.ClosedLoop {
+		targetQPS = metrics.ActualQPS
+	}
 	return &evalspb.LoadTestResults_Summary{
 		Mode:              mode,
-		TargetQps:         profile.EffectiveQPS(),
+		TargetQps:         targetQPS,
 		Concurrency:       int32(profile.MaxConcurrency()),
 		Duration:          durationpb.New(metrics.Duration),
 		RequestCount:      metrics.RequestCount,

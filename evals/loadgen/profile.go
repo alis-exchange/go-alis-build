@@ -54,6 +54,22 @@ type Profile struct {
 	// Warmup+Duration; ramp-down is never unbounded — a target that ignores
 	// its context is the only thing that can stall a run past this bound.
 	GracefulRampDown time.Duration
+	// ClosedLoop replaces rate pacing with worker-driven dispatch: each of the
+	// Concurrency workers executes the target back to back until the window
+	// closes, so exactly Concurrency requests are in flight at all times
+	// regardless of how fast iterations complete. This is the saturation model
+	// for stress cases — an open-loop rate derived from an expected iteration
+	// time self-defeats when the service is faster than expected, because the
+	// pacer then spaces dispatches wider than an iteration takes and workers
+	// never overlap.
+	//
+	// QPS, QPSStages, and ConcurrencyStages must all be unset: a rate target
+	// would be ambiguous, and scaling the pool mid-window would always cancel
+	// a mid-flight call (closed-loop workers are never idle), breaking the
+	// exactly-Concurrency contract and injecting spurious cancellations into
+	// error counts. Window, warmup, per-request timeout, and ramp-down bounds
+	// apply unchanged.
+	ClosedLoop bool
 	// AbortCheck cancels the window early when it returns true on a partial
 	// metrics snapshot (typically every 2s).
 	AbortCheck AbortCheck
@@ -85,7 +101,24 @@ func (p Profile) validate() error {
 		return ErrInvalidProfile{Field: "GracefulRampDown", Got: p.GracefulRampDown.String(), Want: ">= 0"}
 	}
 	total := p.Warmup + p.Duration
-	if len(p.QPSStages) == 0 {
+	if p.ClosedLoop {
+		// Closed-loop dispatch is worker-driven; a rate target would be
+		// ambiguous (which wins when they disagree?), so both pacing fields
+		// must be unset.
+		if p.QPS != 0 {
+			return ErrInvalidProfile{Field: "QPS", Got: fmt.Sprintf("%v", p.QPS), Want: "0 when ClosedLoop"}
+		}
+		if len(p.QPSStages) > 0 {
+			return ErrInvalidProfile{Field: "QPSStages", Got: fmt.Sprintf("%d stages", len(p.QPSStages)), Want: "empty when ClosedLoop"}
+		}
+		// Closed-loop workers are never idle, so scaling the pool down would
+		// always cancel a mid-flight call — there is no way to compose staged
+		// concurrency with the exactly-Concurrency contract without polluting
+		// error counts with generator-induced cancellations.
+		if len(p.ConcurrencyStages) > 0 {
+			return ErrInvalidProfile{Field: "ConcurrencyStages", Got: fmt.Sprintf("%d stages", len(p.ConcurrencyStages)), Want: "empty when ClosedLoop"}
+		}
+	} else if len(p.QPSStages) == 0 {
 		if err := validateRateTarget("QPS", p.QPS); err != nil {
 			return err
 		}

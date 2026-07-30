@@ -72,7 +72,12 @@ type Metrics struct {
 	CheckFailedCount int64
 	// ErrorsByCode groups errors by canonical gRPC status code name.
 	ErrorsByCode map[string]int64
-	// DroppedCount is scheduled ticks that were not dispatched.
+	// DroppedCount is work excluded from aggregates by the generator itself:
+	// scheduled ticks that were not dispatched (pacer saturation, full tick
+	// channel, or picked up after the window ended) plus calls whose budget
+	// was truncated by the window boundary and then failed on that shortened
+	// deadline — such failures say nothing about the target, so they are
+	// dropped rather than counted as errors.
 	DroppedCount int64
 	// Stream holds aggregate streaming metrics.
 	Stream *StreamSummary

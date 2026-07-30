@@ -851,9 +851,10 @@ func TestInProcess_RampDownBoundedByDefault(t *testing.T) {
 func TestInProcess_PacerStopsAtWindowEnd(t *testing.T) {
 	t.Parallel()
 
-	// QPS < 1 with Duration < 1/QPS: the first scheduling slot lands past the
-	// window boundary, so nothing may be dispatched and the run must return
-	// promptly instead of sleeping to the out-of-window slot and executing it.
+	// QPS < 1 with Duration < 1/QPS: slot 0 fires at t=0, but slot 1 lands
+	// past the window boundary — it must not be dispatched, and the run must
+	// return promptly instead of sleeping to the out-of-window slot and
+	// executing it.
 	var calls atomic.Int64
 	target := TransportTarget(func(context.Context) error {
 		calls.Add(1)
@@ -872,11 +873,11 @@ func TestInProcess_PacerStopsAtWindowEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("target invoked %d times, want 0 (slot past window end)", got)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("target invoked %d times, want 1 (slot 0 only; slot 1 is past window end)", got)
 	}
-	if m.RequestCount != 0 {
-		t.Fatalf("RequestCount=%d, want 0", m.RequestCount)
+	if m.RequestCount != 1 {
+		t.Fatalf("RequestCount=%d, want 1", m.RequestCount)
 	}
 	if elapsed > 700*time.Millisecond {
 		t.Fatalf("run took %v, want prompt return (pacer slept past boundary?)", elapsed)
@@ -908,5 +909,162 @@ func TestInProcess_WallDurationReported(t *testing.T) {
 	total := p.Warmup + p.Duration
 	if m.WallDuration < total/2 || m.WallDuration > total+time.Second {
 		t.Fatalf("WallDuration=%v, want ~%v", m.WallDuration, total)
+	}
+}
+
+// TestInProcess_ClosedLoopKeepsWorkersSaturated pins the closed-loop dispatch
+// model: with N workers and an iteration far slower than the window would
+// allow at any reasonable rate, every worker must stay continuously busy —
+// the request count tracks N × (window / iteration), which open-loop pacing
+// at a conservative rate cannot reach.
+func TestInProcess_ClosedLoopKeepsWorkersSaturated(t *testing.T) {
+	t.Parallel()
+
+	const iteration = 100 * time.Millisecond
+	var peak atomic.Int32
+	var inFlight atomic.Int32
+	target := TransportTarget(func(ctx context.Context) error {
+		// CAS loop: a plain compare-then-store could lose a concurrently
+		// stored higher peak between the Load and the Store, and the strict
+		// peak==4 assertion below would then flake.
+		cur := inFlight.Add(1)
+		for {
+			prev := peak.Load()
+			if cur <= prev || peak.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		defer inFlight.Add(-1)
+		select {
+		case <-time.After(iteration):
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	g := New()
+	p := Profile{
+		ClosedLoop:     true,
+		Concurrency:    4,
+		Duration:       time.Second,
+		RequestTimeout: time.Second,
+	}
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// 4 workers × ~10 iterations each; allow generous scheduling slack.
+	if m.RequestCount < 24 {
+		t.Fatalf("RequestCount=%d, want >= 24 (workers idled — closed loop not saturating)", m.RequestCount)
+	}
+	if got := peak.Load(); got != 4 {
+		t.Fatalf("peak in-flight=%d, want 4 (all workers concurrently busy)", got)
+	}
+	if m.DroppedCount != 0 {
+		t.Fatalf("DroppedCount=%d, want 0 (closed loop never drops)", m.DroppedCount)
+	}
+}
+
+// TestInProcess_ClosedLoopHonorsWindowAndRampDown pins the bound that makes
+// closed loop safe to author: the run returns within Duration plus the
+// ramp-down grace even when the in-flight iteration would run longer. It also
+// pins the boundary-truncation accounting: workers cut off at the window
+// close must surface as dropped, never as target errors.
+func TestInProcess_ClosedLoopHonorsWindowAndRampDown(t *testing.T) {
+	t.Parallel()
+
+	target := TransportTarget(func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	g := New()
+	p := Profile{
+		ClosedLoop:       true,
+		Concurrency:      2,
+		Duration:         300 * time.Millisecond,
+		RequestTimeout:   10 * time.Second,
+		GracefulRampDown: 200 * time.Millisecond,
+	}
+	start := time.Now()
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Expected unwind ≈ Duration + GracefulRampDown = 500ms. The 2s bound
+	// stays far below the 10s RequestTimeout — the property under test —
+	// while leaving room for scheduler delay under parallel race-enabled
+	// sibling tests on a loaded runner.
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("run took %v, want <= window + ramp-down with slack", elapsed)
+	}
+	// Both workers were mid-call at the boundary and died on the truncated
+	// budget, not the profile's RequestTimeout: that is generator-induced,
+	// so it must count as dropped, not as errors against the target.
+	if m.ErrorCount != 0 {
+		t.Fatalf("ErrorCount=%d, want 0 (boundary truncation must not count as errors)", m.ErrorCount)
+	}
+	if m.RequestCount != 0 {
+		t.Fatalf("RequestCount=%d, want 0 (no call ever completed)", m.RequestCount)
+	}
+	if m.DroppedCount == 0 {
+		t.Fatal("DroppedCount=0, want > 0 (boundary-truncated calls count as dropped)")
+	}
+}
+
+// TestProfile_ClosedLoopRejectsPacingFields pins the validation rule: a rate
+// target alongside ClosedLoop is ambiguous, and staged concurrency would
+// force cancelling always-mid-flight workers — both must be rejected.
+func TestProfile_ClosedLoopRejectsPacingFields(t *testing.T) {
+	t.Parallel()
+
+	base := Profile{ClosedLoop: true, Concurrency: 1, Duration: time.Second}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("Validate(closed loop): %v", err)
+	}
+	withQPS := base
+	withQPS.QPS = 5
+	if err := withQPS.Validate(); err == nil {
+		t.Fatal("Validate(ClosedLoop with QPS) succeeded, want error")
+	}
+	withStages := base
+	withStages.QPSStages = []Stage{{Duration: time.Second, Target: 5}}
+	if err := withStages.Validate(); err == nil {
+		t.Fatal("Validate(ClosedLoop with QPSStages) succeeded, want error")
+	}
+	withConcStages := base
+	withConcStages.ConcurrencyStages = []Stage{{Duration: time.Second, Target: 2}}
+	if err := withConcStages.Validate(); err == nil {
+		t.Fatal("Validate(ClosedLoop with ConcurrencyStages) succeeded, want error")
+	}
+}
+
+// TestInProcess_FirstSlotDispatchesImmediately pins slot-0 pacing end to end:
+// a single-slot window must record its request essentially at window start
+// rather than one full 1/QPS interval in.
+func TestInProcess_FirstSlotDispatchesImmediately(t *testing.T) {
+	t.Parallel()
+
+	var firstCall atomic.Int64
+	target := TransportTarget(func(context.Context) error {
+		firstCall.CompareAndSwap(0, time.Now().UnixNano())
+		return nil
+	})
+	g := New()
+	p := Profile{
+		QPS:            0.5, // slot 0 at t=0, slot 1 past the 1s window
+		Concurrency:    1,
+		Duration:       time.Second,
+		RequestTimeout: time.Second,
+	}
+	start := time.Now()
+	m, err := g.Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount != 1 {
+		t.Fatalf("RequestCount=%d, want 1", m.RequestCount)
+	}
+	dispatchDelay := time.Duration(firstCall.Load() - start.UnixNano())
+	if dispatchDelay > 200*time.Millisecond {
+		t.Fatalf("first dispatch %v after start, want ~immediate (slot-0)", dispatchDelay)
 	}
 }

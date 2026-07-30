@@ -58,6 +58,26 @@
 // the aggregator drops any sample whose send timestamp is before
 // `start + Warmup`. This gives autoscalers and JITs time to settle.
 //
+// # Pacing and closed loop
+//
+// The constant pacer schedules request N at the absolute offset N/rate —
+// slot 0 dispatches at t=0, so no window idles a lead-in interval before
+// its first request. Staged pacers follow the same slot-0 rule against
+// their integrated rate curve.
+//
+// [Profile.ClosedLoop] replaces rate pacing entirely: each worker
+// executes the target back to back until the window closes, keeping
+// exactly Concurrency requests in flight at all times. Use it for
+// saturation/stress shapes, where any open-loop rate derived from an
+// expected iteration time under-drives the service the moment iterations
+// run faster than expected. QPS, QPSStages, and ConcurrencyStages must
+// all be unset — closed-loop workers are never idle, so scaling the pool
+// mid-window would always cancel a mid-flight call and pollute error
+// counts with generator-induced cancellations. In wire summaries built
+// via [Summary], a closed-loop run reports its achieved rate as
+// TargetQps (there is no configured rate) and its intensity through
+// Concurrency.
+//
 // # Coordinated omission
 //
 // The pacer's absolute-offset scheduling makes this an open-loop
@@ -70,11 +90,13 @@
 // When the worker pool cannot keep up, [Metrics.ActualQPS] falls below
 // the target rate. The generator emits an alog warning when
 // `ActualQPS < 0.9 × target QPS`, and a separate warning when a window
-// records zero in-window samples (Duration shorter than one iteration or
-// than 1/QPS), so users notice they are measuring the generator rather
-// than the SUT. [Metrics.DroppedCount] counts scheduled ticks that were
-// not dispatched (pacer saturation or a full tick channel), plus
-// worker-side skips for ticks picked up after the window ended. It is
+// records zero in-window samples, so users notice they are measuring the
+// generator rather than the SUT. Closed-loop runs get their own
+// zero-sample diagnostic and skip the saturation comparison — with no
+// target rate there is nothing to undershoot. [Metrics.DroppedCount]
+// counts scheduled ticks that were not dispatched (pacer saturation or a
+// full tick channel), worker-side skips for ticks picked up after the
+// window ended, and boundary-truncated failures (next paragraph). It is
 // not a spin or retry counter.
 //
 // Scheduling never extends the window: slots that would land at or past
@@ -82,6 +104,11 @@
 // the time left in the window plus the ramp-down grace, and
 // [Metrics.WallDuration] reports the true wall-clock time of the run so
 // overrun is visible rather than hidden by the clamped [Metrics.Duration].
+// A call whose budget was truncated by that boundary cap and then failed
+// on the shortened deadline is counted as dropped rather than as an
+// error: the generator, not the target, cut it off, and counting it
+// would structurally inflate error rates — in closed-loop mode every
+// worker is mid-call at the boundary by construction.
 //
 // # Error accounting
 //

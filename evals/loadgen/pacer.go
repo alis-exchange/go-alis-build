@@ -14,10 +14,19 @@ import (
 // It returns how long to wait before the next send, and whether the window
 // is complete.
 //
-// The math for the constant pacer is taken from vegeta/ghz: schedule request
-// number N to fire at elapsed = N / rate. If we're behind schedule we fire
-// immediately; otherwise we sleep until the absolute offset — which prevents
-// scheduling error from accumulating across a long window.
+// The math for the constant pacer follows vegeta/ghz — schedule against an
+// absolute offset so scheduling error cannot accumulate across a long window —
+// with one deliberate divergence: request number N fires at elapsed = N / rate
+// (slot 0 at t=0), not (N+1)/rate. vegeta delays the first request by one full
+// interval, which is noise at web-service rates but pure dead wall clock for
+// slow-iteration load tests: at QPS = 1/expected-iteration, a case would idle
+// one whole expected iteration before doing any work. If we're behind schedule
+// we fire immediately; otherwise we sleep until the absolute offset.
+//
+// A corollary of the slot-0 rule: every pacer in this package dispatches
+// request 0 at t=0 unconditionally, regardless of the rate curve — even a
+// staged profile with a near-idle lead-in stage fires its first request
+// immediately. Only requests 1..N wait for the integrated rate to catch up.
 type Pacer interface {
 	Pace(elapsed time.Duration, sent uint64) (wait time.Duration, stop bool)
 }
@@ -40,8 +49,15 @@ func (p ConstantPacer) Pace(elapsed time.Duration, sent uint64) (time.Duration, 
 		return 0, true
 	}
 	interval := float64(time.Second) / p.Freq
-	target := float64(sent+1) * interval
-	if target > math.MaxInt64 {
+	// Slot 0 fires at t=0; slot N at N/rate. See the interface comment for
+	// why this diverges from vegeta's (N+1)/rate.
+	target := float64(sent) * interval
+	// A Freq small enough to overflow interval to +Inf makes target 0×Inf=NaN
+	// at sent==0; NaN compares false against every bound, so without this
+	// guard it would flow into an implementation-defined time.Duration
+	// conversion below. Such a rate schedules no slot inside any real window —
+	// stop cleanly, as the pre-slot-0 schedule did via its (sent+1) overflow.
+	if math.IsNaN(target) || target > math.MaxInt64 {
 		return 0, true
 	}
 	delta := time.Duration(target) - elapsed
@@ -52,6 +68,10 @@ func (p ConstantPacer) Pace(elapsed time.Duration, sent uint64) (time.Duration, 
 }
 
 // StepStagePacer holds a constant rate for each stage duration (ghz step).
+//
+// Like every pacer in this package it follows the slot-0 schedule: request 0
+// fires at t=0 regardless of the first stage's rate (see the [Pacer] comment),
+// so a near-idle lead-in stage does not delay the first dispatch.
 type StepStagePacer struct {
 	Stages   []Stage
 	Duration time.Duration
@@ -62,11 +82,13 @@ func (p StepStagePacer) Pace(elapsed time.Duration, sent uint64) (time.Duration,
 	if elapsed >= p.Duration {
 		return 0, true
 	}
+	// Request N fires when the integrated rate reaches N (slot 0 at t=0),
+	// matching ConstantPacer's slot-0 schedule.
 	expected := p.expectedHits(elapsed)
-	if float64(sent) < expected {
+	if float64(sent) <= expected {
 		return 0, false
 	}
-	wait := p.timeUntilHit(elapsed, float64(sent)+1)
+	wait := p.timeUntilHit(elapsed, float64(sent))
 	return wait, false
 }
 
@@ -98,6 +120,10 @@ func (p StepStagePacer) expectedHits(elapsed time.Duration) float64 {
 
 // LinearStagePacer linearly interpolates between consecutive stage targets
 // over each stage duration (ghz line-style ramps at stage boundaries).
+//
+// Like every pacer in this package it follows the slot-0 schedule: request 0
+// fires at t=0 regardless of the ramp's starting rate (see the [Pacer]
+// comment); only later requests wait for the integrated rate curve.
 type LinearStagePacer struct {
 	Stages   []Stage
 	Duration time.Duration
@@ -108,11 +134,12 @@ func (p LinearStagePacer) Pace(elapsed time.Duration, sent uint64) (time.Duratio
 	if elapsed >= p.Duration {
 		return 0, true
 	}
+	// Slot-0 schedule; see StepStagePacer.Pace.
 	expected := p.expectedHits(elapsed)
-	if float64(sent) < expected {
+	if float64(sent) <= expected {
 		return 0, false
 	}
-	wait := p.timeUntilHit(elapsed, float64(sent)+1)
+	wait := p.timeUntilHit(elapsed, float64(sent))
 	return wait, false
 }
 

@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 	"go.alis.build/alog"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -57,12 +59,15 @@ type sample struct {
 }
 
 // Run executes the load window described by p, driving target via a worker
-// pool paced by the profile's selected pacer.
+// pool paced by the profile's selected pacer — or, when p.ClosedLoop is set,
+// via self-dispatching workers that call the target back to back.
 //
 // Transport failures increment Metrics.ErrorCount and ErrorsByCode; semantic
-// check failures increment CheckFailedCount. Neither aborts the window. Only
-// ctx cancellation, an abort check, and invalid profile produce a returned
-// error (with partial metrics for cancellation/abort).
+// check failures increment CheckFailedCount. Neither aborts the window. The
+// one exception is failures the generator itself caused by cutting a call
+// short at the window boundary — those count as DroppedCount, not errors (see
+// runCall). Only ctx cancellation, an abort check, and invalid profile
+// produce a returned error (with partial metrics for cancellation/abort).
 func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*Metrics, error) {
 	if target == nil {
 		return nil, ErrNilTarget{}
@@ -72,14 +77,20 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	}
 
 	total := p.Warmup + p.Duration
-	pacer := pacerForProfile(p, total)
 	maxWorkers := p.MaxConcurrency()
 	rampDown := p.resolvedGracefulRampDown(total)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	ticks := make(chan time.Time, maxWorkers)
+	// The tick channel and in-flight gauge exist only for open-loop (paced)
+	// dispatch; closed-loop workers self-dispatch, so in that mode ticks stays
+	// nil and inFlight idle rather than being built and never read. dropped is
+	// shared: both modes exclude boundary-truncated failures via runCall.
+	var ticks chan time.Time
+	if !p.ClosedLoop {
+		ticks = make(chan time.Time, maxWorkers)
+	}
 	samples := make(chan sample, maxWorkers*4)
 	var dropped atomic.Int64
 	var inFlight atomic.Int32
@@ -109,6 +120,10 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+			if p.ClosedLoop {
+				runClosedWorker(workerCtx, samples, &dropped, target, reqTimeout, windowEnd, rampDown, &reqNum, id)
+				return
+			}
 			runWorker(workerCtx, ticks, samples, target, reqTimeout, windowEnd, rampDown, &inFlight, &reqNum, &dropped, id)
 		}(workerID)
 		workerMu.Lock()
@@ -148,58 +163,31 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	}
 
 	pacerDone := make(chan struct{})
-	go func() {
-		defer close(pacerDone)
-		defer close(ticks)
-		var sent uint64
-		timer := time.NewTimer(0)
-		defer timer.Stop()
-		for {
-			elapsed := time.Since(start)
-			wait, stop := pacer.Pace(elapsed, sent)
-			// Clamp scheduling to the window: a slot that lands at or past the
-			// boundary must not be dispatched. Without this the pacer sleeps up
-			// to 1/QPS past the end and dispatches one extra out-of-window tick
-			// whose execution is excluded from aggregates but still blocks
-			// ramp-down — pure wasted wall time.
-			if stop || elapsed+wait >= total {
-				return
-			}
-			if wait > 0 {
-				timer.Reset(wait)
-				select {
-				case <-timer.C:
-				case <-runCtx.Done():
-					return
-				}
-			}
-			now := time.Now()
-			if now.Sub(start) >= total {
-				return
-			}
-			if inFlight.Load() >= maxConc {
-				// Drop when concurrency is saturated (open-loop). Advance sent so
-				// Pace schedules the next slot instead of spinning on wait==0.
-				dropped.Add(1)
-				sent++
-			} else {
-				select {
-				case ticks <- now:
-					sent++
-					inFlight.Add(1)
-				default:
-					// Drop when the tick channel is full; advance sent like saturation.
-					dropped.Add(1)
-					sent++
-				}
-			}
+	if p.ClosedLoop {
+		// Worker-driven dispatch: closed-loop workers loop until the window
+		// closes, so there is no pacer — this goroutine only marks the window
+		// boundary for the shared ramp-down sequence below. The timer is
+		// anchored to windowEnd rather than goroutine startup so that worker
+		// spawning and scheduler delay between start and this goroutine
+		// running cannot push the boundary (and with it the whole
+		// Warmup+Duration+GracefulRampDown wall-time bound) past its schedule.
+		go func() {
+			defer close(pacerDone)
+			timer := time.NewTimer(time.Until(windowEnd))
+			defer timer.Stop()
 			select {
+			case <-timer.C:
 			case <-runCtx.Done():
-				return
-			default:
 			}
-		}
-	}()
+		}()
+	} else {
+		pacer := pacerForProfile(p, total)
+		go func() {
+			defer close(pacerDone)
+			defer close(ticks)
+			runPacerLoop(runCtx, pacer, start, total, ticks, maxConc, &inFlight, &dropped)
+		}()
+	}
 
 	<-pacerDone
 
@@ -253,16 +241,33 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	m.Duration = p.Duration
 	m.ActualQPS = float64(m.RequestCount) / p.Duration.Seconds()
 
-	targetQPS := p.EffectiveQPS()
-	if m.RequestCount == 0 {
-		// The worst degenerate window: nothing was recorded at all (Duration
-		// shorter than one iteration or than 1/QPS). ActualQPS is 0 here, so
-		// the saturation warning below would stay silent without this branch.
-		alog.Warnf(runCtx, "loadgen recorded zero in-window samples: target %.2f qps over %s window — Duration is likely shorter than one iteration or 1/QPS",
-			targetQPS, p.Duration)
-	} else if m.ActualQPS < saturationThreshold*targetQPS {
-		alog.Warnf(runCtx, "loadgen saturated: actual %.1f qps < target %.1f qps (concurrency=%d, mean latency %.1fms)",
-			m.ActualQPS, targetQPS, p.MaxConcurrency(), m.Latency.MeanMs)
+	// Post-run diagnostics are mode-specific. A closed-loop run has no target
+	// rate — the achieved rate is the target by construction — so the
+	// actual-vs-target saturation comparison is meaningless there and each
+	// mode gets its own zero-sample explanation.
+	if p.ClosedLoop {
+		if m.RequestCount == 0 {
+			// Closed-loop workers dispatch immediately, so an empty window
+			// means every iteration outlived Duration and was cut off at the
+			// boundary (those cut-offs count as dropped, not errors).
+			alog.Warnf(runCtx, "loadgen recorded zero in-window samples: closed loop with concurrency=%d over %s window (dropped=%d) — every iteration outlived the window; lengthen Duration or GracefulRampDown",
+				p.MaxConcurrency(), p.Duration, m.DroppedCount)
+		}
+	} else {
+		targetQPS := p.EffectiveQPS()
+		if m.RequestCount == 0 {
+			// The worst degenerate window: nothing was recorded at all. Slot 0
+			// always dispatches at t=0, so this means the dispatched work never
+			// became an in-window sample: the call outlived the window (counted
+			// as dropped), Warmup swallowed every dispatched slot, or
+			// saturation dropped every tick. ActualQPS is 0 here, so the
+			// saturation warning below would stay silent without this branch.
+			alog.Warnf(runCtx, "loadgen recorded zero in-window samples: target %.2f qps over %s window (dropped=%d) — Duration is likely shorter than one iteration, or Warmup consumed every dispatched slot",
+				targetQPS, p.Duration, m.DroppedCount)
+		} else if m.ActualQPS < saturationThreshold*targetQPS {
+			alog.Warnf(runCtx, "loadgen saturated: actual %.1f qps < target %.1f qps (concurrency=%d, mean latency %.1fms)",
+				m.ActualQPS, targetQPS, p.MaxConcurrency(), m.Latency.MeanMs)
+		}
 	}
 	return m, nil
 }
@@ -575,6 +580,79 @@ func concurrencyAt(elapsed time.Duration, stages []Stage) int {
 	return int(stages[len(stages)-1].Target)
 }
 
+// runPacerLoop dispatches ticks on the pacer's schedule until the window
+// closes. Extracted from Run so the closed-loop branch can skip it entirely.
+func runPacerLoop(runCtx context.Context, pacer Pacer, start time.Time, total time.Duration, ticks chan<- time.Time, maxConc int32, inFlight *atomic.Int32, dropped *atomic.Int64) {
+	var sent uint64
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		elapsed := time.Since(start)
+		wait, stop := pacer.Pace(elapsed, sent)
+		// Clamp scheduling to the window: a slot that lands at or past the
+		// boundary must not be dispatched. Without this the pacer sleeps up
+		// to 1/QPS past the end and dispatches one extra out-of-window tick
+		// whose execution is excluded from aggregates but still blocks
+		// ramp-down — pure wasted wall time.
+		if stop || elapsed+wait >= total {
+			return
+		}
+		if wait > 0 {
+			timer.Reset(wait)
+			select {
+			case <-timer.C:
+			case <-runCtx.Done():
+				return
+			}
+		}
+		now := time.Now()
+		if now.Sub(start) >= total {
+			return
+		}
+		if inFlight.Load() >= maxConc {
+			// Drop when concurrency is saturated (open-loop). Advance sent so
+			// Pace schedules the next slot instead of spinning on wait==0.
+			dropped.Add(1)
+			sent++
+		} else {
+			select {
+			case ticks <- now:
+				sent++
+				inFlight.Add(1)
+			default:
+				// Drop when the tick channel is full; advance sent like saturation.
+				dropped.Add(1)
+				sent++
+			}
+		}
+		select {
+		case <-runCtx.Done():
+			return
+		default:
+		}
+	}
+}
+
+// runClosedWorker executes the target back to back until the window closes,
+// keeping this worker permanently in flight — the closed-loop saturation
+// model. Per-call budget and boundary-truncation semantics are shared with
+// runWorker via runCall, so the run-level ramp-down bound holds unchanged.
+// Dispatch never drops: a new call starts exactly when the previous one
+// finishes; only boundary-truncated failures are excluded (as dropped).
+func runClosedWorker(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout time.Duration, windowEnd time.Time, rampDown time.Duration, reqNum *atomic.Uint64, workerID int) {
+	for {
+		if parent.Err() != nil {
+			return
+		}
+		now := time.Now()
+		remaining := windowEnd.Sub(now)
+		if remaining <= 0 {
+			return
+		}
+		runCall(parent, samples, dropped, target, reqTimeout, remaining, rampDown, windowEnd, reqNum, workerID, now)
+	}
+}
+
 // runWorker pulls ticks and executes the target with a per-request timeout.
 // Panics in the target are recovered and recorded as INTERNAL errors so the
 // window keeps running.
@@ -598,20 +676,69 @@ func runWorker(parent context.Context, ticks <-chan time.Time, samples chan<- sa
 			inFlight.Add(-1)
 			continue
 		}
-		// A call dispatched near the boundary may finish inside the bounded
-		// ramp-down grace instead of being cancelled exactly at the boundary;
-		// the run-level ramp-down timer enforces the same overall bound.
-		timeout := reqTimeout
-		if budget := remaining + rampDown; budget < timeout {
-			timeout = budget
-		}
-		reqCtx, cancel := context.WithTimeout(parent, timeout)
-		n := reqNum.Add(1)
-		latency, result := invokeTarget(reqCtx, target, CallData{RequestNumber: n, WorkerID: workerID})
-		cancel()
-		samples <- sample{sentAt: sentAt, latency: latency, result: result}
+		runCall(parent, samples, dropped, target, reqTimeout, remaining, rampDown, windowEnd, reqNum, workerID, sentAt)
 		inFlight.Add(-1)
 	}
+}
+
+// runCall executes one target invocation under the per-call budget shared by
+// both dispatch modes: a call never gets more than min(RequestTimeout,
+// remaining window + ramp-down grace), so a call dispatched near the boundary
+// may finish inside the bounded ramp-down grace but can never outrun the
+// run-level ramp-down timer.
+//
+// A failure caused by that boundary cap is counted as dropped rather than
+// recorded: it says nothing about the target, the run simply ended mid-call.
+// Without this exclusion a healthy-but-slow service accrues one structural
+// DEADLINE_EXCEEDED per mid-flight worker at every window close (all of them,
+// in closed-loop mode), which is enough to trip an error-rate SLO gate.
+//
+// The exclusion is deliberately narrow — all four must hold:
+//
+//   - the budget was truncated below the profile's own RequestTimeout, so a
+//     full-budget expiry (a genuine target timeout) can never match;
+//   - the call's own context had ended (reqCtx.Err() captured before cancel),
+//     so a fast target that merely returns a DEADLINE_EXCEEDED status of its
+//     own is still recorded as a real error;
+//   - the failure has deadline/cancellation semantics, so any other status
+//     (UNAVAILABLE, INTERNAL, ...) surfacing at the boundary is still
+//     recorded, as is a success that squeaked in under the truncated budget;
+//   - the window had already closed when the call ended, so aborts and user
+//     cancellations mid-window keep their partial error picture intact. This
+//     also covers the ramp-down cutoff racing the truncated deadline: both
+//     end the same call at windowEnd+rampDown, both are generator-induced,
+//     and both must land in DroppedCount.
+func runCall(parent context.Context, samples chan<- sample, dropped *atomic.Int64, target ResultTarget, reqTimeout, remaining, rampDown time.Duration, windowEnd time.Time, reqNum *atomic.Uint64, workerID int, sentAt time.Time) {
+	timeout := reqTimeout
+	truncated := false
+	if budget := remaining + rampDown; budget < timeout {
+		timeout = budget
+		truncated = true
+	}
+	reqCtx, cancel := context.WithTimeout(parent, timeout)
+	n := reqNum.Add(1)
+	latency, result := invokeTarget(reqCtx, target, CallData{RequestNumber: n, WorkerID: workerID})
+	ctxEnded := reqCtx.Err() != nil
+	cancel()
+	if truncated && ctxEnded && isDeadlineOrCancel(result.TransportErr) && !time.Now().Before(windowEnd) {
+		dropped.Add(1)
+		return
+	}
+	samples <- sample{sentAt: sentAt, latency: latency, result: result}
+}
+
+// isDeadlineOrCancel reports whether err is a context deadline/cancellation
+// outcome, either as a wrapped context error (in-process targets returning
+// ctx.Err()) or as the equivalent gRPC status code (real transport calls).
+func isDeadlineOrCancel(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	code := status.Code(err)
+	return code == codes.DeadlineExceeded || code == codes.Canceled
 }
 
 // invokeTarget executes target and recovers panics as ErrTargetPanic transport errors.

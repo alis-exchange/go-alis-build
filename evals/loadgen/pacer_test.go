@@ -9,17 +9,21 @@ func TestConstantPacer_Pace(t *testing.T) {
 	t.Parallel()
 
 	p := ConstantPacer{Freq: 100, Duration: time.Second}
-	// At elapsed 0, sent 0: next request scheduled at 10ms.
-	if wait, stop := p.Pace(0, 0); stop || wait != 10*time.Millisecond {
-		t.Fatalf("start: wait=%v stop=%v, want 10ms/false", wait, stop)
+	// Slot 0 fires at t=0: no lead-in interval before the first request.
+	if wait, stop := p.Pace(0, 0); stop || wait != 0 {
+		t.Fatalf("start: wait=%v stop=%v, want 0/false", wait, stop)
 	}
 	// Behind schedule: send immediately.
 	if wait, stop := p.Pace(50*time.Millisecond, 0); stop || wait != 0 {
 		t.Fatalf("behind: wait=%v stop=%v, want 0/false", wait, stop)
 	}
-	// On schedule.
-	if wait, stop := p.Pace(10*time.Millisecond, 1); stop || wait != 10*time.Millisecond {
-		t.Fatalf("on schedule: wait=%v stop=%v, want 10ms/false", wait, stop)
+	// Slot 1 is scheduled at 10ms.
+	if wait, stop := p.Pace(0, 1); stop || wait != 10*time.Millisecond {
+		t.Fatalf("next slot: wait=%v stop=%v, want 10ms/false", wait, stop)
+	}
+	// On schedule: slot 1's offset has arrived, fire now.
+	if wait, stop := p.Pace(10*time.Millisecond, 1); stop || wait != 0 {
+		t.Fatalf("on schedule: wait=%v stop=%v, want 0/false", wait, stop)
 	}
 	// Window ended.
 	if _, stop := p.Pace(time.Second, 100); !stop {
@@ -57,9 +61,61 @@ func TestStepStagePacer_holdsRatePerStage(t *testing.T) {
 	if got := p.expectedHits(3 * time.Second); got < 38 || got > 42 {
 		t.Fatalf("expectedHits(3s)=%v, want ~40", got)
 	}
-	wait, stop := p.Pace(0, 0)
+	// Slot 0 fires at t=0, matching ConstantPacer's slot-0 schedule.
+	if wait, stop := p.Pace(0, 0); stop || wait != 0 {
+		t.Fatalf("first tick: wait=%v stop=%v, want 0/false", wait, stop)
+	}
+	// The next request waits until the integrated rate reaches 1 (~100ms at 10 QPS).
+	wait, stop := p.Pace(0, 1)
 	if stop || wait <= 0 {
-		t.Fatalf("first tick: wait=%v stop=%v, want positive wait", wait, stop)
+		t.Fatalf("second tick: wait=%v stop=%v, want positive wait", wait, stop)
+	}
+	if wait > 150*time.Millisecond {
+		t.Fatalf("second tick wait=%v, want ~100ms at 10 QPS", wait)
+	}
+}
+
+// TestConstantPacer_TinyFreqStops pins the NaN guard: a rate small enough to
+// overflow the per-slot interval to +Inf makes target = 0×Inf = NaN at slot 0,
+// which compares false against every bound and would otherwise flow into an
+// implementation-defined time.Duration conversion. The pacer must stop the
+// window cleanly instead, as the pre-slot-0 (sent+1) schedule did.
+func TestConstantPacer_TinyFreqStops(t *testing.T) {
+	t.Parallel()
+
+	p := ConstantPacer{Freq: 1e-300, Duration: time.Second}
+	if _, stop := p.Pace(0, 0); !stop {
+		t.Fatal("tiny freq slot 0: stop=false, want true")
+	}
+	if _, stop := p.Pace(0, 1); !stop {
+		t.Fatal("tiny freq slot 1: stop=false, want true")
+	}
+}
+
+// TestLinearStagePacer_SlotZero mirrors the StepStagePacer slot-0 pins:
+// request 0 fires at t=0 regardless of the ramp's starting rate, and request 1
+// waits for the integrated rate curve to reach 1.
+func TestLinearStagePacer_SlotZero(t *testing.T) {
+	t.Parallel()
+
+	p := LinearStagePacer{
+		Stages: []Stage{
+			{Duration: 5 * time.Second, Target: 10},
+			{Duration: 5 * time.Second, Target: 50},
+		},
+		Duration: 10 * time.Second,
+	}
+	if wait, stop := p.Pace(0, 0); stop || wait != 0 {
+		t.Fatalf("first tick: wait=%v stop=%v, want 0/false", wait, stop)
+	}
+	// The ramp starts at 10 QPS, so hit 1 arrives near 100ms; the binary
+	// search resolves to ~1ms granularity.
+	wait, stop := p.Pace(0, 1)
+	if stop || wait <= 0 {
+		t.Fatalf("second tick: wait=%v stop=%v, want positive wait", wait, stop)
+	}
+	if wait > 150*time.Millisecond {
+		t.Fatalf("second tick wait=%v, want ~100ms at a 10 QPS ramp start", wait)
 	}
 }
 
