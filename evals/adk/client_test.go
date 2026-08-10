@@ -115,3 +115,62 @@ func TestHTTPClient_RunEval_perRequestPathPrefixWins(t *testing.T) {
 		t.Fatalf("path = %q, want %q", gotPath, want)
 	}
 }
+
+func TestHTTPClient_RunEval_withSessionState(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode([]models.RunEvalResult{})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := adk.NewHTTPClient(srv.URL)
+	if _, err := client.RunEval(context.Background(), adk.RunEvalParams{
+		AppName:   "my_app",
+		EvalSetID: "set1",
+		SessionState: map[string]any{
+			"idea_name": "ideas/abc",
+		},
+	}); err != nil {
+		t.Fatalf("RunEval() error = %v", err)
+	}
+	raw, ok := gotBody["session_state"]
+	if !ok {
+		t.Fatalf("body = %#v, want session_state key", gotBody)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("unmarshal session_state: %v", err)
+	}
+	if state["idea_name"] != "ideas/abc" {
+		t.Fatalf("session_state = %#v", state)
+	}
+}
+
+func TestHTTPClient_RunEval_omitsEmptySessionState(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode([]models.RunEvalResult{})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := adk.NewHTTPClient(srv.URL)
+	if _, err := client.RunEval(context.Background(), adk.RunEvalParams{
+		AppName:   "my_app",
+		EvalSetID: "set1",
+	}); err != nil {
+		t.Fatalf("RunEval() error = %v", err)
+	}
+	if _, ok := gotBody["session_state"]; ok {
+		t.Fatalf("body = %#v, session_state should be omitted", gotBody)
+	}
+}

@@ -370,6 +370,52 @@ func TestProvider_Run_noJudgeWhenNothingConfigured(t *testing.T) {
 	}
 }
 
+func TestProvider_Run_forwardsSessionState(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/dev/apps/test.agent.v1/eval_sets":
+			_ = json.NewEncoder(w).Encode([]string{"eval_set_1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/dev/apps/test.agent.v1/eval_sets/eval_set_1/run_eval":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode([]models.RunEvalResult{{
+				EvalID:          "case1",
+				FinalEvalStatus: models.EvalStatusPassed,
+			}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := adk.NewProvider(adk.Agent{
+		BaseURL:        srv.URL,
+		AppName:        "test.agent.v1",
+		DefaultMetrics: []models.EvalMetric{adk.ResponseMatchScore(0.3)},
+	})
+
+	if _, err := p.Run(context.Background(), nil, adk.WithSessionState(map[string]any{
+		"idea_name": "ideas/eval",
+	})); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	raw, ok := gotBody["session_state"]
+	if !ok {
+		t.Fatalf("body = %#v, want session_state", gotBody)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("unmarshal session_state: %v", err)
+	}
+	if state["idea_name"] != "ideas/eval" {
+		t.Fatalf("session_state = %#v", state)
+	}
+}
+
 func TestProvider_Run_respectsIncludeEvalSet(t *testing.T) {
 	t.Parallel()
 

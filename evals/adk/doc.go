@@ -21,13 +21,20 @@
 //	    JudgeModel:        "gemini-2.5-pro",
 //	    JudgeModelVersion: "2025-06-05",
 //	})
-//	results, err := provider.Run(ctx, filters)
+//	state, err := adk.SessionStateFromProto(req.GetSessionState())
+//	results, err := provider.Run(ctx, filters, adk.WithSessionState(state))
 //
 // The provider returns normal Go errors. Callers decide whether an error should
 // stop their workflow or be represented as evaluation data.
 //
 // Case filters use the standard ADK grammar: "agent-set" selects an entire
 // eval set and "agent-set.case-id" selects one case within it.
+//
+// # Run-level session state
+//
+// [WithSessionState] forwards initial ADK session state on every run_eval
+// call. [SessionStateFromProto] converts alis.evals.v1 RunAgentEvalRequest
+// session_state to the map shape the ADK sublauncher expects.
 //
 // # Run envelopes and publication
 //

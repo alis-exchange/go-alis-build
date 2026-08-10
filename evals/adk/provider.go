@@ -97,7 +97,9 @@ func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 }
 
 // Run discovers eval sets, runs filtered cases, and returns protobuf-native results.
-func (p *Provider) Run(ctx context.Context, filters []string) ([]ProviderResult, error) {
+// Use [WithSessionState] to supply run-level ADK session bootstrap state.
+func (p *Provider) Run(ctx context.Context, filters []string, opts ...RunOption) ([]ProviderResult, error) {
+	runOpts := applyRunOptions(opts)
 	if p == nil {
 		return nil, ErrNilProvider{}
 	}
@@ -132,9 +134,10 @@ func (p *Provider) Run(ctx context.Context, filters []string) ([]ProviderResult,
 		}
 
 		params := RunEvalParams{
-			AppName:   p.agent.AppName,
-			EvalSetID: setID,
-			Metrics:   p.agent.MetricsFor(setID),
+			AppName:      p.agent.AppName,
+			EvalSetID:    setID,
+			Metrics:      p.agent.MetricsFor(setID),
+			SessionState: runOpts.sessionState,
 		}
 		if !wantAll {
 			params.EvalCaseIDs = caseIDs

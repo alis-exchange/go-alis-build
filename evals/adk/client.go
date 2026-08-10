@@ -27,6 +27,9 @@ type RunEvalParams struct {
 	EvalSetID   string
 	EvalCaseIDs []string
 	Metrics     []models.EvalMetric
+	// SessionState is initial ADK session state for every case in the run
+	// (SessionInput.state). Omitted when nil or empty.
+	SessionState map[string]any
 }
 
 // runEvalRequest is the JSON body POSTed to the sublauncher's run_eval endpoint.
@@ -35,6 +38,8 @@ type runEvalRequest struct {
 	EvalCaseIDs []string `json:"eval_case_ids,omitempty"`
 	// EvalMetrics lists required scoring criteria for this run.
 	EvalMetrics []models.EvalMetric `json:"eval_metrics"`
+	// SessionState mirrors ADK SessionInput.state for run-level bootstrap.
+	SessionState map[string]any `json:"session_state,omitempty"`
 }
 
 // runEvalResponse wraps the sublauncher's run_eval JSON when it is an object
@@ -161,15 +166,20 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 		return nil, ErrMissingAppNameEvalSetID{}
 	}
 
-	body, err := json.Marshal(runEvalRequest{
+	reqBody := runEvalRequest{
 		EvalCaseIDs: params.EvalCaseIDs,
 		EvalMetrics: params.Metrics,
-	})
+	}
+	if len(params.SessionState) > 0 {
+		reqBody.SessionState = params.SessionState
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, ErrEncodeRequest{Err: err}
 	}
 
-	url := fmt.Sprintf("%s%s/dev/apps/%s/eval_sets/%s/run_eval",
+	url := fmt.Sprintf(
+		"%s%s/dev/apps/%s/eval_sets/%s/run_eval",
 		strings.TrimSuffix(baseURL, "/"),
 		pathPrefix,
 		params.AppName,
@@ -215,7 +225,8 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 		return nil, ErrMissingAppName{}
 	}
 
-	url := fmt.Sprintf("%s%s/dev/apps/%s/eval_sets",
+	url := fmt.Sprintf(
+		"%s%s/dev/apps/%s/eval_sets",
 		c.baseURL,
 		c.pathPrefix,
 		appName,

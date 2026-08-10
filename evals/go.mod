@@ -10,7 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	go.alis.build/adk/launchers v1.0.11
 	go.alis.build/alog v0.1.0
-	go.alis.build/common/alis/evals v1.4.0
+	go.alis.build/common/alis/evals v1.7.0
 	go.alis.build/validation v1.0.7
 	go.einride.tech/protobuf-bigquery v0.29.0
 	google.golang.org/api v0.291.0

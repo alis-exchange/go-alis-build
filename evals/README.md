@@ -341,5 +341,3 @@ For Pub/Sub, the reporter project is the product project (`ALIS_OS_PRODUCT_PROJE
 | `go.alis.build/evals/report`     | Reporter interface and fan-out combinators.                                      |
 | `go.alis.build/evals/report/...` | Log, Pub/Sub, BigQuery, and schema helpers.                                      |
 | `go.alis.build/evals/errors`     | gRPC status bridging for typed evals errors.                                     |
-
-For help moving from the previous registry API, see [MIGRATION.md](MIGRATION.md).
