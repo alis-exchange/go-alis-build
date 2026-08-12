@@ -197,7 +197,7 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 
 // AuthenticateWithAudience refreshes the user's access token if its invalid/expired and returns true if it was refreshed.
 func (c *Client) AuthenticateWithAudience(tokens *Tokens, now time.Time, audience string) (bool, error) {
-	if err := c.ValidateToken(tokens.AccessToken, now); err != nil {
+	if err := c.ValidateTokenWithAudience(tokens.AccessToken, now, audience); err != nil {
 		if tokens.RefreshToken == "" {
 			return false, err
 		}
