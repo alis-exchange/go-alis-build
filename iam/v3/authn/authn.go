@@ -195,6 +195,64 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 	return nil
 }
 
+// AuthenticateWithAudience refreshes the user's access token if its invalid/expired and returns true if it was refreshed.
+func (c *Client) AuthenticateWithAudience(tokens *Tokens, now time.Time, audience string) (bool, error) {
+	if err := c.ValidateToken(tokens.AccessToken, now); err != nil {
+		if tokens.RefreshToken == "" {
+			return false, err
+		}
+		if err := c.Refresh(tokens); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	// no refresh needed
+	return false, nil
+}
+
+// ValidateTokenWithAudience validates the token and its audience and returns an error if it is invalid.
+func (c *Client) ValidateTokenWithAudience(token string, now time.Time, audience string) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("invalid token format, expect {hdr}.{body}.{sig}")
+	}
+
+	if !c.SkipSignatureValidation {
+		if err := c.validateSignature(parts[0], parts[1], parts[2], now); err != nil {
+			return err
+		}
+	}
+
+	// decode payload
+	payload, err := decodeJWTPayload(token)
+	if err != nil {
+		return fmt.Errorf("failed to decode payload: %w", err)
+	}
+
+	// unmarshal payload into Jwt struct
+	type Jwt struct {
+		Exp int64  `json:"exp"`
+		Aud string `json:"aud"`
+	}
+	var jwt Jwt
+	if err := json.Unmarshal(payload, &jwt); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	// ensure payload has not expired
+	if jwt.Exp < now.Unix() {
+		return errors.New("token has expired")
+	}
+
+	// validate audience if populated
+	if jwt.Aud != "" && jwt.Aud != audience {
+		return errors.New("invalid audience")
+	}
+
+	return nil
+}
+
 // ValidateIDTokenNonce validates the ID token and checks that it contains the expected nonce.
 func (c *Client) ValidateIDTokenNonce(idToken, nonce string, now time.Time) error {
 	if idToken == "" {
