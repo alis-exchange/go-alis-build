@@ -89,7 +89,7 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 	}
 
 	// authenticate
-	refreshed, err := AuthClient.Authenticate(tokens, time.Now())
+	refreshed, err := AuthClient.AuthenticateWithAudience(tokens, time.Now(), RequestHost(r))
 	if err != nil {
 		if !IsBrowserNavigationRequest(r) {
 			return UnauthorizedHandler(w, r, err.Error())
