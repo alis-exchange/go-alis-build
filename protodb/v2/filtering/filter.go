@@ -4,6 +4,7 @@ package filtering
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"cloud.google.com/go/spanner"
 	"github.com/google/cel-go/common"
@@ -58,7 +59,11 @@ func NewParser(identifiers ...Identifier) (*Parser, error) {
 		return nil, err
 	}
 
-	logicalEqRegex, err := regexp.Compile(`\s+=\s+`)
+	// The second group also accepts end-of-segment ($) because sanitize
+	// operates on literal-stripped segments: for input like `a='x'`, the
+	// unquoted segment is `a=` — with nothing after `=` inside that segment,
+	// a regex requiring a trailing character would silently fail to match.
+	logicalEqRegex, err := regexp.Compile(`([^<>!=])\s*=\s*([^=]|$)`)
 	if err != nil {
 		return nil, err
 	}
@@ -106,25 +111,69 @@ func (f *Parser) DeclareIdentifier(identifier Identifier) error {
 	return nil
 }
 
+// splitLiterals splits filter into alternating unquoted/quoted segments.
+// Segments at even indices are outside string literals; odd indices are the
+// literals themselves (quotes included). Handles both ' and " delimiters and
+// backslash escapes.
+func splitLiterals(filter string) []string {
+	var segs []string
+	var cur strings.Builder
+	var quote byte
+	for i := 0; i < len(filter); i++ {
+		c := filter[i]
+		if quote == 0 {
+			if c == '\'' || c == '"' {
+				segs = append(segs, cur.String())
+				cur.Reset()
+				quote = c
+			}
+			cur.WriteByte(c)
+		} else {
+			cur.WriteByte(c)
+			if c == '\\' && i+1 < len(filter) {
+				i++
+				cur.WriteByte(filter[i])
+				continue
+			}
+			if c == quote {
+				segs = append(segs, cur.String())
+				cur.Reset()
+				quote = 0
+			}
+		}
+	}
+	segs = append(segs, cur.String())
+	return segs
+}
+
 // sanitize transforms a filter string from SQL-like syntax to CEL syntax.
 //
-// It performs the following transformations:
+// It performs the following transformations on the portions of the filter
+// that fall outside of quoted string literals:
 //   - AND -> && (logical AND)
 //   - OR  -> || (logical OR)
-//   - " = " -> " == " (equality operator, with spaces to avoid matching >=, <=, !=)
+//   - =   -> == (equality operator, with or without surrounding spaces)
 //   - NULL -> null (null literal)
 //   - IN -> in (membership operator)
+//
+// The filter is first split into alternating unquoted/quoted segments via
+// splitLiterals so that keywords and operators appearing inside string
+// literals (e.g. "BRAND AND CO" or "a=b") are never rewritten.
 //
 // This allows users to write filters using familiar SQL syntax while
 // maintaining compatibility with the CEL parser.
 func (f *Parser) sanitize(filter string) string {
-	filter = f.sanitizersRegex.logicalAndRegex.ReplaceAllString(filter, "&&")
-	filter = f.sanitizersRegex.logicalOrRegex.ReplaceAllString(filter, "||")
-	filter = f.sanitizersRegex.logicalEqRegex.ReplaceAllString(filter, " == ")
-	filter = f.sanitizersRegex.nullRegex.ReplaceAllString(filter, "null")
-	filter = f.sanitizersRegex.inRegex.ReplaceAllString(filter, "in")
-
-	return filter
+	segs := splitLiterals(filter)
+	for i := 0; i < len(segs); i += 2 { // unquoted segments only
+		s := segs[i]
+		s = f.sanitizersRegex.logicalAndRegex.ReplaceAllString(s, "&&")
+		s = f.sanitizersRegex.logicalOrRegex.ReplaceAllString(s, "||")
+		s = f.sanitizersRegex.logicalEqRegex.ReplaceAllString(s, "$1 == $2")
+		s = f.sanitizersRegex.nullRegex.ReplaceAllString(s, "null")
+		s = f.sanitizersRegex.inRegex.ReplaceAllString(s, "in")
+		segs[i] = s
+	}
+	return strings.Join(segs, "")
 }
 
 /*
