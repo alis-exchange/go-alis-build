@@ -188,9 +188,20 @@ Examples:
 	parser.Parse("effective_date != null)
 	parser.Parse("count >= 10)
 
+Callers may bind named parameters referenced via param('name') in the filter
+by passing a params map. Values in the map are bound directly as Spanner
+query parameters (never spliced into SQL text); param('name') resolves to
+params[0]["name"]. Referencing an unknown name, or using param(...) without
+supplying a params map, returns an ErrInvalidFilter error.
+
 May return an ErrInvalidFilter error if the filter is invalid.
 */
-func (f *Parser) Parse(filter string) (*spanner.Statement, error) {
+func (f *Parser) Parse(filter string, params ...map[string]any) (*spanner.Statement, error) {
+	var callerParams map[string]any
+	if len(params) > 0 {
+		callerParams = params[0]
+	}
+
 	filter = f.sanitize(filter)
 
 	source := common.NewTextSource(filter)
@@ -219,7 +230,7 @@ func (f *Parser) Parse(filter string) (*spanner.Statement, error) {
 		}
 	}
 
-	sql, params, _, err := f.parseExpr(parsedExpr.GetExpr(), nil)
+	sql, stmtParams, _, err := f.parseExpr(parsedExpr.GetExpr(), &parseState{callerParams: callerParams})
 	if err != nil {
 		return nil, ErrInvalidFilter{
 			filter: filter,
@@ -227,13 +238,16 @@ func (f *Parser) Parse(filter string) (*spanner.Statement, error) {
 		}
 	}
 
-	// Convert params to their most concrete types
-	for key, param := range params {
-		params[key] = convertToConcreteType(param)
+	// Convert params to their most concrete types. This is a no-op (identity)
+	// for scalar passthrough values such as strings, numbers, and time.Time
+	// (they hit convertValue's default case), so caller-bound param('name')
+	// values are unaffected by this pass.
+	for key, param := range stmtParams {
+		stmtParams[key] = convertToConcreteType(param)
 	}
 
 	return &spanner.Statement{
 		SQL:    sql.(string),
-		Params: params,
+		Params: stmtParams,
 	}, nil
 }

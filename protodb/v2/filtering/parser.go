@@ -9,17 +9,32 @@ import (
 	expr "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
+// parseState carries the per-call state threaded through a single parseExpr
+// walk: the accumulated Spanner query parameters (@p0, @p1, ...) and the
+// caller-supplied named parameters available to param('name') lookups.
+//
+// A parseState is created fresh for each Parse call and passed by pointer
+// through the recursive walk. It must never be stored on the Parser struct
+// itself: Parser instances are shared across goroutines/requests, and
+// per-call data (especially caller-supplied params) must not leak between
+// concurrent Parse calls.
+type parseState struct {
+	params       map[string]any // accumulated Spanner query parameters, keyed p0, p1, ...
+	callerParams map[string]any // caller-supplied named parameters for param('name'), nil if none were provided
+}
+
 // parseExpr recursively converts a CEL expression AST into SQL string and parameters.
 //
 // Parameters:
 //   - expression: The CEL expression AST node to convert
-//   - params: Accumulated query parameters (created if nil)
+//   - state: Per-call parse state (accumulated params + caller-supplied params).
+//     A fresh state is created if nil; its params map is created if nil.
 //
 // Returns:
 //   - sql: The generated SQL fragment (typically a string)
 //   - params: Updated map of parameter names to values (e.g., {"p0": "Alice", "p1": 18})
-//   - isFunction: True if this expression is a built-in function (timestamp, duration, date)
-//     that should be embedded directly in SQL rather than parameterized
+//   - isFunction: True if this expression is a built-in function (timestamp, duration, date,
+//     param) that should be embedded directly in SQL rather than parameterized
 //   - error: Any parsing error encountered
 //
 // The function handles the following expression types:
@@ -29,10 +44,14 @@ import (
 //   - SelectExpr: Field selection (e.g., Proto.field)
 //   - ListExpr: List literals for IN operator
 //   - StructExpr: Struct/map literals
-func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, map[string]any, bool, error) {
-	if params == nil {
-		params = make(map[string]any)
+func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[string]any, bool, error) {
+	if state == nil {
+		state = &parseState{}
 	}
+	if state.params == nil {
+		state.params = make(map[string]any)
+	}
+	params := state.params
 
 	switch expression.GetExprKind().(type) {
 	case *expr.Expr_CallExpr:
@@ -40,11 +59,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 
 		switch call.Function {
 		case "_&&_":
-			leftSQL, leftParams, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, leftParams, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, rightParams, _, err := f.parseExpr(call.Args[1], params)
+			rightSQL, rightParams, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -56,11 +75,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			}
 			return fmt.Sprintf("(%s AND %s)", leftSQL, rightSQL), params, false, nil
 		case "_||_":
-			leftSQL, leftParams, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, leftParams, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, rightParams, _, err := f.parseExpr(call.Args[1], params)
+			rightSQL, rightParams, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -72,11 +91,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			}
 			return fmt.Sprintf("(%s OR %s)", leftSQL, rightSQL), params, false, nil
 		case "_>_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -95,11 +114,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s > @%s", leftSQL, paramName), params, false, nil
 		case "_>=_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -119,11 +138,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			return fmt.Sprintf("%s >= @%s", leftSQL, paramName), params, false, nil
 
 		case "_<_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -142,11 +161,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s < @%s", leftSQL, paramName), params, false, nil
 		case "_<=_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -165,11 +184,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s <= @%s", leftSQL, paramName), params, false, nil
 		case "_==_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -188,11 +207,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s = @%s", leftSQL, paramName), params, false, nil
 		case "_!=_":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -234,13 +253,46 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			params[paramName] = dateStr
 
 			return fmt.Sprintf("DATE(@%s)", paramName), params, true, nil
+		case "param":
+			if len(call.Args) != 1 {
+				return "", nil, false, fmt.Errorf("param() requires exactly one string literal argument")
+			}
+
+			constExpr := call.Args[0].GetConstExpr()
+			if constExpr == nil {
+				return "", nil, false, fmt.Errorf("param() requires exactly one string literal argument")
+			}
+
+			strVal, ok := constExpr.ConstantKind.(*expr.Constant_StringValue)
+			if !ok {
+				return "", nil, false, fmt.Errorf("param() requires exactly one string literal argument")
+			}
+			name := strVal.StringValue
+
+			if state.callerParams == nil {
+				return "", nil, false, fmt.Errorf("param(%q) referenced but no params were provided to Parse", name)
+			}
+
+			value, ok := state.callerParams[name]
+			if !ok {
+				return "", nil, false, fmt.Errorf("param(%q) not found in provided params", name)
+			}
+
+			paramName := fmt.Sprintf("p%d", len(params))
+			params[paramName] = value
+
+			// Bound caller params are already resolved values (not raw SQL/CEL
+			// literals), so mark this as a "function" result: comparison
+			// operators embed the @pN placeholder directly rather than
+			// wrapping it in a second parameter.
+			return fmt.Sprintf("@%s", paramName), params, true, nil
 		case "prefix", "PREFIX":
-			identSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			identSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 
-			constSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			constSQL, _, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -250,12 +302,12 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 
 			return fmt.Sprintf("STARTS_WITH(%s, @%s)", identSQL, paramName), params, false, nil
 		case "suffix", "SUFFIX":
-			identSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			identSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 
-			constSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			constSQL, _, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -265,7 +317,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 
 			return fmt.Sprintf("ENDS_WITH(%s, @%s)", identSQL, paramName), params, false, nil
 		case "@in":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -273,18 +325,18 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 			// Check if the left side of the IN operation is a registered identifier
 			leftSQL = f.parseIdentifier(leftSQL.(string))
 
-			rightSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 			return fmt.Sprintf("%s IN UNNEST(%s)", leftSQL, rightSQL), params, false, nil
 		case "like", "LIKE":
-			leftSQL, _, _, err := f.parseExpr(call.Args[0], params)
+			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 
-			rightSQL, _, _, err := f.parseExpr(call.Args[1], params)
+			rightSQL, _, _, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -294,32 +346,32 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 
 			return fmt.Sprintf("%s LIKE @%s", leftSQL, paramName), params, false, nil
 		case "lower", "LOWER":
-			sql, _, _, err := f.parseExpr(call.Args[0], params)
+			sql, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 
 			return fmt.Sprintf("LOWER(%s)", sql), params, false, nil
 		case "upper", "UPPER":
-			sql, _, _, err := f.parseExpr(call.Args[0], params)
+			sql, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
 			}
 
 			return fmt.Sprintf("UPPER(%s)", sql), params, false, nil
 		case "concat", "CONCAT":
-			return f.parseMultiArgFunction("CONCAT", call.Args, params)
+			return f.parseMultiArgFunction("CONCAT", call.Args, state)
 		case "greatest", "GREATEST":
-			return f.parseMultiArgFunction("GREATEST", call.Args, params)
+			return f.parseMultiArgFunction("GREATEST", call.Args, state)
 		case "least", "LEAST":
-			return f.parseMultiArgFunction("LEAST", call.Args, params)
+			return f.parseMultiArgFunction("LEAST", call.Args, state)
 		case "coalesce", "COALESCE":
-			return f.parseMultiArgFunction("COALESCE", call.Args, params)
+			return f.parseMultiArgFunction("COALESCE", call.Args, state)
 		case "ifnull", "IFNULL":
 			if len(call.Args) != 2 {
 				return "", nil, false, fmt.Errorf("IFNULL function requires exactly 2 arguments")
 			}
-			return f.parseMultiArgFunction("IFNULL", call.Args, params)
+			return f.parseMultiArgFunction("IFNULL", call.Args, state)
 		default:
 			return "", nil, false, fmt.Errorf("unsupported function: %s", call.Function)
 		}
@@ -339,7 +391,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 	case *expr.Expr_SelectExpr:
 		selectExpr := expression.GetSelectExpr()
 
-		operandSQL, err := f.parseSelectExpr(selectExpr, params)
+		operandSQL, err := f.parseSelectExpr(selectExpr, state)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -349,7 +401,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 		listExpr := expression.GetListExpr()
 		var sqlList []any
 		for _, elem := range listExpr.Elements {
-			elemSQL, _, _, err := f.parseExpr(elem, params)
+			elemSQL, _, _, err := f.parseExpr(elem, state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -363,11 +415,11 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 		structExpr := expression.GetStructExpr()
 		var fieldMap []string
 		for _, entry := range structExpr.Entries {
-			fieldSQL, _, _, err := f.parseExpr(entry.GetMapKey(), params)
+			fieldSQL, _, _, err := f.parseExpr(entry.GetMapKey(), state)
 			if err != nil {
 				return "", nil, false, err
 			}
-			valueSQL, _, _, err := f.parseExpr(entry.GetValue(), params)
+			valueSQL, _, _, err := f.parseExpr(entry.GetValue(), state)
 			if err != nil {
 				return "", nil, false, err
 			}
@@ -391,7 +443,7 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 // Parameters:
 //   - fnName: The SQL function name (e.g., "CONCAT", "GREATEST")
 //   - args: The CEL expression arguments to the function
-//   - params: Accumulated query parameters
+//   - state: Per-call parse state (accumulated params + caller-supplied params)
 //
 // Returns the same values as parseExpr.
 //
@@ -402,10 +454,12 @@ func (f *Parser) parseExpr(expression *expr.Expr, params map[string]any) (any, m
 //
 //	concat(first_name, ' ', last_name) -> CONCAT(first_name, @p0, last_name)
 //	greatest(a, b, 10) -> GREATEST(a, b, @p0)
-func (f *Parser) parseMultiArgFunction(fnName string, args []*expr.Expr, params map[string]any) (any, map[string]any, bool, error) {
+func (f *Parser) parseMultiArgFunction(fnName string, args []*expr.Expr, state *parseState) (any, map[string]any, bool, error) {
+	params := state.params
+
 	var sqlParts []string
 	for _, arg := range args {
-		argSQL, _, _, err := f.parseExpr(arg, params)
+		argSQL, _, _, err := f.parseExpr(arg, state)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -469,9 +523,9 @@ func (f *Parser) parseConstant(constExpr *expr.Constant) (any, error) {
 //   - user.address.city -> "user.address.city"
 //
 // The operand can be another SelectExpr (for deep nesting) or an IdentExpr (base case).
-func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string]interface{}) (string, error) {
+func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, state *parseState) (string, error) {
 	// Recursively resolve the operand (which could itself be a SelectExpr or IdentExpr)
-	operandSQL, _, _, err := f.parseExpr(selectExpr.Operand, params)
+	operandSQL, _, _, err := f.parseExpr(selectExpr.Operand, state)
 	if err != nil {
 		return "", err
 	}
