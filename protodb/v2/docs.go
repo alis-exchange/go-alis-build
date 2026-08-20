@@ -14,13 +14,13 @@ Key types:
   - Key: Database-agnostic primary key representation
   - ListOptions / StreamOptions: Options structs for List (bounded, paged) and Stream (unbounded, iter.Seq2)
   - ReadModifyWrite: Read-modify-write helper (added in Task 14)
-  - SpannerErrorToStatus: Converts Spanner and Google API errors to gRPC status errors
+  - IsNotFound, IsAlreadyExists: Helpers to check gRPC status error codes
 
 Subpackages:
 
   - filtering: AIP-160 filter parsing
   - ordering: AIP-132 order-by parsing
-  - spanneradapter: Spanner-backed ResourceTable implementation
+  - spanneradapter: Spanner-backed ResourceTable implementation; includes ErrorToStatus for converting Spanner/API errors to gRPC status
   - memadapter: in-memory ResourceTable implementation
   - protodbtest: shared conformance tests for ResourceTable implementations
 
