@@ -90,6 +90,11 @@ type Table[R any] struct {
 	entries map[string]*entry[R]
 }
 
+// Table implements protodb.ResourceTable — verified at compile time so a
+// signature drift in either package fails the build here rather than
+// surfacing as a mystifying error at every call site.
+var _ protodb.ResourceTable[any] = (*Table[any])(nil)
+
 // New returns an empty in-memory Table[R] configured by cfg.
 func New[R any](cfg Config) *Table[R] {
 	if cfg.ParentMatch == nil {
