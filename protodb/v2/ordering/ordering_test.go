@@ -67,7 +67,11 @@ func TestNewOrder(t *testing.T) {
 				return
 			}
 
-			t.Logf("SortOrder = %v", got.SortOrder())
+			// Verify Columns() works with WithDefaultOrder option
+			cols := got.Columns()
+			if len(tt.args.order) > 0 && len(cols) == 0 {
+				t.Errorf("expected columns for order %q", tt.args.order)
+			}
 		})
 	}
 }
@@ -97,5 +101,28 @@ func TestEmptyOrder(t *testing.T) {
 	o, _ := NewOrder("")
 	if o.Columns() != nil {
 		t.Fatal("empty order must return nil columns")
+	}
+}
+
+func TestNilReceiverAndEmptyInvert(t *testing.T) {
+	// Test nil receiver for Columns()
+	var nilOrder *Order
+	if nilOrder.Columns() != nil {
+		t.Fatal("nil receiver Columns() must return nil")
+	}
+
+	// Test nil receiver for Invert()
+	if nilOrder.Invert() != nil {
+		t.Fatal("nil receiver Invert() must return nil")
+	}
+
+	// Test Invert() on empty Order produces Order with nil Columns
+	emptyOrder, _ := NewOrder("")
+	inverted := emptyOrder.Invert()
+	if inverted == nil {
+		t.Fatal("Invert() on empty Order should not return nil")
+	}
+	if inverted.Columns() != nil {
+		t.Fatal("Invert() on empty Order must have nil Columns()")
 	}
 }

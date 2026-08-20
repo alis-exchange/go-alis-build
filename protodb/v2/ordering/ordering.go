@@ -123,59 +123,6 @@ func NewOrder(order string, opts ...Option) (*Order, error) {
 		defaultOrder: options.DefaultOrder,
 	}, nil
 }
-
-// SortOrder returns a map of field names to their sort directions.
-//
-// Fields without an explicit direction use the default order (ascending,
-// or the value set via [WithDefaultOrder]).
-//
-// Returns nil if the order expression is empty.
-//
-// Example:
-//
-//	order, _ := ordering.NewOrder("age desc, name asc")
-//	sortOrder := order.SortOrder()
-//	// map[string]SortOrder{"age": SortOrderDesc, "name": SortOrderAsc}
-func (o *Order) SortOrder() map[string]SortOrder {
-	// If the order is empty, return nil
-	if o.order == "" {
-		return nil
-	}
-
-	// Remove any leading or trailing whitespace
-	o.order = strings.TrimSpace(o.order)
-
-	// Split the order string by commas
-	orderPaths := strings.Split(o.order, ",")
-
-	// Create a map to store the order paths and their sort order
-	orderMap := make(map[string]SortOrder)
-
-	// Iterate over the order paths
-	for _, orderPath := range orderPaths {
-		orderParts := strings.Fields(orderPath)
-
-		switch len(orderParts) {
-		case 0:
-			// If the order path is empty, skip it
-			continue
-		case 1:
-			// If the order path has only one part, use the default sort order
-			orderMap[orderParts[0]] = o.defaultOrder
-		case 2:
-			// If the order path has two parts, parse the sort order
-			switch orderParts[1] {
-			case "asc", "ASC":
-				orderMap[orderParts[0]] = SortOrderAsc
-			case "desc", "DESC":
-				orderMap[orderParts[0]] = SortOrderDesc
-			}
-		}
-	}
-
-	return orderMap
-}
-
 // Columns returns the parsed columns in the order they appear in the
 // expression. Deterministic — never a map. Returns nil if the order
 // expression is empty or whitespace-only.
@@ -197,7 +144,11 @@ func (o *Order) Columns() []ColumnOrder {
 }
 
 // Invert flips every column's direction. Used to implement Tail queries.
+// Returns nil if the receiver is nil.
 func (o *Order) Invert() *Order {
+	if o == nil {
+		return nil
+	}
 	inv := &Order{defaultOrder: o.defaultOrder}
 	var parts []string
 	for _, c := range o.Columns() {
