@@ -1,4 +1,4 @@
-package protodb
+package spanneradapter
 
 import (
 	"errors"
@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// SpannerErrorToStatus converts a Spanner error to a gRPC status error.
-func SpannerErrorToStatus(err error) error {
+// ErrorToStatus converts a Spanner error to a gRPC status error.
+func ErrorToStatus(err error) error {
 	if err == nil {
 		return nil
 	}

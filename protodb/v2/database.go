@@ -2,42 +2,8 @@ package protodb
 
 import (
 	"context"
-
-	"cloud.google.com/go/iam/apiv1/iampb"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"iter"
 )
-
-// RowKey represents a composite primary key for a database table.
-// It is intentionally database-agnostic — no Spanner, SQL, or other
-// database-specific types leak into this interface.
-type RowKey interface {
-	// KeyColumns returns the ordered column names of the primary key.
-	KeyColumns() []string
-	// KeyValues returns the ordered values of the primary key,
-	// matching the order of KeyColumns.
-	KeyValues() []any
-	// String returns a canonical string representation for logging and map keys.
-	String() string
-}
-
-// RowKeyFactory provides metadata and behaviour for a table's key structure.
-// Injected into the generic table implementation at construction time.
-//
-// Decode is intentionally absent here — row scanning is database-specific
-// and belongs in the adapter layer (e.g. SpannerRowKeyFactory).
-type RowKeyFactory interface {
-	// Columns returns the ordered key column names.
-	// Used to build SELECT clauses and mutation column lists.
-	Columns() []string
-	// ParentFilter returns a SQL-dialect-neutral filter condition that scopes
-	// rows to a given parent. Returns ("", nil) if no parent scoping is needed.
-	//
-	// Implementations decide the strategy:
-	//   - Composite keys: exact match on the parent column (e.g. "ShelfName = @parent")
-	//   - Single keys:    prefix match (e.g. "STARTS_WITH(`key`, @parent)")
-	ParentFilter(parent string) (sql string, params map[string]any)
-}
 
 // TransactionRunner runs multi-operation transactions. Implementations (e.g.
 // spanneradapter.SpannerTransactionRunner) inject the transaction into the
@@ -49,101 +15,16 @@ type TransactionRunner interface {
 	RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
-// BaseResourceRow is an interface that represents a row in the database that contains an arbitrary resource and its associated IAM policy.
-// It provides data access (key, resource, policy) and persistence (Update, Delete) without protobuf-specific operations.
-// ResourceRow embeds BaseResourceRow and adds Merge and ApplyReadMask for protobuf resources.
-type BaseResourceRow[R any] interface {
-	// GetRowKey returns the key of the row.
-	GetRowKey() RowKey
-	// SetRowKey sets the key of the row.
-	SetRowKey(key RowKey)
-	// GetResource returns the resource associated with the row.
-	GetResource() R
-	// SetResource sets the resource associated with the row.
-	SetResource(resource R)
-	// GetPolicy returns the IAM policy associated with the row.
-	GetPolicy() *iampb.Policy
-	// SetPolicy sets the IAM policy associated with the row.
-	SetPolicy(policy *iampb.Policy)
-	// Update updates the resource in the database.
-	Update(ctx context.Context) error
-	// Delete deletes the resource from the database.
-	Delete(ctx context.Context) error
-}
-
-// ResourceRow is an interface that represents a row in the database that contains a protobuf resource and its associated IAM policy.
-// It provides methods to get and set the row key, get the resource, get the policy,
-// merge an updated message into the resource, apply a read mask to the resource, and update the resource in the database.
-type ResourceRow[R proto.Message] interface {
-	BaseResourceRow[R]
-	// Merge merges the updatedMsg into the resource. The fieldMaskPaths are the paths of the fields to update.
-	Merge(updatedMsg proto.Message, paths ...string)
-	// ApplyReadMask applies a field mask to the resource, filtering out fields that are not in the mask.
-	// ignoredPaths are paths that should be ignored when applying the read mask. These paths will always be included in the resource.
-	ApplyReadMask(readMask *fieldmaskpb.FieldMask, ignoredPaths ...string) error
-}
-
-// BaseResourceTable is an interface for a table storing arbitrary resources (type R).
-// It returns BaseResourceRow[R] from all operations; use it when the resource type
-// is not a proto.Message or when protobuf-specific operations (Merge, ApplyReadMask)
-// are not needed. ResourceTable embeds the same operations but constrains R to
-// proto.Message and returns ResourceRow[R].
+// ResourceTable is the single generic interface for a table storing
+// resources of type R. There is no longer a proto-constrained variant —
+// R may be any type; adapters that need protobuf-specific behavior
+// (merge, read masks, etc.) implement it above this interface, not within
+// it.
 //
-// BaseResourceTable implementations support both non-transactional and transactional usage.
-// When used outside a transaction, operations apply immediately. When used inside
-// TransactionRunner.RunTransaction, all operations share the same transaction and
-// commit or roll back atomically.
-type BaseResourceTable[R any] interface {
-	// WritePolicy writes the IAM policy for a resource.
-	WritePolicy(ctx context.Context, key RowKey, policy *iampb.Policy) error
-	// BatchWritePolicies writes IAM policies for multiple resources.
-	BatchWritePolicies(ctx context.Context, keys []RowKey, policies []*iampb.Policy) error
-	// Create creates a new resource in the database with the given name and resource.
-	// It also accepts an IAM policy to be associated with the resource.
-	// It fails if a resource with the same name already exists.
-	Create(ctx context.Context, key RowKey, resource R, policy *iampb.Policy) (row BaseResourceRow[R], err error)
-	// BatchCreate creates multiple resources in the database with the given names and resources.
-	// It also accepts a list of IAM policies to be associated with each resource.
-	// It fails if a resource with the same name already exists.
-	BatchCreate(ctx context.Context, keys []RowKey, resources []R, policies []*iampb.Policy) (rows []BaseResourceRow[R], err error)
-	// Read retrieves a resource by its name from the database.
-	// It returns an error if the resource does not exist.
-	Read(ctx context.Context, key RowKey) (row BaseResourceRow[R], err error)
-	// BatchRead retrieves multiple resources by their names from the database.
-	// It returns a slice of BaseResourceRow and a slice of names that were not found.
-	BatchRead(ctx context.Context, keys []RowKey) (row []BaseResourceRow[R], notFound []RowKey, err error)
-	// Write creates or updates resource in the database with the given name and resource.
-	// It also accepts an IAM policy to be associated with the resource.
-	// If the resource already exists, it updates the resource and the policy.
-	Write(ctx context.Context, key RowKey, resource R, policy *iampb.Policy) (row BaseResourceRow[R], err error)
-	// BatchWrite creates or updates multiple resources in the database with the given names and resources.
-	// It also accepts a list of IAM policies to be associated with each resource.
-	// If a resource already exists, it updates the resource and the policy.
-	BatchWrite(ctx context.Context, keys []RowKey, resources []R, policies []*iampb.Policy) (rows []BaseResourceRow[R], err error)
-	// List retrieves resources from the database, optionally filtered by a filter string.
-	// It returns a slice of BaseResourceRow and a nextPageToken for pagination.
-	List(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (rows []BaseResourceRow[R], nextPageToken string, err error)
-	// Stream streams resources from the database, optionally filtered.
-	// Returns a StreamResponse; iterate with Next() until io.EOF or error.
-	Stream(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (responseIterator *StreamResponse[BaseResourceRow[R]], err error)
-	// Query retrieves resources from the database, optionally filtered by a filter string.
-	// It returns a slice of BaseResourceRow and a nextPageToken for pagination.
-	Query(ctx context.Context, pageSize int32, pageToken string, filter string, orderBy string) (rows []BaseResourceRow[R], nextPageToken string, err error)
-	// Delete deletes a resource from the database by its name.
-	Delete(ctx context.Context, key RowKey) (err error)
-	// BatchDelete deletes multiple resources from the database by their names.
-	BatchDelete(ctx context.Context, keys []RowKey) (err error)
-}
-
-// ResourceTable is an interface for a table storing protobuf resources.
-// It has the same operations as BaseResourceTable but constrains R to proto.Message
-// and returns ResourceRow[R] (which adds Merge and ApplyReadMask for partial updates).
-// It provides methods to read, update, create, list, and batch operations on resources.
-// The type parameter R is a proto.Message that represents the resource type.
-//
-// ResourceTable implementations support both non-transactional and transactional usage.
-// When used outside a transaction, operations apply immediately. When used inside
-// TransactionRunner.RunTransaction, all operations share the same transaction and
+// ResourceTable implementations support both non-transactional and
+// transactional usage. When used outside a transaction, operations apply
+// immediately. When used inside TransactionRunner.RunTransaction, all
+// operations sharing that context participate in the same transaction and
 // commit or roll back atomically.
 //
 // Usage example (non-transactional):
@@ -152,9 +33,10 @@ type BaseResourceTable[R any] interface {
 //	if err != nil {
 //		return err
 //	}
-//	_ = row.GetResource()
+//	_ = row.Resource
 //
-// Usage example (transactional — cross-table operations in a single transaction):
+// Usage example (transactional — cross-table operations in a single
+// transaction):
 //
 //	txRunner := &spanneradapter.SpannerTransactionRunner{Client: spannerClient}
 //	err := txRunner.RunTransaction(ctx, func(ctx context.Context) error {
@@ -162,54 +44,47 @@ type BaseResourceTable[R any] interface {
 //		if err != nil {
 //			return err
 //		}
-//		_, err = tableB.Write(ctx, key2, resource, policy)
-//		if err != nil {
+//		if err := tableB.Write(ctx, &protodb.Row[B]{Key: key2, Resource: resource}); err != nil {
 //			return err
 //		}
-//		row.SetResource(updatedResource)
-//		if err := row.Update(ctx); err != nil {
-//			return err
-//		}
-//		return nil
+//		row.Resource = updatedResource
+//		return tableA.Write(ctx, row)
 //	})
-type ResourceTable[R proto.Message] interface {
-	// WritePolicy writes the IAM policy for a resource.
-	WritePolicy(ctx context.Context, key RowKey, policy *iampb.Policy) error
-	// BatchWritePolicies writes IAM policies for multiple resources.
-	BatchWritePolicies(ctx context.Context, keys []RowKey, policies []*iampb.Policy) error
-	// Create creates a new resource in the database with the given name and resource.
-	// It also accepts an IAM policy to be associated with the resource.
-	// It fails if a resource with the same name already exists.
-	Create(ctx context.Context, key RowKey, resource R, policy *iampb.Policy) (row ResourceRow[R], err error)
-	// BatchCreate creates multiple resources in the database with the given names and resources.
-	// It also accepts a list of IAM policies to be associated with each resource.
-	// It fails if a resource with the same name already exists.
-	BatchCreate(ctx context.Context, keys []RowKey, resources []R, policies []*iampb.Policy) (rows []ResourceRow[R], err error)
-	// Read retrieves a resource by its name from the database.
-	// It returns an error if the resource does not exist.
-	Read(ctx context.Context, key RowKey) (row ResourceRow[R], err error)
-	// BatchRead retrieves multiple resources by their names from the database.
-	// It returns a slice of ResourceRow and a slice of names that were not found.
-	BatchRead(ctx context.Context, keys []RowKey) (row []ResourceRow[R], notFound []RowKey, err error)
-	// Write creates or updates resource in the database with the given name and resource.
-	// It also accepts an IAM policy to be associated with the resource.
-	// If the resource already exists, it updates the resource and the policy.
-	Write(ctx context.Context, key RowKey, resource R, policy *iampb.Policy) (row ResourceRow[R], err error)
-	// BatchWrite creates or updates multiple resources in the database with the given names and resources.
-	// It also accepts a list of IAM policies to be associated with each resource.
-	// If a resource already exists, it updates the resource and the policy.
-	BatchWrite(ctx context.Context, keys []RowKey, resources []R, policies []*iampb.Policy) (rows []ResourceRow[R], err error)
-	// List retrieves resources from the database, optionally filtered by a filter string.
-	// It returns a slice of ResourceRow and a nextPageToken for pagination.
-	List(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (rows []ResourceRow[R], nextPageToken string, err error)
-	// Stream streams resources from the database, optionally filtered.
-	// Returns a StreamResponse; iterate with Next() until io.EOF or error.
-	Stream(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) (responseIterator *StreamResponse[ResourceRow[R]], err error)
-	// Query retrieves resources from the database, optionally filtered by a filter string.
-	// It returns a slice of ResourceRow and a nextPageToken for pagination.
-	Query(ctx context.Context, pageSize int32, pageToken string, filter string, orderBy string) (rows []ResourceRow[R], nextPageToken string, err error)
-	// Delete deletes a resource from the database by its name.
-	Delete(ctx context.Context, key RowKey) (err error)
-	// BatchDelete deletes multiple resources from the database by their names.
-	BatchDelete(ctx context.Context, keys []RowKey) (err error)
+type ResourceTable[R any] interface {
+	// Create inserts new rows. It fails with an AlreadyExists status error
+	// if any key already exists. A zero-length call is a no-op that
+	// returns nil.
+	Create(ctx context.Context, rows ...*Row[R]) error
+	// Write creates or updates rows. Existing rows are fully replaced —
+	// there is no partial update. A zero-length call is a no-op that
+	// returns nil.
+	Write(ctx context.Context, rows ...*Row[R]) error
+	// Read retrieves one row. Returns a NotFound status error when the key
+	// does not exist.
+	Read(ctx context.Context, key Key) (*Row[R], error)
+	// BatchRead retrieves multiple rows by key. The returned slice has the
+	// same length as keys, position for position: result[i] is the row for
+	// keys[i], or nil if keys[i] does not exist. A missing key is not an
+	// error — BatchRead does not return NotFound. A zero-length call is a
+	// no-op that returns nil, nil.
+	BatchRead(ctx context.Context, keys ...Key) ([]*Row[R], error)
+	// List retrieves one bounded page of rows. PageSize 0 means
+	// DefaultPageSize; negative returns InvalidArgument. Never unbounded —
+	// use Stream to traverse everything.
+	List(ctx context.Context, opts ListOptions) (rows []*Row[R], nextPageToken string, err error)
+	// Stream traverses every matching row; no paging. Errors are yielded
+	// as the final element; `break` cancels cleanly.
+	Stream(ctx context.Context, opts StreamOptions) iter.Seq2[*Row[R], error]
+	// Delete removes rows. Deleting a key that does not exist is not an
+	// error (idempotent, matching Spanner mutation semantics). A
+	// zero-length call is a no-op that returns nil.
+	Delete(ctx context.Context, keys ...Key) error
+	// WritePolicies writes the IAM policies for existing rows. A key that
+	// does not exist is a NotFound status error — WritePolicies attaches a
+	// policy to an existing row, it never creates one. The batch is
+	// validated in full — every key confirmed to exist — before any policy
+	// is written: a NotFound anywhere in the batch leaves every row's
+	// policy unchanged, matching the atomicity of Create and Write. A
+	// zero-length call is a no-op that returns nil.
+	WritePolicies(ctx context.Context, entries ...PolicyEntry) error
 }
