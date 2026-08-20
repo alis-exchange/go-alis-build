@@ -292,9 +292,18 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 				return "", nil, false, err
 			}
 
-			constSQL, _, _, err := f.parseExpr(call.Args[1], state)
+			constSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
+			}
+
+			// If the second argument is itself a function/placeholder result
+			// (param(), timestamp(), duration(), date()), it already carries
+			// its own bound parameter (or literal SQL) and must be embedded
+			// directly. Re-parameterizing it here would bind the literal
+			// text of the fragment (e.g. "@p0") instead of the real value.
+			if isFunction {
+				return fmt.Sprintf("STARTS_WITH(%s, %s)", identSQL, constSQL), params, false, nil
 			}
 
 			paramName := fmt.Sprintf("p%d", len(params))
@@ -307,9 +316,15 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 				return "", nil, false, err
 			}
 
-			constSQL, _, _, err := f.parseExpr(call.Args[1], state)
+			constSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
+			}
+
+			// See the "prefix" case above: embed function/placeholder
+			// results directly instead of re-binding them as a new param.
+			if isFunction {
+				return fmt.Sprintf("ENDS_WITH(%s, %s)", identSQL, constSQL), params, false, nil
 			}
 
 			paramName := fmt.Sprintf("p%d", len(params))
@@ -336,9 +351,15 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 				return "", nil, false, err
 			}
 
-			rightSQL, _, _, err := f.parseExpr(call.Args[1], state)
+			rightSQL, _, isFunction, err := f.parseExpr(call.Args[1], state)
 			if err != nil {
 				return "", nil, false, err
+			}
+
+			// See the "prefix" case above: embed function/placeholder
+			// results directly instead of re-binding them as a new param.
+			if isFunction {
+				return fmt.Sprintf("%s LIKE %s", leftSQL, rightSQL), params, false, nil
 			}
 
 			paramName := fmt.Sprintf("p%d", len(params))
@@ -401,10 +422,23 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 		listExpr := expression.GetListExpr()
 		var sqlList []any
 		for _, elem := range listExpr.Elements {
-			elemSQL, _, _, err := f.parseExpr(elem, state)
+			elemSQL, _, isFunction, err := f.parseExpr(elem, state)
 			if err != nil {
 				return "", nil, false, err
 			}
+
+			// A list literal is bound as a single array-typed Spanner
+			// parameter (each element must be a concrete Go value). A
+			// function/placeholder result (param(), timestamp(), duration(),
+			// date()) is a SQL fragment, not a value, and cannot be embedded
+			// as one element of that array without silently misbinding it
+			// (e.g. the literal text "@p0" ending up as the array element
+			// instead of the caller's actual value). Reject rather than
+			// silently mis-bind; mixed literal/param lists are not supported.
+			if isFunction {
+				return "", nil, false, fmt.Errorf("list literals cannot contain function results such as param(), timestamp(), duration(), or date()")
+			}
+
 			sqlList = append(sqlList, elemSQL)
 		}
 		paramName := fmt.Sprintf("p%d", len(params))
