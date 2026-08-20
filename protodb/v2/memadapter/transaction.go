@@ -66,6 +66,14 @@ func NewTransactionRunner() protodb.TransactionRunner {
 }
 
 // RunTransaction implements protodb.TransactionRunner.
+//
+// Nested calls are unsupported and WILL DEADLOCK: fn must not call
+// RunTransaction again (on this or any other memadapter runner) with the
+// ctx it was given, or with a derivative of it — mu is already held for
+// the outer call, sync.Mutex is not reentrant, and the inner RunTransaction
+// would block forever trying to lock it. Table operations are fine to
+// nest (that's the whole point of the ctx marker); RunTransaction itself
+// is not.
 func (transactionRunner) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	mu.Lock()
 	defer mu.Unlock()

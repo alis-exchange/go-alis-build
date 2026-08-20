@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/protodb/v2"
 	"go.alis.build/protodb/v2/memadapter"
 	"google.golang.org/grpc/codes"
@@ -257,5 +258,63 @@ func TestMemProtoResourceIsDeepCopied(t *testing.T) {
 	}
 	if got2.Resource.Value != "original" {
 		t.Fatalf("Read aliased the stored resource: got %q", got2.Resource.Value)
+	}
+}
+
+// TestMemWritePoliciesAtomicOnPartialNotFound checks that WritePolicies
+// validates the whole batch before mutating anything: a batch of
+// [existing, missing] must fail NotFound and must not have applied the
+// policy for the existing row either — no partial application, matching
+// Create's behavior for a batch containing a bad key.
+func TestMemWritePoliciesAtomicOnPartialNotFound(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
+	if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("a"), Resource: "1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	newPolicy := &iampb.Policy{Version: 3}
+	err := tbl.WritePolicies(ctx,
+		protodb.PolicyEntry{Key: strKey("a"), Policy: newPolicy},
+		protodb.PolicyEntry{Key: strKey("missing"), Policy: newPolicy},
+	)
+	if !protodb.IsNotFound(err) {
+		t.Fatalf("got %v, want NotFound", err)
+	}
+
+	got, err := tbl.Read(ctx, strKey("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Policy != nil {
+		t.Fatalf("existing row's policy changed despite a NotFound elsewhere in the batch: %v", got.Policy)
+	}
+}
+
+// TestMemWritePoliciesRejectsIntraBatchDuplicate checks that a repeated
+// key within one WritePolicies call is rejected (InvalidArgument) rather
+// than silently letting the last entry win — mirroring Create's rejection
+// of a repeated key within one Create call.
+func TestMemWritePoliciesRejectsIntraBatchDuplicate(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
+	if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("a"), Resource: "1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := tbl.WritePolicies(ctx,
+		protodb.PolicyEntry{Key: strKey("a"), Policy: &iampb.Policy{Version: 1}},
+		protodb.PolicyEntry{Key: strKey("a"), Policy: &iampb.Policy{Version: 2}},
+	)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("got %v, want InvalidArgument", err)
+	}
+
+	got, err := tbl.Read(ctx, strKey("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Policy != nil {
+		t.Fatalf("existing row's policy changed despite a rejected duplicate-key batch: %v", got.Policy)
 	}
 }

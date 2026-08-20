@@ -262,23 +262,39 @@ func (t *Table[R]) Delete(ctx context.Context, keys ...protodb.Key) error {
 // WritePolicies implements protodb.ResourceTable. Writing a policy for a
 // key that does not exist is a NotFound error — WritePolicies attaches a
 // policy to an existing row, it does not create one.
+//
+// Like Create, the whole batch is validated — every key resolved,
+// confirmed to already exist, and confirmed not to repeat within the same
+// call — before anything is mutated. A NotFound (or a repeated key)
+// anywhere in the batch leaves every row's policy untouched; there is no
+// partial application, matching how a real Spanner mutation group either
+// commits entirely or not at all.
 func (t *Table[R]) WritePolicies(ctx context.Context, entries ...protodb.PolicyEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
 	defer lock(ctx)()
 
-	for _, pe := range entries {
+	canon := make([]string, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for i, pe := range entries {
 		c, err := canonicalKey(pe.Key)
 		if err != nil {
 			return err
 		}
-		e, ok := t.entries[c]
-		if !ok {
+		if _, ok := t.entries[c]; !ok {
 			return status.Errorf(codes.NotFound, "memadapter: row %v not found", pe.Key.KeyValues())
 		}
+		if seen[c] {
+			return status.Errorf(codes.InvalidArgument, "memadapter: row %v specified more than once in the same WritePolicies call", pe.Key.KeyValues())
+		}
+		seen[c] = true
+		canon[i] = c
+	}
+	for i, pe := range entries {
+		e := t.entries[canon[i]]
 		// Replace, never mutate in place — see entry's doc comment.
-		t.entries[c] = &entry[R]{key: e.key, resource: e.resource, policy: clonePolicy(pe.Policy)}
+		t.entries[canon[i]] = &entry[R]{key: e.key, resource: e.resource, policy: clonePolicy(pe.Policy)}
 	}
 	return nil
 }
