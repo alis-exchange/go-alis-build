@@ -611,6 +611,32 @@ adapter. Run it against `memadapter` unconditionally (fast, no external dependen
 against a Spanner-backed table gated behind an environment variable (emulator or a CI-provisioned
 database, at the consumer's discretion) since it needs a live backend.
 
+### Running the Spanner conformance test
+
+This repository does exactly that for itself: `spanneradapter`'s own test package builds a
+reference `ResourceTable[string]` out of the building blocks above (the "shape of a consumer
+table" sketch, materialized) and runs the `protodbtest` suite against a real Spanner, plus a
+multi-column tied-order pagination check that executes the null-safe keyset cursor for real. It
+is skipped by default — it needs a live backend — and honours two gates, in this order:
+
+| Gate | Behaviour |
+|---|---|
+| `SPANNER_EMULATOR_HOST` set | Use that emulator; no container is started. |
+| else `PROTODB_SPANNER_CONFORMANCE` non-empty | Start the Cloud Spanner emulator with [testcontainers-go](https://golang.testcontainers.org) (Docker required) and point the clients at it. |
+| else | `t.Skip`. |
+
+```sh
+# Start a throwaway emulator per test via Docker:
+PROTODB_SPANNER_CONFORMANCE=1 go test ./spanneradapter/ -run TestSpanner -v
+
+# Or reuse an emulator you are already running:
+SPANNER_EMULATOR_HOST=localhost:9010 go test ./spanneradapter/ -run TestSpanner -v
+```
+
+The test creates its instance and a fresh database per run, with a `CREATE PROTO BUNDLE`
+carrying `google.iam.v1.Policy` — the `FileDescriptorSet` is built at runtime from the
+compiled-in registry, so no `.proto` files or `protoc` are needed.
+
 ## Migrating from v2.0.x
 
 ### Breaking-surface summary
