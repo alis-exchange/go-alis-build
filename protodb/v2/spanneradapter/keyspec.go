@@ -102,9 +102,11 @@ type keySpecOpts struct {
 
 // WithParentColumns sets how many leading key columns ParentFilter matches
 // against the parent argument. Only n==1 is supported in this version:
-// ParentFilter equates the first column against @parent. n>1 is rejected
-// at construction — multi-column parent scoping is not implemented yet.
-// If WithParentColumns is not passed, KeySpecFor defaults to n==1.
+// ParentFilter equates the first column against @parent. Any other value
+// — n>1, n==0, or negative — is rejected at construction: multi-column
+// parent scoping is not implemented yet, and n==0/negative has no defined
+// meaning (it is not "no parent scoping"; ParentFilter("") already covers
+// that). If WithParentColumns is not passed, KeySpecFor defaults to n==1.
 func WithParentColumns(n int) KeySpecOption {
 	return func(o *keySpecOpts) { o.parentCols = n }
 }
@@ -176,8 +178,8 @@ func KeySpecFor[K protodb.Key](opts ...KeySpecOption) (KeySpec, error) {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if o.parentCols > 1 {
-		return nil, fmt.Errorf("spanneradapter: KeySpecFor: WithParentColumns(%d): multi-column parents are not supported in this version", o.parentCols)
+	if o.parentCols != 1 {
+		return nil, fmt.Errorf("spanneradapter: KeySpecFor: WithParentColumns(%d): parent columns must be exactly 1 in this version", o.parentCols)
 	}
 
 	typ := reflect.TypeFor[K]()
@@ -278,6 +280,11 @@ func (s *taggedKeySpec) Encode(key protodb.Key) (string, error) { return encodeK
 // tagged struct:
 //
 //	func (k K) KeyValues() []any { return spanneradapter.KeyValuesOf(k) }
+//
+// Unexported fields are always skipped, even if they happen to carry a
+// stray `pdb` tag — an unexported field's Value can't be read via
+// reflection (Interface would panic), and only exported fields are ever
+// valid key columns.
 func KeyValuesOf(k any) []any {
 	v := reflect.ValueOf(k)
 	if v.Kind() == reflect.Pointer {
@@ -285,7 +292,8 @@ func KeyValuesOf(k any) []any {
 	}
 	var vals []any
 	for i := 0; i < v.NumField(); i++ {
-		if v.Type().Field(i).Tag.Get("pdb") == "" {
+		f := v.Type().Field(i)
+		if !f.IsExported() || f.Tag.Get("pdb") == "" {
 			continue
 		}
 		vals = append(vals, v.Field(i).Interface())

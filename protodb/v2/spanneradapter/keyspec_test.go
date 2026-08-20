@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"cloud.google.com/go/spanner"
 	"go.alis.build/protodb/v2"
 )
 
@@ -44,6 +45,16 @@ type unsupportedKey struct {
 
 func (k unsupportedKey) KeyValues() []any { return KeyValuesOf(k) }
 
+// unexportedTaggedKey has an unexported field that carries a stray `pdb`
+// tag. KeyValuesOf must skip it (unexported fields are never valid key
+// columns) rather than panic trying to read it via reflection.
+type unexportedTaggedKey struct {
+	Public  string `pdb:"public"`
+	private string `pdb:"private"`
+}
+
+func (k unexportedTaggedKey) KeyValues() []any { return KeyValuesOf(k) }
+
 func TestKeyValuesOf(t *testing.T) {
 	k := sessionKey{"s", "a", "u"}
 	if !reflect.DeepEqual(k.KeyValues(), []any{"s", "a", "u"}) {
@@ -83,6 +94,22 @@ func TestKeySpecForRejectsUnsupportedFieldType(t *testing.T) {
 func TestKeySpecForRejectsMultiColumnParent(t *testing.T) {
 	if _, err := KeySpecFor[sessionKey](WithParentColumns(2)); err == nil {
 		t.Fatal("multi-column parent must error at construction")
+	}
+}
+
+func TestKeySpecForRejectsZeroOrNegativeParentColumns(t *testing.T) {
+	for _, n := range []int{0, -1} {
+		if _, err := KeySpecFor[sessionKey](WithParentColumns(n)); err == nil {
+			t.Fatalf("WithParentColumns(%d) must error at construction", n)
+		}
+	}
+}
+
+func TestKeyValuesOfSkipsUnexportedTaggedField(t *testing.T) {
+	k := unexportedTaggedKey{Public: "pub", private: "priv"}
+	got := k.KeyValues() // must not panic despite the stray tag on `private`
+	if !reflect.DeepEqual(got, []any{"pub"}) {
+		t.Fatal(got)
 	}
 }
 
@@ -152,5 +179,30 @@ func TestKeySpecForDerefsPointerKind(t *testing.T) {
 	}
 	if !reflect.DeepEqual(spec.Columns(), []string{"session_id", "app_name", "user_id"}) {
 		t.Fatal(spec.Columns())
+	}
+}
+
+func TestToKey(t *testing.T) {
+	got := ToKey(sessionKey{"s", "a", "u"})
+	want := spanner.Key{"s", "a", "u"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestToKeySets(t *testing.T) {
+	keys := []protodb.Key{StringKey("a"), StringKey("b")}
+	got := ToKeySets(keys)
+	want := spanner.KeySets(spanner.Key{"a"}, spanner.Key{"b"})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestToKeySetsEmpty(t *testing.T) {
+	got := ToKeySets(nil)
+	want := spanner.KeySets()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }
