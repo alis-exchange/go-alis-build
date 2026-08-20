@@ -25,10 +25,20 @@ type Scanner[R any] struct {
 // the key columns, the resource column, and — when set — the policy
 // column.
 func (s Scanner[R]) Columns() []string {
-	cols := append([]string{}, s.Spec.Columns()...)
-	cols = append(cols, s.ResourceColumn)
-	if s.PolicyColumn != "" {
-		cols = append(cols, s.PolicyColumn)
+	return scanColumns(s.Spec, s.ResourceColumn, s.PolicyColumn)
+}
+
+// scanColumns is the single definition of that projection, shared by
+// Scanner.Columns and StatementBuilder (which is not generic over the
+// resource type and so cannot call the method). The SELECT a statement
+// builds and the columns ScanRow reads have to be the same set; a second
+// copy of the rule would let them drift into a runtime "column not found"
+// on every List.
+func scanColumns(spec KeySpec, resourceColumn, policyColumn string) []string {
+	cols := append([]string{}, spec.Columns()...)
+	cols = append(cols, resourceColumn)
+	if policyColumn != "" {
+		cols = append(cols, policyColumn)
 	}
 	return cols
 }

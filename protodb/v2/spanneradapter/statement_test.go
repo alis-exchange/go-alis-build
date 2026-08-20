@@ -126,6 +126,49 @@ func TestBuildListSelectsNonKeyOrderColumns(t *testing.T) {
 	}
 }
 
+// TestBuildListProjectsExactlyWhatScannerNeeds binds the two halves of the
+// contract: whatever Scanner.Columns says ScanRow reads, BuildList must
+// project — in the same order, at the head of the SELECT list (any non-key
+// order column is appended after it).
+func TestBuildListProjectsExactlyWhatScannerNeeds(t *testing.T) {
+	for _, policyColumn := range []string{"Policy", ""} {
+		b := newTestBuilder(t)
+		b.PolicyColumn = policyColumn
+		scanner := Scanner[string]{Spec: b.Spec, Codec: StringCodec(), ResourceColumn: b.ResourceColumn, PolicyColumn: b.PolicyColumn}
+
+		quoted := make([]string, len(scanner.Columns()))
+		for i, c := range scanner.Columns() {
+			quoted[i] = "`" + c + "`"
+		}
+		want := "SELECT " + strings.Join(quoted, ",") + " FROM T"
+
+		stmt, _, _, err := b.BuildList(protodb.ListOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(stmt.SQL, want+" ") {
+			t.Fatalf("policy column %q: %q does not project Scanner.Columns() %v", policyColumn, stmt.SQL, scanner.Columns())
+		}
+		// A non-key order column widens the projection; it never disturbs
+		// the columns ScanRow depends on.
+		stmt, _, _, err = b.BuildList(protodb.ListOptions{OrderBy: "ts desc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(stmt.SQL, want[:len(want)-len(" FROM T")]+",`ts` FROM T ") {
+			t.Fatalf("policy column %q: %q", policyColumn, stmt.SQL)
+		}
+		// Stream projects exactly the scan columns, nothing more.
+		streamStmt, err := b.BuildStream(protodb.StreamOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(streamStmt.SQL, want+" ") {
+			t.Fatalf("policy column %q: stream %q", policyColumn, streamStmt.SQL)
+		}
+	}
+}
+
 func TestBuildListWithoutPolicyColumn(t *testing.T) {
 	b := newTestBuilder(t)
 	b.PolicyColumn = ""

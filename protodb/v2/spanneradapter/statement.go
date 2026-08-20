@@ -138,7 +138,8 @@ func (b StatementBuilder) BuildStream(opts protodb.StreamOptions) (spanner.State
 	}
 	// Unlike List, Stream never mints a page token, so there is no reason
 	// to widen the projection with non-key order columns.
-	return spanner.Statement{SQL: b.assemble(b.scanColumns(), where, order), Params: params}, nil
+	cols := scanColumns(b.Spec, b.ResourceColumn, b.PolicyColumn)
+	return spanner.Statement{SQL: b.assemble(cols, where, order), Params: params}, nil
 }
 
 // effectiveOrder parses orderBy, inverts it when tail is set, and appends
@@ -162,25 +163,13 @@ func (b StatementBuilder) effectiveOrder(orderBy string, tail bool) ([]ordering.
 	return order, nil
 }
 
-// scanColumns returns the projection Scanner.ScanRow needs: key columns,
-// resource column, and the policy column when the table has one. It
-// mirrors Scanner.Columns (which is generic over the resource type and so
-// can't be shared with this non-generic builder).
-func (b StatementBuilder) scanColumns() []string {
-	cols := append([]string{}, b.Spec.Columns()...)
-	cols = append(cols, b.ResourceColumn)
-	if b.PolicyColumn != "" {
-		cols = append(cols, b.PolicyColumn)
-	}
-	return cols
-}
-
-// selectColumns is scanColumns plus any order column not already projected.
-// Non-key order columns (say a generated `timestamp` column) are not part
-// of a scanned protodb.Row, so without them in the projection the caller
-// could not read the values that go into the next page token.
+// selectColumns is the shared scan projection (scanColumns, the same
+// function behind Scanner.Columns) plus any order column not already
+// projected. Non-key order columns (say a generated `timestamp` column) are
+// not part of a scanned protodb.Row, so without them in the projection the
+// caller could not read the values that go into the next page token.
 func (b StatementBuilder) selectColumns(order []ordering.ColumnOrder) []string {
-	cols := b.scanColumns()
+	cols := scanColumns(b.Spec, b.ResourceColumn, b.PolicyColumn)
 	for _, c := range order {
 		if !slices.Contains(cols, c.Column) {
 			cols = append(cols, c.Column)
@@ -298,10 +287,12 @@ func cursorValues(token PageToken, order []ordering.ColumnOrder) ([]any, error) 
 // Bound values are written into params under @c0, @c1, ... indexed by
 // column position, so a nil value simply leaves its index unbound.
 //
-// values must hold one entry per order column; cursorValues establishes
-// that alignment.
+// values must hold one entry per order column — cursorValues establishes
+// that alignment before this is ever called, and a short values slice
+// returns the empty predicate rather than panicking, so callers can never
+// index past the end.
 func cursorPredicate(order []ordering.ColumnOrder, values []any, params map[string]any) string {
-	if len(order) == 0 {
+	if len(order) == 0 || len(values) < len(order) {
 		return "" // nothing to position against; callers omit the conjunct
 	}
 	terms := make([]string, 0, len(order))

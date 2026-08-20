@@ -123,6 +123,7 @@ func NewOrder(order string, opts ...Option) (*Order, error) {
 		defaultOrder: options.DefaultOrder,
 	}, nil
 }
+
 // Columns returns the parsed columns in the order they appear in the
 // expression. Deterministic — never a map. Returns nil if the order
 // expression is empty or whitespace-only.
