@@ -19,6 +19,7 @@ func TestSanitizePreservesLiterals(t *testing.T) {
 		{"name == 'BRAND AND CO'", "BRAND AND CO"}, // AND inside literal
 		{"name == 'a=b'", "a=b"},                   // = inside literal
 		{"name == 'NULL OR IN'", "NULL OR IN"},     // all keywords inside literal
+		{`name == "BRAND AND CO"`, "BRAND AND CO"}, // double-quoted literal
 	} {
 		stmt, err := p.Parse(tc.filter)
 		if err != nil {

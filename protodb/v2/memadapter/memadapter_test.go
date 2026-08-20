@@ -2,7 +2,9 @@ package memadapter_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
@@ -316,5 +318,104 @@ func TestMemWritePoliciesRejectsIntraBatchDuplicate(t *testing.T) {
 	}
 	if got.Policy != nil {
 		t.Fatalf("existing row's policy changed despite a rejected duplicate-key batch: %v", got.Policy)
+	}
+}
+
+// twoColKey is a two-column key used only by
+// TestMemListPagesThroughTiedOrderColumn, where the first column ties
+// across every row.
+type twoColKey struct {
+	A string
+	B string
+}
+
+func (k twoColKey) KeyValues() []any { return []any{k.A, k.B} }
+
+// TestMemListPagesThroughTiedOrderColumn exercises effectiveOrder's
+// implicit tiebreaker (see memadapter.go): OrderBy names only the first key
+// column ("a"), which is identical on every row here, so paging correctness
+// depends entirely on effectiveOrder appending the second key column ("b")
+// as a tiebreaker. protodbtest's adapter-agnostic conformance suite can't
+// exercise this — it has no generic way to force a tie on a non-key column
+// across rows — so this lives here instead, against memadapter directly.
+// PageSize 1 forces a page token after every single row, so any tiebreaker
+// bug (e.g. comparing only the OrderBy columns when computing/resuming the
+// cursor) would either skip or repeat a row.
+func TestMemListPagesThroughTiedOrderColumn(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"a", "b"}})
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		key := twoColKey{A: "tied", B: fmt.Sprintf("b%02d", i)}
+		if err := tbl.Create(ctx, &protodb.Row[string]{Key: key, Resource: key.B}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var order []string
+	seen := make(map[string]bool, n)
+	var pageToken string
+	for {
+		rows, next, err := tbl.List(ctx, protodb.ListOptions{PageSize: 1, OrderBy: "a", PageToken: pageToken})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if seen[r.Resource] {
+				t.Fatalf("row %q repeated across pages; full order so far: %v", r.Resource, order)
+			}
+			seen[r.Resource] = true
+			order = append(order, r.Resource)
+		}
+		if next == "" {
+			break
+		}
+		pageToken = next
+	}
+	if len(seen) != n {
+		t.Fatalf("got %d distinct rows across pages, want %d (some skipped): %v", len(seen), n, order)
+	}
+	// With "a" tied on every row, the implicit tiebreaker on "b" makes the
+	// full traversal order deterministic: ascending by b.
+	want := []string{"b00", "b01", "b02", "b03", "b04"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("got order %v want %v", order, want)
+	}
+}
+
+// TestMemTransactionRollsBackOnError checks memadapter's rollback
+// mechanics directly: a Create followed by a returned error inside
+// RunTransaction must leave the table exactly as it was before the
+// transaction started, and a Write to a pre-existing row must revert to
+// the row's pre-transaction value too (not just newly created rows).
+func TestMemTransactionRollsBackOnError(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
+	if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("a"), Resource: "1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := memadapter.NewTransactionRunner()
+	wantErr := errors.New("boom")
+	err := runner.RunTransaction(ctx, func(ctx context.Context) error {
+		if err := tbl.Write(ctx, &protodb.Row[string]{Key: strKey("a"), Resource: "2"}); err != nil {
+			return err
+		}
+		if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("b"), Resource: "new"}); err != nil {
+			return err
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("got %v, want %v", err, wantErr)
+	}
+
+	got, err := tbl.Read(ctx, strKey("a"))
+	if err != nil || got.Resource != "1" {
+		t.Fatalf("row \"a\" not rolled back to its pre-transaction value: got %v, %v", got, err)
+	}
+	if _, err := tbl.Read(ctx, strKey("b")); !protodb.IsNotFound(err) {
+		t.Fatalf("row \"b\" created by a rolled-back transaction is still visible: got %v", err)
 	}
 }

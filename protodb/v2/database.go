@@ -62,9 +62,11 @@ type ResourceTable[R any] interface {
 	// Read retrieves one row. Returns a NotFound status error when the key
 	// does not exist.
 	Read(ctx context.Context, key Key) (*Row[R], error)
-	// BatchRead retrieves multiple rows by key. Keys that do not exist are
-	// simply omitted from the result — BatchRead does not return NotFound.
-	// A zero-length call is a no-op that returns nil, nil.
+	// BatchRead retrieves multiple rows by key. The returned slice has the
+	// same length as keys, position for position: result[i] is the row for
+	// keys[i], or nil if keys[i] does not exist. A missing key is not an
+	// error — BatchRead does not return NotFound. A zero-length call is a
+	// no-op that returns nil, nil.
 	BatchRead(ctx context.Context, keys ...Key) ([]*Row[R], error)
 	// List retrieves one bounded page of rows. PageSize 0 means
 	// DefaultPageSize; negative returns InvalidArgument. Never unbounded —
@@ -77,7 +79,12 @@ type ResourceTable[R any] interface {
 	// error (idempotent, matching Spanner mutation semantics). A
 	// zero-length call is a no-op that returns nil.
 	Delete(ctx context.Context, keys ...Key) error
-	// WritePolicies writes IAM policies for the given rows. A zero-length
-	// call is a no-op that returns nil.
+	// WritePolicies writes the IAM policies for existing rows. A key that
+	// does not exist is a NotFound status error — WritePolicies attaches a
+	// policy to an existing row, it never creates one. The batch is
+	// validated in full — every key confirmed to exist — before any policy
+	// is written: a NotFound anywhere in the batch leaves every row's
+	// policy unchanged, matching the atomicity of Create and Write. A
+	// zero-length call is a no-op that returns nil.
 	WritePolicies(ctx context.Context, entries ...PolicyEntry) error
 }

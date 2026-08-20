@@ -466,8 +466,6 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 	default:
 		return "", nil, false, fmt.Errorf("unsupported expression: %v", expression.GetExprKind())
 	}
-
-	return "", params, false, nil
 }
 
 // parseMultiArgFunction handles SQL functions that accept a variable number of arguments.

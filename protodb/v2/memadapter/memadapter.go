@@ -32,7 +32,12 @@
 // # Locking and transactions
 //
 // See transaction.go: every Table[R] and every runner returned by
-// NewTransactionRunner shares one package-global sync.Mutex.
+// NewTransactionRunner shares one package-global sync.Mutex. RunTransaction
+// gives real rollback-on-error: it snapshots every live table's entries map
+// before running fn and restores those snapshots if fn returns a non-nil
+// error, so a failed transaction leaves every table exactly as it was
+// before the transaction started, matching protodb.TransactionRunner's
+// documented contract.
 package memadapter
 
 import (
@@ -70,7 +75,10 @@ type Config struct {
 	// Stream's Parent scoping. A nil ParentMatch defaults to a prefix
 	// match ("parent" is a string prefix) against the first key value —
 	// the natural scoping for hierarchical resource-name-shaped keys,
-	// matching spanneradapter.StringKeySpec's ParentFilter.
+	// matching spanneradapter.StringKeySpec's ParentFilter. To mirror a
+	// spanneradapter.KeySpecFor tagged spec instead — whose ParentFilter
+	// matches the leading column by equality, not prefix — supply a custom
+	// ParentMatch that compares the first key value with parent by ==.
 	ParentMatch func(parent string, key protodb.Key) bool
 }
 
@@ -100,7 +108,9 @@ func New[R any](cfg Config) *Table[R] {
 	if cfg.ParentMatch == nil {
 		cfg.ParentMatch = defaultParentMatch
 	}
-	return &Table[R]{cfg: cfg, entries: make(map[string]*entry[R])}
+	t := &Table[R]{cfg: cfg, entries: make(map[string]*entry[R])}
+	registerTable(t)
+	return t
 }
 
 // defaultParentMatch is Config.ParentMatch's default: a prefix match of

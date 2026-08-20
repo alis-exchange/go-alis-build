@@ -13,11 +13,14 @@ package protodbtest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/protodb/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Conformance is a table-driven conformance suite for a
@@ -106,6 +109,49 @@ func (c Conformance[R]) Run(t *testing.T) {
 		must(t, tbl.Create(ctx))
 		must(t, tbl.Write(ctx))
 		must(t, tbl.Delete(ctx))
+		must(t, tbl.WritePolicies(ctx))
+	})
+
+	t.Run("WritePoliciesRoundTrip", func(t *testing.T) {
+		tbl := c.NewTable(t)
+		row := c.MakeRow(1) // created with a nil Policy
+		must(t, tbl.Create(ctx, row))
+
+		want := &iampb.Policy{Version: 3, Etag: []byte("etag-1")}
+		must(t, tbl.WritePolicies(ctx, protodb.PolicyEntry{Key: row.Key, Policy: want}))
+
+		got, err := tbl.Read(ctx, row.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(got.Policy, want) {
+			t.Fatalf("got %v want %v", got.Policy, want)
+		}
+	})
+
+	t.Run("WritePoliciesMissingKeyIsNotFoundAndAtomic", func(t *testing.T) {
+		tbl := c.NewTable(t)
+		existing := c.MakeRow(1)
+		must(t, tbl.Create(ctx, existing))
+		original := &iampb.Policy{Version: 1, Etag: []byte("original")}
+		must(t, tbl.WritePolicies(ctx, protodb.PolicyEntry{Key: existing.Key, Policy: original}))
+
+		missing := c.MakeRow(99).Key // never created
+		err := tbl.WritePolicies(ctx,
+			protodb.PolicyEntry{Key: existing.Key, Policy: &iampb.Policy{Version: 2, Etag: []byte("changed")}},
+			protodb.PolicyEntry{Key: missing, Policy: &iampb.Policy{}},
+		)
+		if !protodb.IsNotFound(err) {
+			t.Fatalf("got %v", err)
+		}
+
+		got, err := tbl.Read(ctx, existing.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(got.Policy, original) {
+			t.Fatalf("existing row's policy changed despite batch failure: got %v want %v", got.Policy, original)
+		}
 	})
 
 	t.Run("ListPaginatesWithoutPhantomPage", func(t *testing.T) {
@@ -229,6 +275,27 @@ func (c Conformance[R]) Run(t *testing.T) {
 		got, _ := tbl.Read(ctx, c.MakeRow(1).Key)
 		if !c.Equal(got.Resource, mutated) {
 			t.Fatal("rmw not applied")
+		}
+	})
+
+	t.Run("TransactionRollsBackOnError", func(t *testing.T) {
+		if c.Runner == nil {
+			t.Skip("no runner provided")
+		}
+		tbl := c.NewTable(t)
+		row := c.MakeRow(1)
+		wantErr := errors.New("boom")
+		err := c.Runner(t).RunTransaction(ctx, func(ctx context.Context) error {
+			if err := tbl.Create(ctx, row); err != nil {
+				return err
+			}
+			return wantErr
+		})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("got %v, want %v", err, wantErr)
+		}
+		if _, err := tbl.Read(ctx, row.Key); !protodb.IsNotFound(err) {
+			t.Fatalf("row created by a rolled-back transaction is visible: got %v", err)
 		}
 	})
 }

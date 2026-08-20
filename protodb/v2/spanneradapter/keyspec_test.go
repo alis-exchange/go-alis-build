@@ -71,11 +71,31 @@ func TestKeySpecForColumns(t *testing.T) {
 		t.Fatal(spec.Columns())
 	}
 	sql, params := spec.ParentFilter("s1")
-	if sql != "session_id = @parent" || params["parent"] != "s1" {
+	if sql != "`session_id` = @parent" || params["parent"] != "s1" {
 		t.Fatalf("%q %v", sql, params)
 	}
 	if sql, _ := spec.ParentFilter(""); sql != "" {
 		t.Fatal("empty parent = no filter")
+	}
+}
+
+// keywordParentKey has a reserved-word-named leading column, so
+// ParentFilter must backtick-quote it or the emitted SQL is invalid.
+type keywordParentKey struct {
+	Key   string `pdb:"key"`
+	Order string `pdb:"order"`
+}
+
+func (k keywordParentKey) KeyValues() []any { return KeyValuesOf(k) }
+
+func TestKeySpecForParentFilterQuotesKeywordColumn(t *testing.T) {
+	spec, err := KeySpecFor[keywordParentKey]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql, params := spec.ParentFilter("p1")
+	if sql != "`key` = @parent" || params["parent"] != "p1" {
+		t.Fatalf("%q %v", sql, params)
 	}
 }
 

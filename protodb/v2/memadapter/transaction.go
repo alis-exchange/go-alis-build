@@ -16,10 +16,62 @@ import (
 // That is a deliberate simplification, not an oversight: memadapter is a
 // test double and the second (in-memory) proof of the ResourceTable seam,
 // not a production store. Contention under a single global lock is
-// irrelevant for its purpose — correctness (atomicity, no torn reads) is
-// what matters, and one mutex gives that for free without per-table
-// bookkeeping.
+// irrelevant for its purpose — correctness (no torn reads, and — via
+// liveTables below — real rollback-on-error) is what matters, and one
+// mutex gives that for free.
 var mu sync.Mutex
+
+// tableHooks lets RunTransaction snapshot and restore one Table[R]'s
+// entries without knowing R at the call site: R varies per table, so a
+// single package-global registry can't hold a concretely-typed
+// []*Table[R] — instead each hook pair closes over its own Table[R] and
+// erases R behind `any`.
+type tableHooks struct {
+	// snapshot returns a copy of the table's current entries map, boxed as
+	// any.
+	snapshot func() any
+	// restore replaces the table's entries map with a value previously
+	// returned by snapshot.
+	restore func(any)
+}
+
+// liveTables is the package-global registry of snapshot/restore hooks for
+// every Table[R] ever created by New, across every instantiation of R.
+// registerTable appends to it; RunTransaction reads it to snapshot every
+// live table before running fn and to restore them if fn errors.
+//
+// The registry is append-only — entries are never removed — so it grows
+// for the life of the process. That mirrors memadapter's role as a test
+// double (see the package doc): a long-running production process that
+// created unbounded Table instances would leak, but no consumer of
+// memadapter does that, and the simplicity is worth it here.
+var liveTables []tableHooks
+
+// registerTable adds t's snapshot/restore hooks to liveTables. Called once
+// per table, from New.
+func registerTable[R any](t *Table[R]) {
+	mu.Lock()
+	defer mu.Unlock()
+	liveTables = append(liveTables, tableHooks{
+		snapshot: func() any {
+			// entries is never mutated in place — every write replaces a
+			// map slot with a new *entry rather than editing one's fields
+			// (see the entry doc comment) — so a shallow copy of the map
+			// is a fully consistent point-in-time snapshot: even if t
+			// keeps writing after snapshot returns, the copied map's
+			// slots still point at the *entry values as they were at
+			// snapshot time.
+			cp := make(map[string]*entry[R], len(t.entries))
+			for k, v := range t.entries {
+				cp[k] = v
+			}
+			return cp
+		},
+		restore: func(s any) {
+			t.entries = s.(map[string]*entry[R])
+		},
+	})
+}
 
 // transactionMarkerKey is the context key RunTransaction sets so that
 // table operations invoked with its ctx can tell they are already running
@@ -51,21 +103,30 @@ func lock(ctx context.Context) (unlock func()) {
 type transactionRunner struct{}
 
 // NewTransactionRunner returns a protodb.TransactionRunner that provides
-// atomicity across memadapter tables by holding the single package-global
-// mutex (mu) for fn's entire execution: while RunTransaction holds it, no
-// other goroutine's table operation (List, Read, Write, Stream, ...) on ANY
-// memadapter table can interleave.
+// real atomicity across memadapter tables: it holds the single
+// package-global mutex (mu) for fn's entire execution — while
+// RunTransaction holds it, no other goroutine's table operation (List,
+// Read, Write, Stream, ...) on ANY memadapter table can interleave — and it
+// rolls back on error. Before invoking fn, RunTransaction snapshots every
+// live table's entries; if fn returns a non-nil error, every table's
+// entries are restored to that snapshot before RunTransaction returns, so
+// none of fn's writes are observable afterward. This matches
+// protodb.TransactionRunner's documented rollback-on-error contract.
 //
 // Unlike spanneradapter.SpannerTransactionRunner, fn runs exactly once —
-// there is no abort/retry simulation, because there is nothing here that
-// can abort. Consumers that rely on protodb.ReadModifyWrite's "fn may run
-// more than once" contract are still safe: running once is a valid
+// there is no abort/retry simulation, because there is no transient
+// conflict here that would call for a retry (mu already serializes every
+// transaction). Consumers that rely on protodb.ReadModifyWrite's "fn may
+// run more than once" contract are still safe: running once is a valid
 // (degenerate) case of "may run more than once".
 func NewTransactionRunner() protodb.TransactionRunner {
 	return transactionRunner{}
 }
 
-// RunTransaction implements protodb.TransactionRunner.
+// RunTransaction implements protodb.TransactionRunner. It commits fn's
+// writes by simply leaving them in place when fn returns nil, and rolls
+// them back by restoring every live table's pre-fn snapshot when fn
+// returns a non-nil error — see NewTransactionRunner.
 //
 // Nested calls are unsupported and WILL DEADLOCK: fn must not call
 // RunTransaction again (on this or any other memadapter runner) with the
@@ -77,5 +138,17 @@ func NewTransactionRunner() protodb.TransactionRunner {
 func (transactionRunner) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	mu.Lock()
 	defer mu.Unlock()
-	return fn(context.WithValue(ctx, transactionMarkerKey{}, true))
+
+	snapshots := make([]any, len(liveTables))
+	for i, h := range liveTables {
+		snapshots[i] = h.snapshot()
+	}
+
+	err := fn(context.WithValue(ctx, transactionMarkerKey{}, true))
+	if err != nil {
+		for i, h := range liveTables {
+			h.restore(snapshots[i])
+		}
+	}
+	return err
 }

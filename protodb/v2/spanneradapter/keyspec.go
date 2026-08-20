@@ -173,6 +173,11 @@ type taggedKeySpec struct {
 // KeySpecFor returns an error. Decode builds a K via reflection and typed
 // per-column reads (row.ColumnByName); Encode is the shared
 // json.Marshal(key.KeyValues()) canonical string.
+//
+// ParentFilter scoping differs from StringKeySpec: a tagged spec matches
+// its leading column by equality (column = parent), while StringKeySpec
+// matches by prefix (STARTS_WITH) — pick whichever KeySpec fits how the
+// table's parent column is actually shaped.
 func KeySpecFor[K protodb.Key](opts ...KeySpecOption) (KeySpec, error) {
 	o := keySpecOpts{parentCols: 1}
 	for _, opt := range opts {
@@ -227,7 +232,7 @@ func (s *taggedKeySpec) ParentFilter(parent string) (string, map[string]any) {
 	if parent == "" {
 		return "", nil
 	}
-	return fmt.Sprintf("%s = @parent", s.fields[0].column), map[string]any{"parent": parent}
+	return fmt.Sprintf("%s = @parent", quoteColumn(s.fields[0].column)), map[string]any{"parent": parent}
 }
 
 func (s *taggedKeySpec) Decode(row *spanner.Row) (protodb.Key, error) {
