@@ -2,6 +2,7 @@ package authz
 
 import (
 	"encoding/base64"
+	"slices"
 	"testing"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
@@ -248,5 +249,30 @@ func TestAuthzRolesAreCarriedNotEnforced(t *testing.T) {
 	identity.AuthzRoles = []string{}
 	if !MustNew(&identity).HasRole([]string{"roles/viewer"}) {
 		t.Fatal("expected authz to ignore AuthzRoles and keep role 'roles/viewer'")
+	}
+}
+
+// TestHasRoleDoesNotRetainOnceOffRoles checks that a once-off policy role does
+// not land in the authorizer's own role slice. Appending into its spare
+// capacity would let concurrent checks that share an Authorizer, such as
+// per-row policy checks in a List method, overwrite each other's roles.
+func TestHasRoleDoesNotRetainOnceOffRoles(t *testing.T) {
+	testAZ := MustNew(testIdentity)
+	testAZ.AddRoles("roles/viewer", "roles/editor", "roles/owner")
+	testAZ.roles = testAZ.roles[:1] // leave spare capacity, as a filtered slice would
+
+	onceOff := &iampb.Policy{
+		Bindings: []*iampb.Binding{
+			{Role: "roles/admin", Members: []string{"user:" + testIdentity.ID}},
+		},
+	}
+	if !testAZ.HasRole([]string{"roles/admin"}, onceOff) {
+		t.Fatal("expected the once-off policy to grant role 'roles/admin'")
+	}
+	if len(testAZ.roles) != 1 || slices.Contains(testAZ.roles, "roles/admin") {
+		t.Fatalf("expected once-off role not to be retained, got %v", testAZ.roles)
+	}
+	if cap(testAZ.roles) > 1 && testAZ.roles[:cap(testAZ.roles)][1] == "roles/admin" {
+		t.Fatal("once-off role was written into the authorizer's spare capacity")
 	}
 }

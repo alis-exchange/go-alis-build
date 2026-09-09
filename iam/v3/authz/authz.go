@@ -68,7 +68,10 @@ func (a *Authorizer) HasRole(roles []string, policies ...*iampb.Policy) bool {
 		// Already false for restricted identities.
 		return true
 	}
-	allRoles := append(a.roles, rolesFromPolicies(a.identity, policies...)...)
+	// Concat always allocates, so the once-off policy roles never land in
+	// a.roles' spare capacity. Appending there would let two HasRole calls that
+	// share an Authorizer write over each other's roles.
+	allRoles := slices.Concat(a.roles, rolesFromPolicies(a.identity, policies...))
 	for _, role := range roles {
 		if !a.identity.Restricted && slices.Contains(openRoles, role) {
 			return true
