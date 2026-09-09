@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.alis.build/iam/v3"
 )
 
 // Use two httptest servers to test the proxy.
@@ -198,4 +200,64 @@ func TestHandleGRPCAndWeb(t *testing.T) {
 	if restRec.Code != http.StatusOK {
 		t.Fatalf("unexpected rest status code: %d", restRec.Code)
 	}
+}
+
+// TestProxyForwardsScopedCredentialClaims checks that the gateway carries the
+// scoped credential claims through to the service behind it. The proxy
+// re-marshals the identity rather than passing the header along, so before
+// iam/v3 v3.10.0 it silently dropped both claims and a scoped credential
+// arrived unrestricted at a service that was itself ready to honour it.
+//
+// The empty allowlist is the case that matters: it has to stay distinguishable
+// from an absent one, because empty means the credential may use no roles at
+// all while absent means it is unrestricted.
+func TestProxyForwardsScopedCredentialClaims(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+
+	var forwarded *iam.Identity
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, err := iam.FromHeader(r)
+		if err != nil {
+			t.Errorf("no identity in forwarded request: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		forwarded = identity
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer targetServer.Close()
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r)
+	}))
+	defer proxyServer.Close()
+
+	scoped := &iam.Identity{
+		Type:       iam.User,
+		ID:         "1934872948",
+		Email:      "john@example.com",
+		AuthzRoles: []string{},
+		Restricted: true,
+	}
+	Get("/scoped", HTTPProxy(targetServer.Listener.Addr().(*net.TCPAddr).Port), func(w http.ResponseWriter, r *http.Request, handler Func) error {
+		return handler(w, r.WithContext(scoped.Context(r.Context())))
+	})
+
+	resp, err := http.Get(proxyServer.URL + "/scoped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", resp.StatusCode)
+	}
+	if forwarded == nil {
+		t.Fatal("target never saw a forwarded identity")
+	}
+	expect(t, forwarded.Restricted, true)
+	if forwarded.AuthzRoles == nil {
+		t.Fatal("AuthzRoles arrived nil: an empty allowlist must not read as unrestricted")
+	}
+	expect(t, len(forwarded.AuthzRoles), 0)
 }
