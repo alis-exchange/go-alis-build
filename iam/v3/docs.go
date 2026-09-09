@@ -25,6 +25,16 @@
 // service should act as itself. Use [AddAdminEmail] to give human users the
 // same authorization bypass while keeping their identity type as user.
 //
+// A credential can also be issued below its principal's authority. Set
+// [Identity.Restricted] to suppress the system and admin bypass along with the
+// authz package's open roles, and carry the issuer's role allowlist in
+// [Identity.AuthzRoles], where nil means unrestricted and an empty slice means
+// no roles at all. The library carries AuthzRoles; the consuming service
+// intersects its gathered roles against it. Bypass decisions must go through
+// [(*Identity).IsPrivileged], which honours Restricted, rather than
+// [(*Identity).IsSystem] or [(*Identity).IsAdmin], which only describe the
+// principal.
+//
 // Example:
 //
 //	auth.AddSystemEmail("alis-build@my-project.iam.gserviceaccount.com")

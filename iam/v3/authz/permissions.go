@@ -28,8 +28,9 @@ func AddRolePermissions(role string, permissions []string) []string {
 	return permissions
 }
 
-// HasPermission returns true if the identity has the specified permission (or is privileged),
-// considering both previously added roles and those from the provided policies.
+// HasPermission returns true if the identity has the specified permission (or is
+// privileged and not Restricted), considering both previously added roles and
+// those from the provided policies.
 //
 // Note: Policies provided here are evaluated once and not persisted. To persist
 // roles for subsequent checks (e.g., applying parent policies across multiple

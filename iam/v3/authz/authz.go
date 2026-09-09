@@ -56,16 +56,24 @@ func MustNew(identity *iam.Identity) *Authorizer {
 // HasRole returns true if the identity has one of the specified roles (or is privileged),
 // considering both previously added roles and those from the provided policies.
 //
+// Privileged identities pass every check and open roles are granted to every
+// identity, except where the identity is Restricted: a restricted credential
+// only passes for roles it explicitly carries.
+//
 // Note: Policies provided here are evaluated once and not persisted. To persist
 // roles for subsequent checks (e.g., applying parent policies across multiple
 // items in a List method), use AddRolesFromPolicies instead.
 func (a *Authorizer) HasRole(roles []string, policies ...*iampb.Policy) bool {
 	if a.identity.IsPrivileged() {
+		// Already false for restricted identities.
 		return true
 	}
-	allRoles := append(a.roles, rolesFromPolicies(a.identity, policies...)...)
+	// Concat always allocates, so the once-off policy roles never land in
+	// a.roles' spare capacity. Appending there would let two HasRole calls that
+	// share an Authorizer write over each other's roles.
+	allRoles := slices.Concat(a.roles, rolesFromPolicies(a.identity, policies...))
 	for _, role := range roles {
-		if slices.Contains(openRoles, role) {
+		if !a.identity.Restricted && slices.Contains(openRoles, role) {
 			return true
 		}
 		if slices.Contains(allRoles, role) {

@@ -49,12 +49,19 @@
 // [AddOpenRolePermissions] marks a role as open. Any permission attached to an
 // open role is granted without the caller needing that role explicitly. This is
 // useful for methods that should be reachable by any authenticated caller while
-// still being described in the same permission map.
+// still being described in the same permission map. Open roles are not granted
+// to identities marked restricted.
 //
 // Policies passed directly to [(*Authorizer).HasRole] or
 // [(*Authorizer).HasPermission] are evaluated for that check only. Use
 // [(*Authorizer).AddRolesFromPolicies] when parent or inherited policies should
 // persist across multiple checks in the same request.
 //
-// System identities automatically pass all role and permission checks.
+// System and admin identities automatically pass all role and permission
+// checks, unless the identity is restricted, in which case only the roles it
+// explicitly carries count: those from its policy claim, those from supplied
+// policies, and those added with [(*Authorizer).AddRoles].
+//
+// The identity's AuthzRoles allowlist is not evaluated here. Services that
+// issue scoped credentials intersect their own gathered roles against it.
 package authz
