@@ -32,6 +32,31 @@ type (
 		Scopes              []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
 		ActiveIdeateAccount *IdeateAccount      `json:"active_ideate_account"`
 		ActiveBuildAccount  *BuildAccount       `json:"active_build_account"`
+		// AuthzRoles is the set of roles a scoped credential, such as a personal
+		// API key, is limited to. The library only carries it; the consuming
+		// service intersects the roles it gathers against it.
+		//
+		// nil (claim absent or null) means unrestricted. A non-nil empty slice
+		// (the claim present as []) means restricted to no roles at all, which is
+		// the most restricted credential there is. Never normalise empty to nil
+		// and never add omitempty: collapsing the two turns the most restricted
+		// credential into the least restricted one.
+		AuthzRoles []string `json:"authz_roles"`
+		// Restricted marks a credential that may never exceed the roles it
+		// explicitly carries: the system and admin bypass in IsPrivileged and the
+		// open role bypass in the authz package do not apply to it. Absent means
+		// false, so existing callers see no change.
+		//
+		// IsSystem and IsAdmin still report who the principal is; only
+		// IsPrivileged is affected. This is also distinct from any issuer claim
+		// describing how the holder authenticated, such as cred: authorization
+		// must key off Restricted, not off the credential kind.
+		//
+		// Restriction is fail-open across versions. A consumer older than v3.10.0
+		// ignores this claim and grants the credential its principal's full
+		// authority, so issuers have to keep their own guards until every
+		// consumer has upgraded.
+		Restricted bool `json:"restricted"`
 	}
 	IdeateAccount struct {
 		AccountID                string  `json:"account_id"`

@@ -18,6 +18,19 @@ The core package that defines `auth.Identity`. An `Identity` represents an authe
 - JWT parsing: `FromJWT()` decodes tokens into an `Identity`.
 - Supports trusted internal callers by marking known service accounts as system identities with `AddSystemEmail()`.
 - Supports human super admins with `AddAdminEmail()` while keeping them as user identities.
+- Supports credentials scoped below a signed-in session: `Restricted` disables the privileged and open-role bypasses, and `AuthzRoles` carries the issuer's role allowlist for the service to enforce.
+
+**Scoped credentials:**
+
+`AuthzRoles` distinguishes an absent claim from an empty one, and the difference is load-bearing:
+
+| Claim in the token | `AuthzRoles` | Meaning |
+| --- | --- | --- |
+| absent, or `null` | `nil` | unrestricted |
+| `"authz_roles": []` | `[]string{}` (non-nil, length 0) | restricted to no roles at all |
+| `"authz_roles": ["roles/x"]` | `["roles/x"]` | restricted to those roles |
+
+Never normalise the empty case to nil: collapsing the two turns the most restricted credential into the least restricted one. The library carries the allowlist; the consuming service intersects the roles it gathers against it.
 
 **Example Usage:**
 
@@ -99,6 +112,7 @@ Provides an `Authorizer` to check if a given `auth.Identity` has the necessary r
 
 - Extract roles from an identity's attached IAM policy or explicit Google Cloud IAM policies.
 - Check if an identity has specific roles: `HasRole(roles []string, policies ...*iampb.Policy)`.
+- Restricted identities never pass via an open role or the privileged bypass; they pass only for roles they explicitly carry.
 
 **Example Usage:**
 

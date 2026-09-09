@@ -69,3 +69,50 @@ func TestHasPermissionForAdmin(t *testing.T) {
 		t.Fatalf("expected admin identity to remain user, got %v", admin.Type)
 	}
 }
+
+func TestHasPermissionForRestrictedIdentity(t *testing.T) {
+	identity := &iam.Identity{Type: iam.User, ID: "restricted-1234", Restricted: true}
+	authorizer := MustNew(identity)
+
+	// The open role no longer grants its permissions.
+	if authorizer.HasPermission("/example.v1.Examples/Create") {
+		t.Errorf("expected restricted identity not to have permission /example.v1.Examples/Create")
+	}
+
+	// Roles the credential explicitly carries still grant theirs.
+	authorizer.AddRoles("roles/viewer")
+	if !authorizer.HasPermission("/example.v1.Examples/Get") {
+		t.Errorf("expected restricted identity to have permission /example.v1.Examples/Get")
+	}
+	if authorizer.HasPermission("/example.v1.Examples/Create") {
+		t.Errorf("expected restricted identity not to have permission /example.v1.Examples/Create")
+	}
+	if authorizer.HasPermission("/example.v1.Examples/Delete") {
+		t.Errorf("expected restricted identity not to have permission /example.v1.Examples/Delete")
+	}
+}
+
+func TestHasPermissionForRestrictedAdmin(t *testing.T) {
+	admin := &iam.Identity{
+		Type:       iam.User,
+		ID:         "restricted-permission-admin-id",
+		Email:      "restricted-permission-admin@example.com",
+		Restricted: true,
+	}
+	iam.AddAdminEmail(admin.Email)
+
+	authorizer := MustNew(admin)
+	if authorizer.HasPermission("/example.v1.Examples/Delete") {
+		t.Errorf("expected restricted admin not to have permission /example.v1.Examples/Delete")
+	}
+	if authorizer.HasPermission("/example.v1.Examples/Create") {
+		t.Errorf("expected restricted admin not to have open permission /example.v1.Examples/Create")
+	}
+	authorizer.AddRoles("roles/admin")
+	if !authorizer.HasPermission("/example.v1.Examples/Delete") {
+		t.Errorf("expected restricted admin to have permission /example.v1.Examples/Delete via an added role")
+	}
+	if admin.Type != iam.User {
+		t.Fatalf("expected restricted admin to remain user, got %v", admin.Type)
+	}
+}
