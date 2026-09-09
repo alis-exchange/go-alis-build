@@ -11,12 +11,11 @@ var (
 // it with the given permissions.
 //
 // The id is process-local in the same way [AddRolePermissions] describes, and
-// open roles are where that bites hardest: "roles/open" is the conventional
-// name for the any-signed-in-user role, so nearly every service registers one
-// and no two grant the same thing. Definitions in production today range from
-// reading your own profile to deleting your own account to creating another
-// domain's resources. Never treat an open role id from one service as though
-// it named the same authority in another.
+// open roles are where that bites hardest. An open role usually takes a
+// conventional name, so many services register the same id while each grants
+// an entirely different set of permissions behind it, and being open it is
+// reached without any grant to the caller. Never treat an open role id from
+// one service as though it named the same authority in another.
 //
 // It is intended for process startup configuration, typically from init
 // functions, and must not be called concurrently with authorization checks.
@@ -28,9 +27,9 @@ func AddOpenRolePermissions(role string, permissions []string) {
 // AddRolePermissions registers the permissions granted by role.
 //
 // Role ids are unnamespaced and scoped to the registering process. The map
-// lives in this package, so "roles/admin" here and "roles/admin" in another
-// service are unrelated strings that happen to match, and the same id may grant
-// entirely different permissions in each. That is fine, and needs no guard, so
+// lives in this package, so an id registered here and the same id registered in
+// another service are unrelated strings that happen to match, and each may
+// grant entirely different permissions. That is fine, and needs no guard, so
 // long as no id is carried across a service boundary as authorization data.
 //
 // Do not do that. Nothing that leaves this process, a token claim especially,

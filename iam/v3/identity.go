@@ -32,9 +32,9 @@ type (
 		Scopes              []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
 		ActiveIdeateAccount *IdeateAccount      `json:"active_ideate_account"`
 		ActiveBuildAccount  *BuildAccount       `json:"active_build_account"`
-		// AuthzRoles is the set of roles a scoped credential, such as a personal
-		// API key, is limited to. The library only carries it. Only the service
-		// that issued the credential may interpret or enforce it.
+		// AuthzRoles is the set of roles a scoped credential is limited to. The
+		// library only carries it. Only the service that issued the credential
+		// may interpret or enforce it.
 		//
 		// The values are that issuer's own role vocabulary and nothing more.
 		// Role ids are unnamespaced strings registered into a process-local map
@@ -45,12 +45,13 @@ type (
 		// same vocabulary: it denies most of what it should allow and grants
 		// whatever happens to collide.
 		//
-		// "roles/open" is the near-certain collision, because it is the
-		// conventional name for the any-signed-in-user role and so nearly every
-		// service defines one. Real definitions in production today range from
-		// reading your own profile, to deleting your own account, to creating
-		// and batch-deleting another domain's resources. An allowlist naming it
-		// means something different in every process that reads it.
+		// Conventional names collide the most. A name obvious enough for one
+		// service to reach for is obvious to every other, so the same id ends up
+		// registered widely while each service attaches its own permissions to
+		// it. Roles meant to describe a broad class of caller are the usual
+		// case, and the permissions behind them vary from reading something
+		// harmless to deleting a resource outright. The more familiar the name,
+		// the less its presence in an allowlist tells you.
 		//
 		// So carriage is all this field can safely be. Treat an allowlist minted
 		// by another service as opaque: forward it untouched, or ignore it. If a
