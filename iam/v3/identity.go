@@ -33,8 +33,30 @@ type (
 		ActiveIdeateAccount *IdeateAccount      `json:"active_ideate_account"`
 		ActiveBuildAccount  *BuildAccount       `json:"active_build_account"`
 		// AuthzRoles is the set of roles a scoped credential, such as a personal
-		// API key, is limited to. The library only carries it; the consuming
-		// service intersects the roles it gathers against it.
+		// API key, is limited to. The library only carries it. Only the service
+		// that issued the credential may interpret or enforce it.
+		//
+		// The values are that issuer's own role vocabulary and nothing more.
+		// Role ids are unnamespaced strings registered into a process-local map
+		// by [go.alis.build/iam/v3/authz.AddRolePermissions], so the same string
+		// routinely means different permissions in different services, and no
+		// two services need agree. A service that trims its own roles against an
+		// allowlist minted elsewhere is comparing strings that were never in the
+		// same vocabulary: it denies most of what it should allow and grants
+		// whatever happens to collide.
+		//
+		// "roles/open" is the near-certain collision, because it is the
+		// conventional name for the any-signed-in-user role and so nearly every
+		// service defines one. Real definitions in production today range from
+		// reading your own profile, to deleting your own account, to creating
+		// and batch-deleting another domain's resources. An allowlist naming it
+		// means something different in every process that reads it.
+		//
+		// So carriage is all this field can safely be. Treat an allowlist minted
+		// by another service as opaque: forward it untouched, or ignore it. If a
+		// credential must be scoped across a service boundary, that has to be
+		// expressed in something both ends define, such as a policy, not in
+		// these ids.
 		//
 		// nil (claim absent or null) means unrestricted. A non-nil empty slice
 		// (the claim present as []) means restricted to no roles at all, which is
