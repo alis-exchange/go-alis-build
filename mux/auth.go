@@ -1,10 +1,16 @@
 package mux
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
+	"go.alis.build/alog"
 	"go.alis.build/iam/v3"
 	"go.alis.build/iam/v3/authn"
 )
@@ -45,6 +51,45 @@ var (
 	// The default empty string leaves the cookie host-only. Set this before
 	// serving requests when cookies should be shared across subdomains.
 	AuthCookiesDomain string = ""
+
+	// AcceptedAudiences lists the aud claim values this service accepts in IAM
+	// access tokens.
+	//
+	// When empty, which is the default, a populated aud claim must equal
+	// RequestHost(r) for the request being served. That is the historical
+	// behaviour. It compares against the client-controlled Host header, and it
+	// forces an identity provider to omit aud entirely, because a token minted
+	// for one service is rejected by every other host.
+	//
+	// When set, a populated aud must contain one of these values, compared
+	// exactly, and RequestHost is no longer consulted. Both a string aud and an
+	// RFC 7519 array of strings are accepted, and an array matches when any of
+	// its elements does. A token carrying no aud is still accepted and reported
+	// through MissingAudienceHandler. A token whose aud does not match is never
+	// refreshed, and a refreshed token is checked in turn.
+	//
+	// Set this before serving requests. Migration order matters: every resource
+	// server has to be running a mux that accepts the audience before the
+	// identity provider starts populating aud, because earlier versions reject
+	// any aud other than their own origin.
+	AcceptedAudiences []string
+
+	// MissingAudienceHandler is called when AcceptedAudiences is set and the
+	// authenticated access token carries no aud claim.
+	//
+	// The default logs and accepts the request, which holds the deprecation
+	// window open while the identity provider is migrated to populating aud. The
+	// log line is the signal for timing that cutover: it shows which services
+	// have adopted AcceptedAudiences, and later whether any token without an
+	// audience is still in circulation. Return an error, such as
+	// UnauthorizedErr("missing audience"), to close the window. The error is
+	// returned to the client as-is and never starts a login redirect.
+	//
+	// It is never called while AcceptedAudiences is empty.
+	MissingAudienceHandler = func(w http.ResponseWriter, r *http.Request) error {
+		alog.Infof(r.Context(), "access token accepted without aud claim: %s %s", r.Method, r.URL.Path)
+		return nil
+	}
 
 	// AuthClient is the authentication client used by the built-in auth handlers.
 	//
@@ -89,7 +134,16 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 	}
 
 	// authenticate
-	refreshed, err := AuthClient.AuthenticateWithAudience(tokens, time.Now(), RequestHost(r))
+	var refreshed bool
+	var err error
+	if len(AcceptedAudiences) == 0 {
+		refreshed, err = AuthClient.AuthenticateWithAudience(tokens, time.Now(), RequestHost(r))
+	} else {
+		// The audience is enforced by checkAudience below, against the token this
+		// request ends up using. Leaving it out here keeps a token with the wrong
+		// audience from being refreshed into an accepted one.
+		refreshed, err = AuthClient.Authenticate(tokens, time.Now())
+	}
 	if err != nil {
 		if !IsBrowserNavigationRequest(r) {
 			return UnauthorizedHandler(w, r, err.Error())
@@ -113,10 +167,85 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 		setAuthCookie(w, r, RefreshTokenCookie, tokens.RefreshToken, 400*24*3600)
 	}
 
+	// enforce the configured audiences against the token this request uses,
+	// which is the refreshed one if a refresh happened
+	if len(AcceptedAudiences) > 0 {
+		if err := checkAudience(w, r, tokens.AccessToken); err != nil {
+			return err
+		}
+	}
+
 	// set identity in context
 	identity := iam.MustFromJWT(tokens.AccessToken)
 	r = r.WithContext(identity.Context(r.Context()))
 	return PostAuthMiddleware(w, r, handler)
+}
+
+// checkAudience enforces AcceptedAudiences against the aud claim of token.
+//
+// A mismatch is rejected through UnauthorizedHandler for every kind of request,
+// browser navigations included. Logging in again cannot repair a mismatch,
+// because the identity provider would mint another token with the same
+// audience, so redirecting would bounce the browser between the two services
+// indefinitely. A token with no aud claim is left to MissingAudienceHandler.
+func checkAudience(w http.ResponseWriter, r *http.Request, token string) error {
+	audiences, err := jwtAudiences(token)
+	if err != nil {
+		return UnauthorizedHandler(w, r, err.Error())
+	}
+	if len(audiences) == 0 {
+		return MissingAudienceHandler(w, r)
+	}
+	for _, audience := range audiences {
+		if slices.Contains(AcceptedAudiences, audience) {
+			return nil
+		}
+	}
+	return UnauthorizedHandler(w, r, fmt.Sprintf("invalid audience %q", audiences))
+}
+
+// jwtAudiences returns the aud claim of token.
+//
+// RFC 7519 allows aud to be a single string or an array of strings, and both
+// are returned as a slice. A token with no aud claim, or an empty one, returns
+// nil without an error so the caller can treat it as absent. Any other shape is
+// an error, so an audience that cannot be read is rejected rather than ignored.
+// The signature is not checked here; the token must be validated first.
+func jwtAudiences(token string) ([]string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("invalid token format, expect {hdr}.{body}.{sig}")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode payload: %w", err)
+	}
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+	if len(claims.Aud) == 0 {
+		return nil, nil
+	}
+	// A JSON null unmarshals into the string form without error and leaves it
+	// empty, so it is treated as absent alongside "".
+	var single string
+	if err := json.Unmarshal(claims.Aud, &single); err == nil {
+		if single == "" {
+			return nil, nil
+		}
+		return []string{single}, nil
+	}
+	var many []string
+	if err := json.Unmarshal(claims.Aud, &many); err != nil {
+		return nil, fmt.Errorf("invalid aud claim: %w", err)
+	}
+	if len(many) == 0 {
+		return nil, nil
+	}
+	return many, nil
 }
 
 func callbackHandle(w http.ResponseWriter, r *http.Request) error {
@@ -188,6 +317,10 @@ func shouldSecureAuthCookies(r *http.Request) bool {
 // authenticates access and refresh tokens from cookies, falls back to a bearer
 // Authorization header for the access token, refreshes cookies when needed, and
 // stores the IAM identity in the request context before invoking handleFunc.
+//
+// When AcceptedAudiences is set, the aud claim of the token the request ends up
+// using is checked after any refresh. See AcceptedAudiences and
+// MissingAudienceHandler.
 //
 // If authentication fails for a browser navigation request, the middleware
 // redirects the user to the identity service authorization URL. The redirect uses

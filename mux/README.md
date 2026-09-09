@@ -7,7 +7,7 @@
 - **Standard HTTP Routing**: Simple wrappers like `mux.Get`, `mux.Post` around the standard library routing.
 - **Middleware Support**: Chain multiple middlewares easily per route or globally (via `mux.AddGateway`).
 - **Error Handling**: Handlers return an `error` which is automatically logged and mapped to HTTP status codes.
-- **Authentication**: Built-in integration with `go.alis.build/iam/v3/authn` for easy protected routes (`mux.AuthenticatedGet`).
+- **Authentication**: Built-in integration with `go.alis.build/iam/v3/authn` for easy protected routes (`mux.AuthenticatedGet`), with optional audience validation via `mux.AcceptedAudiences`.
 - **System Routes**: Built-in support for securing system-to-system routes in Google Cloud using ID tokens (`mux.SystemGet`).
 - **Mixed Protocol Servers**: Mount standard `http.Handler` values, native gRPC handlers, and gRPC-Web handlers on the same listener.
 
@@ -70,6 +70,35 @@ func main() {
  mux.ListenAndServe(":8080")
 }
 ```
+
+#### Audience validation
+
+By default, an access token carrying an `aud` claim is accepted only when that claim equals the scheme and host of the request being served (`mux.RequestHost`); tokens without an `aud` are accepted. That ties validity to the client-supplied `Host` header, and it stops an identity provider issuing audience-restricted tokens at all, because a token minted for one service is rejected by every other host.
+
+Services that receive audience-restricted tokens declare what they accept instead. Set it before serving requests:
+
+```go
+mux.AcceptedAudiences = []string{"https://api.example.com", "my-service"}
+```
+
+Once set:
+
+- A populated `aud`, either a string or an array of strings, must contain one of the configured values, compared exactly. Anything else is a 401 through `mux.UnauthorizedHandler`. Browser navigations are not redirected to log in for a mismatch, since logging in again would only mint another token with the same audience.
+- A token whose `aud` does not match is never refreshed, and a token obtained by refreshing is checked in turn.
+- A token with no `aud` is passed to `mux.MissingAudienceHandler`, whose default logs `access token accepted without aud claim` and accepts the request. Close that window once the provider populates `aud` everywhere:
+
+```go
+mux.MissingAudienceHandler = func(w http.ResponseWriter, r *http.Request) error {
+ return mux.UnauthorizedErr("missing audience")
+}
+```
+
+**Migration order matters.** A service that has not adopted `AcceptedAudiences` rejects any `aud` other than its own origin, so populating `aud` at the identity provider too early is an outage rather than a warning:
+
+1. Upgrade `mux` on every resource server. Nothing changes yet.
+2. Set `mux.AcceptedAudiences` on every resource server. Each one starts logging `access token accepted without aud claim`.
+3. Only once every service logs that line does the identity provider begin populating `aud`.
+4. Once the line stops appearing anywhere, close the window by having `MissingAudienceHandler` return an error.
 
 ### System Routes
 

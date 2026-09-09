@@ -35,6 +35,14 @@
 //		return err
 //	})
 //
+// By default a populated aud claim must equal the scheme and host of the request
+// being served. Services that receive audience-restricted tokens declare the
+// audiences they accept instead. Tokens without an aud claim are still accepted
+// and reported through MissingAudienceHandler, so set AcceptedAudiences on every
+// resource server before the identity provider starts populating aud.
+//
+//	mux.AcceptedAudiences = []string{"https://api.example.com"}
+//
 // System routes use the SystemHandle family of helpers and are intended for
 // service-to-service calls in Google Cloud. The system middleware validates the
 // incoming Google ID token and requires it to belong to the environment service

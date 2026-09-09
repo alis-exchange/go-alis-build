@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -333,4 +335,306 @@ func testJWT(t *testing.T, claims map[string]any) string {
 		t.Fatal(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+// audienceTestEnv records what a request reached during an audience test.
+type audienceTestEnv struct {
+	tokenCalls atomic.Int32
+	handlerRan atomic.Bool
+}
+
+// setupAudienceTest installs a fresh mux with an authenticated route, an
+// AuthClient that skips signature validation and refreshes against a local
+// token server returning refreshedAccessToken, and the given accepted
+// audiences. Package state is restored when the test ends.
+func setupAudienceTest(t *testing.T, accepted []string, refreshedAccessToken string) *audienceTestEnv {
+	t.Helper()
+	env := &audienceTestEnv{}
+
+	mux = http.NewServeMux()
+	gateway = nil
+	oldAuthClient, oldAccepted, oldMissing := AuthClient, AcceptedAudiences, MissingAudienceHandler
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		env.tokenCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(&authn.Tokens{
+			AccessToken:  refreshedAccessToken,
+			RefreshToken: "rotated-refresh-token",
+		}); err != nil {
+			t.Error(err)
+		}
+	}))
+	AuthClient = authn.NewClient("https://identity.example.com")
+	AuthClient.TokenURL = tokenServer.URL
+	AuthClient.SkipSignatureValidation = true
+	AcceptedAudiences = accepted
+
+	t.Cleanup(func() {
+		tokenServer.Close()
+		AuthClient, AcceptedAudiences, MissingAudienceHandler = oldAuthClient, oldAccepted, oldMissing
+	})
+
+	AuthenticatedGet("/secure", func(w http.ResponseWriter, r *http.Request) error {
+		env.handlerRan.Store(true)
+		return nil
+	})
+	return env
+}
+
+// secureRequest calls the route registered by setupAudienceTest. The host makes
+// RequestHost report "http://app.example.com".
+func secureRequest(accessToken, refreshToken string, navigation bool) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/secure", nil)
+	if navigation {
+		req.Header.Set("Accept", "text/html")
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
+	if accessToken != "" {
+		req.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: accessToken})
+	}
+	if refreshToken != "" {
+		req.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken})
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// audienceToken builds an unsigned access token. A nil aud omits the claim.
+func audienceToken(t *testing.T, exp time.Time, aud any) string {
+	t.Helper()
+	claims := map[string]any{"exp": exp.Unix(), "email": "john@example.com", "sub": "1934872948"}
+	if aud != nil {
+		claims["aud"] = aud
+	}
+	return testJWT(t, claims)
+}
+
+// TestAuthMiddlewareAudienceUnset pins the behaviour of the default
+// configuration, which must not change: a populated aud is compared against the
+// request's own origin, and a token without one is accepted.
+func TestAuthMiddlewareAudienceUnset(t *testing.T) {
+	valid := time.Now().Add(time.Minute)
+
+	t.Run("aud equal to the request host is accepted", func(t *testing.T) {
+		env := setupAudienceTest(t, nil, "")
+		rec := secureRequest(audienceToken(t, valid, "http://app.example.com"), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.handlerRan.Load(), true)
+		expect(t, env.tokenCalls.Load(), int32(0))
+	})
+
+	t.Run("aud that differs is rejected", func(t *testing.T) {
+		env := setupAudienceTest(t, nil, "")
+		rec := secureRequest(audienceToken(t, valid, "https://other.example.com"), "", false)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, env.handlerRan.Load(), false)
+		expect(t, env.tokenCalls.Load(), int32(0))
+	})
+
+	t.Run("absent aud is accepted without consulting the handler", func(t *testing.T) {
+		env := setupAudienceTest(t, nil, "")
+		MissingAudienceHandler = func(w http.ResponseWriter, r *http.Request) error {
+			t.Error("MissingAudienceHandler must not run while AcceptedAudiences is empty")
+			return nil
+		}
+		rec := secureRequest(audienceToken(t, valid, nil), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.handlerRan.Load(), true)
+	})
+
+	t.Run("aud that differs is refreshed when a refresh token is present", func(t *testing.T) {
+		// Documents the gap that AcceptedAudiences closes: today a mismatch is
+		// treated like any other validation failure and triggers a refresh.
+		env := setupAudienceTest(t, nil, audienceToken(t, valid, nil))
+		rec := secureRequest(audienceToken(t, valid, "https://other.example.com"), "refresh-token", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.tokenCalls.Load(), int32(1))
+	})
+}
+
+// TestAuthMiddlewareAcceptedAudiences covers the opted-in behaviour.
+func TestAuthMiddlewareAcceptedAudiences(t *testing.T) {
+	accepted := []string{"https://api.example.com", "my-service"}
+	valid := time.Now().Add(time.Minute)
+	expired := time.Now().Add(-time.Minute)
+
+	t.Run("matching aud is accepted", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, "my-service"), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.handlerRan.Load(), true)
+		expect(t, env.tokenCalls.Load(), int32(0))
+	})
+
+	t.Run("mismatched aud is rejected and never refreshed", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, audienceToken(t, valid, "my-service"))
+		rec := secureRequest(audienceToken(t, valid, "https://other.example.com"), "refresh-token", false)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, env.handlerRan.Load(), false)
+		expect(t, env.tokenCalls.Load(), int32(0))
+		if !strings.Contains(rec.Body.String(), "invalid audience") {
+			t.Fatalf("got body %q, expected it to mention an invalid audience", rec.Body.String())
+		}
+	})
+
+	t.Run("mismatched aud on a browser navigation is rejected not redirected", func(t *testing.T) {
+		// Redirecting would loop: the provider would mint another token with the
+		// same audience.
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, "https://other.example.com"), "refresh-token", true)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, rec.Header().Get("Location"), "")
+		expect(t, env.tokenCalls.Load(), int32(0))
+	})
+
+	t.Run("absent aud reaches MissingAudienceHandler", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		var called atomic.Bool
+		MissingAudienceHandler = func(w http.ResponseWriter, r *http.Request) error {
+			called.Store(true)
+			return nil
+		}
+		rec := secureRequest(audienceToken(t, valid, nil), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, called.Load(), true)
+		expect(t, env.handlerRan.Load(), true)
+	})
+
+	t.Run("absent aud is accepted by the default handler", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, nil), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.handlerRan.Load(), true)
+	})
+
+	t.Run("absent aud is rejected once the handler returns an error", func(t *testing.T) {
+		for _, navigation := range []bool{false, true} {
+			env := setupAudienceTest(t, accepted, "")
+			MissingAudienceHandler = func(w http.ResponseWriter, r *http.Request) error {
+				return UnauthorizedErr("missing audience")
+			}
+			rec := secureRequest(audienceToken(t, valid, nil), "", navigation)
+			expect(t, rec.Code, http.StatusUnauthorized)
+			expect(t, rec.Header().Get("Location"), "")
+			expect(t, env.handlerRan.Load(), false)
+		}
+	})
+
+	t.Run("mismatch is reported through UnauthorizedHandler", func(t *testing.T) {
+		setupAudienceTest(t, accepted, "")
+		oldHandler := UnauthorizedHandler
+		var details atomic.Value
+		UnauthorizedHandler = func(w http.ResponseWriter, r *http.Request, d string) error {
+			details.Store(d)
+			return ForbiddenErr("%s", d)
+		}
+		defer func() { UnauthorizedHandler = oldHandler }()
+
+		rec := secureRequest(audienceToken(t, valid, "https://other.example.com"), "", false)
+		expect(t, rec.Code, http.StatusForbidden)
+		got, _ := details.Load().(string)
+		if !strings.Contains(got, "invalid audience") {
+			t.Fatalf("got details %q, expected them to mention an invalid audience", got)
+		}
+	})
+
+	t.Run("array aud is accepted when one element matches", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, []string{"https://other.example.com", "my-service"}), "", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.handlerRan.Load(), true)
+	})
+
+	t.Run("array aud is rejected when no element matches", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, []string{"a", "b"}), "", false)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, env.tokenCalls.Load(), int32(0))
+	})
+
+	t.Run("expired token refreshed to a matching aud is accepted", func(t *testing.T) {
+		fresh := audienceToken(t, valid, "my-service")
+		env := setupAudienceTest(t, accepted, fresh)
+		rec := secureRequest(audienceToken(t, expired, "my-service"), "refresh-token", false)
+		expect(t, rec.Code, http.StatusOK)
+		expect(t, env.tokenCalls.Load(), int32(1))
+		expect(t, CookieByName(rec.Result().Cookies(), AccessTokenCookie).Value, fresh)
+		expect(t, CookieByName(rec.Result().Cookies(), RefreshTokenCookie).Value, "rotated-refresh-token")
+	})
+
+	t.Run("expired token refreshed to a wrong aud is rejected", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, audienceToken(t, valid, "https://other.example.com"))
+		rec := secureRequest(audienceToken(t, expired, "my-service"), "refresh-token", false)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, env.handlerRan.Load(), false)
+		expect(t, env.tokenCalls.Load(), int32(1))
+	})
+
+	t.Run("unreadable aud is rejected", func(t *testing.T) {
+		env := setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, valid, 42), "", false)
+		expect(t, rec.Code, http.StatusUnauthorized)
+		expect(t, env.handlerRan.Load(), false)
+	})
+
+	t.Run("expired token without a refresh token still redirects a navigation", func(t *testing.T) {
+		setupAudienceTest(t, accepted, "")
+		rec := secureRequest(audienceToken(t, expired, "my-service"), "", true)
+		expect(t, rec.Code, http.StatusTemporaryRedirect)
+		location, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect(t, location.Host, "identity.example.com")
+	})
+}
+
+func TestJWTAudiences(t *testing.T) {
+	valid := time.Now().Add(time.Minute)
+	for _, tt := range []struct {
+		name    string
+		aud     any
+		want    []string
+		wantErr bool
+	}{
+		{name: "absent claim", aud: nil},
+		{name: "empty string", aud: ""},
+		{name: "null", aud: json.RawMessage("null")},
+		{name: "empty array", aud: []string{}},
+		{name: "single string", aud: "my-service", want: []string{"my-service"}},
+		{name: "array", aud: []string{"x", "y"}, want: []string{"x", "y"}},
+		{name: "number", aud: 42, wantErr: true},
+		{name: "mixed array", aud: []any{"x", 1}, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := jwtAudiences(audienceToken(t, valid, tt.aud))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("got %v, expected an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("got %v, expected %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("malformed token", func(t *testing.T) {
+		if _, err := jwtAudiences("a.b"); err == nil {
+			t.Fatal("expected an error for a token that is not three parts")
+		}
+	})
+
+	t.Run("payload that is not base64", func(t *testing.T) {
+		if _, err := jwtAudiences("a.!!!.c"); err == nil {
+			t.Fatal("expected an error for a payload that cannot be decoded")
+		}
+	})
 }
