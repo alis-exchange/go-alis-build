@@ -21,17 +21,25 @@ const (
 
 type (
 	Identity struct {
-		Type                Type                // Type of the identity
-		ID                  string              `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
-		Email               string              `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
-		Accounts            map[string]*Account `json:"accounts"` // User's seats in their accounts
-		GroupIDs            []string            `json:"groups"`   // IDs of the groups the user belongs to
-		Policy              string              `json:"policy"`   // Base64 encoded iam policy
-		Exp                 int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
-		App                 string              `json:"app"`      // Client ID (if any) of the registered third party app.
-		Scopes              []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
-		ActiveIdeateAccount *IdeateAccount      `json:"active_ideate_account"`
-		ActiveBuildAccount  *BuildAccount       `json:"active_build_account"`
+		Type     Type                // Type of the identity
+		ID       string              `json:"sub"`      // E.g. "1934872948" or "alis-build@my-project.iam.gserviceaccount.com"
+		Email    string              `json:"email"`    // E.g. "john@example.com" or "alis-build@myproject.iam.gserviceaccount.com"
+		Accounts map[string]*Account `json:"accounts"` // User's seats in their accounts
+		GroupIDs []string            `json:"groups"`   // IDs of the groups the user belongs to
+		Policy   string              `json:"policy"`   // Base64 encoded iam policy
+		Exp      int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
+		App      string              `json:"app"`      // Client ID (if any) of the registered third party app.
+		Scopes   []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
+		// ActiveAccount is the user's single active account, shared by every
+		// product. Prefer ActiveAccountID over reading this or the deprecated
+		// per-product fields directly.
+		ActiveAccount *ActiveAccount `json:"active_account"`
+		// Deprecated: mirrored from ActiveAccount by the issuer while consumers
+		// migrate. Use ActiveAccountID.
+		ActiveIdeateAccount *IdeateAccount `json:"active_ideate_account"`
+		// Deprecated: mirrored from ActiveAccount by the issuer while consumers
+		// migrate. Use ActiveAccountID.
+		ActiveBuildAccount *BuildAccount `json:"active_build_account"`
 		// AuthzRoles is the set of roles a scoped credential is limited to. The
 		// library only carries it. Only the service that issued the credential
 		// may interpret or enforce it.
@@ -81,6 +89,12 @@ type (
 		// consumer has upgraded.
 		Restricted bool `json:"restricted"`
 	}
+	ActiveAccount struct {
+		// The bare account id, without the accounts/ prefix.
+		AccountID          string  `json:"account_id"`
+		AccountCreditLimit float64 `json:"account_credit_limit"`
+		UserCreditLimit    float64 `json:"user_credit_limit"`
+	}
 	IdeateAccount struct {
 		AccountID                string  `json:"account_id"`
 		IdeateAccountCreditLimit float64 `json:"ideate_account_credit_limit"`
@@ -112,6 +126,27 @@ func (i *Identity) PolicyMember() string {
 		return string(i.Type) + ":" + i.Email
 	}
 	return string(i.Type) + ":" + i.ID
+}
+
+// ActiveAccountID returns the bare id of the identity's active account, or ""
+// when none is set. It reads the active_account claim and falls back to the
+// deprecated active_build_account and active_ideate_account claims so that a
+// consumer on this version works against tokens minted before the issuer
+// consolidated the claims. The result never carries the accounts/ prefix.
+func (i *Identity) ActiveAccountID() string {
+	if i == nil {
+		return ""
+	}
+	if i.ActiveAccount != nil && i.ActiveAccount.AccountID != "" {
+		return strings.TrimPrefix(i.ActiveAccount.AccountID, "accounts/")
+	}
+	if i.ActiveBuildAccount != nil && i.ActiveBuildAccount.AccountID != "" {
+		return strings.TrimPrefix(i.ActiveBuildAccount.AccountID, "accounts/")
+	}
+	if i.ActiveIdeateAccount != nil && i.ActiveIdeateAccount.AccountID != "" {
+		return strings.TrimPrefix(i.ActiveIdeateAccount.AccountID, "accounts/")
+	}
+	return ""
 }
 
 // User returns the User resource name for identities that have one.

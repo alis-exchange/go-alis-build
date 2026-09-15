@@ -50,6 +50,7 @@ type Identity struct {
 	// The accounts that the requester is part of
 	accounts map[string]*jwt.Account
 	// The user's active build account
+	activeAccount      *jwt.ActiveAccount
 	activeBuildAccount *jwt.BuildAccount
 	// The user's active ideate account
 	activeIdeateAccount *jwt.IdeateAccount
@@ -142,10 +143,39 @@ func (r *Identity) Accounts() map[string]*jwt.Account {
 	return r.accounts
 }
 
+// ActiveAccount returns the active_account claim, or nil when absent.
+// Prefer ActiveAccountID, which also understands the deprecated claims.
+func (r *Identity) ActiveAccount() *jwt.ActiveAccount {
+	return r.activeAccount
+}
+
+// ActiveAccountID returns the bare id of the caller's active account, or ""
+// when none is set. It reads the active_account claim and falls back to the
+// deprecated active_build_account and active_ideate_account claims so that a
+// consumer on this version works against tokens minted before the issuer
+// consolidated the claims. The result never carries the accounts/ prefix.
+func (r *Identity) ActiveAccountID() string {
+	if r == nil {
+		return ""
+	}
+	if r.activeAccount != nil && r.activeAccount.AccountID != "" {
+		return strings.TrimPrefix(r.activeAccount.AccountID, "accounts/")
+	}
+	if r.activeBuildAccount != nil && r.activeBuildAccount.AccountID != "" {
+		return strings.TrimPrefix(r.activeBuildAccount.AccountID, "accounts/")
+	}
+	if r.activeIdeateAccount != nil && r.activeIdeateAccount.AccountID != "" {
+		return strings.TrimPrefix(r.activeIdeateAccount.AccountID, "accounts/")
+	}
+	return ""
+}
+
+// Deprecated: use ActiveAccountID. The claim is mirrored from active_account.
 func (r *Identity) ActiveBuildAccount() *jwt.BuildAccount {
 	return r.activeBuildAccount
 }
 
+// Deprecated: use ActiveAccountID. The claim is mirrored from active_account.
 func (r *Identity) ActiveIdeateAccount() *jwt.IdeateAccount {
 	return r.activeIdeateAccount
 }
@@ -180,6 +210,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			identity.email = payload.Email
 			identity.groupIds = payload.Groups
 			identity.accounts = payload.Accounts
+			identity.activeAccount = payload.ActiveAccount
 			identity.activeBuildAccount = payload.ActiveBuildAccount
 			identity.activeIdeateAccount = payload.ActiveIdeateAccount
 

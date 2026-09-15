@@ -30,8 +30,17 @@ type Payload struct {
 	Groups              []string               `json:"groups"`
 	Claims              map[string]interface{} `json:"-"`
 	Accounts            map[string]*Account    `json:"accounts"`
+	ActiveAccount       *ActiveAccount         `json:"active_account"`
 	ActiveIdeateAccount *IdeateAccount         `json:"active_ideate_account"`
 	ActiveBuildAccount  *BuildAccount          `json:"active_build_account"`
+}
+
+// ActiveAccount is the user's single active account, shared by every product.
+type ActiveAccount struct {
+	// The bare account id, without the accounts/ prefix.
+	AccountID          string  `json:"account_id"`
+	AccountCreditLimit float64 `json:"account_credit_limit"`
+	UserCreditLimit    float64 `json:"user_credit_limit"`
 }
 
 type IdeateAccount struct {
