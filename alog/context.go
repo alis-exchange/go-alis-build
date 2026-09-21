@@ -5,6 +5,7 @@ import (
 )
 
 type cloudTraceContextKey struct{}
+type traceparentKey struct{}
 type logLabelsKey struct{}
 type logOperationKey struct{}
 type logInsertIDKey struct{}
@@ -73,6 +74,13 @@ type LogHTTPRequest struct {
 // Expected format: TRACE_ID/SPAN_ID;o=TRACE_TRUE
 func WithCloudTraceContext(ctx context.Context, xCloudTraceContextHeader string) context.Context {
 	return context.WithValue(ctx, cloudTraceContextKey{}, xCloudTraceContextHeader)
+}
+
+// WithTraceparent adds a W3C traceparent header to the context. It takes
+// precedence over [WithCloudTraceContext]; a malformed value is ignored.
+// Expected format: VERSION-TRACE_ID-SPAN_ID-FLAGS
+func WithTraceparent(ctx context.Context, traceparent string) context.Context {
+	return context.WithValue(ctx, traceparentKey{}, traceparent)
 }
 
 // WithLogLabels adds a map of labels to the context for the log entry.

@@ -5,12 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"runtime"
-	"strings"
 	"time"
-
-	"google.golang.org/grpc/metadata"
 )
 
 // LoggingEnvironment indicates which environment the logs are generated in.
@@ -194,56 +190,4 @@ func (e entry) Output() error {
 	defer writerMu.Unlock()
 	_, err := getWriter().Write(b)
 	return err
-}
-
-// applyCloudTraceFromContext extracts trace details from context.
-func applyCloudTraceFromContext(ctx context.Context, g *googleLogEntry) {
-	var traceHeaders string
-
-	// 1. Check HTTP/custom context
-	if h, ok := ctx.Value(cloudTraceContextKey{}).(string); ok && h != "" {
-		traceHeaders = h
-	}
-	// 2. Check gRPC metadata
-	if traceHeaders == "" {
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			th := md.Get("x-cloud-trace-context")
-			if len(th) > 0 {
-				traceHeaders = th[0]
-			}
-		}
-	}
-
-	if traceHeaders == "" {
-		return
-	}
-
-	parts := strings.Split(traceHeaders, "/")
-	if len(parts) == 0 || len(parts[0]) == 0 {
-		return
-	}
-
-	projectID := os.Getenv("ALIS_OS_PROJECT")
-	if projectID == "" {
-		projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-	if projectID == "" {
-		projectID = os.Getenv("GCLOUD_PROJECT")
-	}
-
-	if projectID != "" {
-		g.Trace = fmt.Sprintf("projects/%s/traces/%s", projectID, parts[0])
-	}
-
-	if len(parts) <= 1 {
-		return
-	}
-
-	spanParts := strings.Split(parts[1], ";")
-	if len(spanParts) > 0 && len(spanParts[0]) > 0 {
-		g.SpanID = spanParts[0]
-	}
-	if len(spanParts) > 1 && strings.HasPrefix(spanParts[1], "o=") {
-		g.TraceSampled = spanParts[1] == "o=1"
-	}
 }

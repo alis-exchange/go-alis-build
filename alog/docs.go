@@ -38,16 +38,24 @@ it with [SetLevel] and configure the writer with [SetWriter].
 
 For correlation in Logs Explorer and Trace, pass trace context on ctx.
 
-gRPC servers: incoming metadata may include x-cloud-trace-context; the package reads it
-when present.
+gRPC servers: incoming metadata may include traceparent and x-cloud-trace-context; the
+package reads them when present, preferring the W3C traceparent header as Google recommends.
 
-HTTP or other callers: wrap the header value with [WithCloudTraceContext] before logging:
+HTTP or other callers: wrap the header values with [WithTraceparent] and
+[WithCloudTraceContext] before logging:
 
+	ctx = alog.WithTraceparent(ctx, r.Header.Get("traceparent"))
 	ctx = alog.WithCloudTraceContext(ctx, r.Header.Get("X-Cloud-Trace-Context"))
 	alog.Info(ctx, "handled request")
 
-Trace resource names use the project id from ALIS_OS_PROJECT, or GOOGLE_CLOUD_PROJECT,
-or GCLOUD_PROJECT (first non-empty wins).
+[SetTraceExtractor] registers a hook that reads the current span from ctx, for example
+from OpenTelemetry, so logs attach to the service's own span rather than the caller's.
+Values set on ctx take precedence over the hook, and the hook over gRPC metadata.
+
+The legacy header's decimal span id is written as the 16 hex characters Cloud Logging
+expects. Trace resource names use the project id from ALIS_OS_PROJECT, or
+GOOGLE_CLOUD_PROJECT, or GCLOUD_PROJECT (first non-empty wins); when none is set, the
+bare trace id is written.
 
 # Additional LogEntry-related fields
 

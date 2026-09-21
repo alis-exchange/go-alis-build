@@ -8,8 +8,8 @@ Structured logging for Go that matches [Google Cloud structured logging](https:/
 
 - Level helpers: `Debug`, `Info`, `Warn`, `Error`, `Critical`, `Fatal`, `Alert`, `Emergency`, and `*f` variants
 - **Google** JSON: `message`, `severity`, `time`, optional `logging.googleapis.com/trace`, `spanId`, `trace_sampled`, `sourceLocation`, `labels`, `operation`, `insertId`, `httpRequest`, plus merged custom fields
-- Trace from gRPC incoming metadata or from `WithCloudTraceContext` (e.g. HTTP `X-Cloud-Trace-Context`)
-- Project id for trace resource names: `ALIS_OS_PROJECT`, then `GOOGLE_CLOUD_PROJECT`, then `GCLOUD_PROJECT`
+- Trace from `WithTraceparent` / `WithCloudTraceContext`, an optional `SetTraceExtractor` hook (e.g. OpenTelemetry), or gRPC incoming metadata; W3C `traceparent` is preferred over `x-cloud-trace-context`
+- Project id for trace resource names: `ALIS_OS_PROJECT`, then `GOOGLE_CLOUD_PROJECT`, then `GCLOUD_PROJECT`; without one, the bare trace id is written
 - Automatic defaults: local output uses `LevelDebug`; Cloud Run, Cloud Run Jobs, and Kubernetes-style runtimes use `LevelInfo`
 - `SetLevel`, `SetLoggingEnvironment`, `SetWriter`
 
@@ -53,9 +53,24 @@ alog.SetLevel(alog.LevelWarning) // only Warning and more severe levels
 
 ## Trace correlation
 
+gRPC servers need nothing: `traceparent` and `x-cloud-trace-context` are read from incoming metadata. HTTP handlers pass the headers on ctx:
+
 ```go
-ctx = alog.WithCloudTraceContext(ctx, r.Header.Get("X-Cloud-Trace-Context"))
+ctx = alog.WithTraceparent(ctx, r.Header.Get("traceparent"))
+ctx = alog.WithCloudTraceContext(ctx, r.Header.Get("X-Cloud-Trace-Context")) // fallback
 alog.Info(ctx, "request complete")
+```
+
+To attach logs to the current OpenTelemetry span instead of the caller's span, register an extractor once (`go.alis.build/trace` does this when `Config.CorrelateLogs` is set):
+
+```go
+alog.SetTraceExtractor(func(ctx context.Context) (alog.TraceContext, bool) {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return alog.TraceContext{}, false
+	}
+	return alog.TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String(), Sampled: sc.IsSampled()}, true
+})
 ```
 
 ## Optional LogEntry-style fields
