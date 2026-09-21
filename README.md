@@ -20,3 +20,12 @@ solutions by following three simple steps: define, build, and deploy.
 Our aim is to make it accessible for you to build your own innovation by following the three easy steps: define, build and deploy.
 
 To get started on the platform visit: https://alis.build
+
+## Linting
+
+Every module shares the [golangci-lint](https://golangci-lint.run/) v2 config in
+[`.golangci.yml`](.golangci.yml). From the repo root:
+
+- `make lint` reports issues in every module (`make lint MODULES="./alog ./trace"` for some)
+- `make lint-fix` applies the fixes linters can make themselves
+- `make fmt` formats with gofumpt, gci and golines

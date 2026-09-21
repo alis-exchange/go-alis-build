@@ -1,0 +1,127 @@
+# Shared golangci-lint config for every module in this repo. golangci-lint looks
+# for its config in the current directory and then each parent, so running it
+# inside any module picks this file up. `make lint` runs it across all modules.
+# Visit https://golangci-lint.run/ for usage documentation.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    # --- Correctness / bug catching ---
+    - bodyclose # http.Response.Body must be closed
+    - contextcheck # context.Context is propagated correctly
+    - copyloopvar # loop variable copies that Go 1.22+ makes redundant
+    - durationcheck # two time.Duration values multiplied together
+    - errcheck # unchecked errors
+    - errorlint # correct use of errors.Is / errors.As / %w
+    - forcetypeassert # forbids unchecked type assertions
+    - govet # go vet, with extra analyzers below
+    - ineffassign # ineffectual assignments
+    - makezero # slice declared with a non-zero length then appended to
+    - nilerr # returns nil where a non-nil err was checked
+    - noctx # http requests should be created with a context
+    - staticcheck # SA/ST/QF/S checks (includes former gosimple + stylecheck)
+    - unused # unused code
+
+    # --- Style / readability ---
+    - dupword # duplicate words in comments/strings
+    - godot # top-level comments end with a period
+    - misspell # english misspellings
+    - revive # configurable golint replacement (redefines-builtin-id covers predeclared)
+    - unconvert # unnecessary type conversions
+    - unparam # unused function parameters/results
+    - usetesting # os.Setenv/os.MkdirTemp etc. in tests where testing has a helper
+
+    # --- Modern Go idioms (only reported where the module's go version allows) ---
+    - intrange # `for i := range n` over C-style for (Go 1.22+)
+    - perfsprint # cheaper alternatives to fmt.Sprintf/Errorf
+
+    # --- Meta ---
+    - nolintlint # requires //nolint directives to be well-formed
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # struct field order is part of readable APIs here
+        - shadow # noisy; opt in later if wanted
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unreachable-code
+        - name: use-any
+    staticcheck:
+      checks:
+        - all
+        # Initialisms (Id -> ID). Most hits are exported names that can't be
+        # renamed without a major version, so the check could never go clean.
+        - -ST1003
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Tests are held to a lighter standard. contextcheck is excluded because
+      # it walks call chains into t.Cleanup closures, which correctly build
+      # fresh contexts (the test context is already cancelled during cleanup).
+      - path: _test\.go
+        linters:
+          - errcheck
+          - forcetypeassert
+          - unparam
+          - dupword
+          - perfsprint
+          - contextcheck
+
+formatters:
+  enable:
+    - gofumpt # stricter gofmt (superset of gofmt)
+    - gci # deterministic import grouping/ordering
+    - golines # wrap long lines
+  settings:
+    gofumpt:
+      extra-rules: true
+    gci:
+      # Matches the repo convention: stdlib, then everything else, with
+      # go.alis.build/* imports sorted in among third-party ones.
+      sections:
+        - standard
+        - default
+        - blank
+        - dot
+      custom-order: true
+    golines:
+      max-len: 140
+      tab-len: 4
+      reformat-tags: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
