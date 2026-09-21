@@ -29,3 +29,6 @@ conn, err := client.NewConn(ctx, host, false,
 	client.WithDialOptions(trace.GRPCDialOption()),
 )
 ```
+
+To attach `go.alis.build/alog` log entries to this service's own spans rather
+than the caller's, set `CorrelateLogs: true` in `trace.Config`.

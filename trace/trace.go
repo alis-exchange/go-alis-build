@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
+	"go.alis.build/alog"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
@@ -45,6 +47,11 @@ type Config struct {
 	// Propagator extracts and injects trace context for instrumented transports.
 	// When nil, TraceContext + Baggage propagation is used.
 	Propagator propagation.TextMapPropagator
+	// CorrelateLogs makes go.alis.build/alog attach each log entry to the span
+	// active on its context, so logs nest under this service's own spans in
+	// Cloud Trace. When false, alog is left untouched and logs attach to the
+	// caller's span from the incoming trace headers.
+	CorrelateLogs bool
 }
 
 // ShutdownFunc flushes buffered spans and releases exporter resources.
@@ -92,6 +99,7 @@ func Start(ctx context.Context, cfg Config) (ShutdownFunc, error) {
 
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(p)
+	registerLogCorrelation(cfg)
 
 	return tp.Shutdown, nil
 }
@@ -171,4 +179,28 @@ func ProjectIDFromEnv() string {
 		}
 	}
 	return ""
+}
+
+// registerLogCorrelation points alog at the active span when cfg.CorrelateLogs
+// is set. Otherwise alog is left untouched, so services that have not opted in
+// keep their existing log output.
+func registerLogCorrelation(cfg Config) {
+	if !cfg.CorrelateLogs {
+		return
+	}
+	alog.SetTraceExtractor(logTraceContext)
+}
+
+// logTraceContext reports the span on ctx in the form alog writes to Cloud
+// Logging.
+func logTraceContext(ctx context.Context) (alog.TraceContext, bool) {
+	sc := oteltrace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return alog.TraceContext{}, false
+	}
+	return alog.TraceContext{
+		TraceID: sc.TraceID().String(),
+		SpanID:  sc.SpanID().String(),
+		Sampled: sc.IsSampled(),
+	}, true
 }

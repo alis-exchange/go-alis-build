@@ -75,6 +75,20 @@
 // GRPCDialOption instruments outbound RPCs and propagates the current trace
 // context.
 //
+// Log entries written with go.alis.build/alog attach to the caller's span, taken
+// from the incoming trace headers. Set Config.CorrelateLogs to attach them to
+// the span this service is running instead, so logs nest under the matching
+// span in the Cloud Trace waterfall:
+//
+//	shutdown, err := trace.Start(ctx, trace.Config{
+//		Package:       "alis.os.skills.v1",
+//		CorrelateLogs: true,
+//	})
+//
+// CorrelateLogs registers a process-wide hook with alog.SetTraceExtractor. It
+// is opt-in so existing services keep their log output until they choose to
+// change it.
+//
 // The default propagator is W3C Trace Context plus Baggage, which is the normal
 // OpenTelemetry propagation format and works across HTTP, gRPC, and non-Go
 // services that support OpenTelemetry. Applications can provide Config.Propagator
