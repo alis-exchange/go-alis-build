@@ -144,7 +144,9 @@ func (e entry) Bytes() []byte {
 			color = 101
 		}
 
-		if level == LevelDebug {
+		// SourceLocation is nil when the caller lookup fails, for example when
+		// WithCallerSkip reaches past the top of the stack.
+		if e.SourceLocation != nil {
 			return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m \u001B[34m%s:%v\u001B[0m %s", color, e.Severity, e.SourceLocation.File, e.SourceLocation.Line, e.Message))
 		}
 		return []byte(fmt.Sprintf("\x1b[%dm%s\x1b[0m %s", color, e.Severity, e.Message))

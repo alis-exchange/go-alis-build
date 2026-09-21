@@ -1,9 +1,11 @@
 package alog
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -461,5 +463,28 @@ func Test_applyCloudTraceFromContext(t *testing.T) {
 	}
 	if !g.TraceSampled {
 		t.Errorf("TraceSampled mismatch, expected true")
+	}
+}
+
+func TestLocalDebugWithoutSourceLocation(t *testing.T) {
+	prevW := getWriter()
+	prevEnv := getLoggingEnvironment()
+	prevLevel := getLoggingLevel()
+	t.Cleanup(func() {
+		SetWriter(prevW)
+		SetLoggingEnvironment(prevEnv)
+		SetLevel(prevLevel)
+	})
+
+	var buf bytes.Buffer
+	SetWriter(&buf)
+	SetLoggingEnvironment(EnvironmentLocal)
+	SetLevel(LevelDebug)
+
+	// A skip deeper than the stack leaves no caller to report.
+	Info(WithCallerSkip(context.Background(), 1000), "still logged")
+
+	if !strings.Contains(buf.String(), "still logged") {
+		t.Fatalf("output = %q, want the message", buf.String())
 	}
 }
