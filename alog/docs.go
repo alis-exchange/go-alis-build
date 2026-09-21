@@ -20,9 +20,10 @@ EnvironmentGoogle writes one JSON object per line to the configured writer (defa
 EnvironmentLocal writes ANSI-colored, human-readable lines for local development.
 
 The default environment and log level are chosen from environment variables (for example
-K_SERVICE, CLOUD_RUN_JOB, KUBERNETES_SERVICE_HOST). Local environments default to
-[LevelDebug]. Google environments default to [LevelInfo], or to ALOG_LEVEL when set,
-either as an integer [LogLevel] or as a severity name such as DEBUG or WARNING. Override with [SetLoggingEnvironment] and [SetLevel].
+K_SERVICE, CLOUD_RUN_JOB, CLOUD_RUN_WORKER_POOL, KUBERNETES_SERVICE_HOST). Local
+environments default to [LevelDebug]. Google environments default to [LevelInfo], or to
+ALOG_LEVEL when set, either as an integer [LogLevel] or as a severity name such as DEBUG
+or WARNING. Override with [SetLoggingEnvironment] and [SetLevel].
 
 # Basic usage
 

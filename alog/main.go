@@ -30,6 +30,7 @@ func init() {
 	// https://cloud.google.com/run/docs/container-contract#env-vars
 	// Cloud Run exposes an env of K_SERVICE
 	// Cloud Run exposes an env of CLOUD_RUN_JOB
+	// Cloud Run worker pools expose an env of CLOUD_RUN_WORKER_POOL
 	// GKE Autopilot exposes an env of KUBERNETES_SERVICE_HOST
 	if isGoogleEnvironment() {
 		setLoggingEnvironment(EnvironmentGoogle)
@@ -43,6 +44,7 @@ func init() {
 func isGoogleEnvironment() bool {
 	return os.Getenv("K_SERVICE") != "" ||
 		os.Getenv("CLOUD_RUN_JOB") != "" ||
+		os.Getenv("CLOUD_RUN_WORKER_POOL") != "" ||
 		os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 

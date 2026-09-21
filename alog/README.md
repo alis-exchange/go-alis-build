@@ -29,8 +29,8 @@ alog.Errorf(ctx, "failed: %v", err)
 
 ## Google vs local output
 
-`alog` chooses an output mode automatically. If `K_SERVICE`, `CLOUD_RUN_JOB`, or
-`KUBERNETES_SERVICE_HOST` is set, it uses Google JSON output. Otherwise it uses local
+`alog` chooses an output mode automatically. If `K_SERVICE`, `CLOUD_RUN_JOB`,
+`CLOUD_RUN_WORKER_POOL`, or `KUBERNETES_SERVICE_HOST` is set, it uses Google JSON output. Otherwise it uses local
 ANSI-colored text.
 
 ```go

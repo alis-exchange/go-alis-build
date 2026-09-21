@@ -39,6 +39,13 @@ func TestIsGoogleEnvironment(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "cloud run worker pool",
+			env: map[string]string{
+				"CLOUD_RUN_WORKER_POOL": "pool",
+			},
+			want: true,
+		},
+		{
 			name: "gke",
 			env: map[string]string{
 				"KUBERNETES_SERVICE_HOST": "10.0.0.1",
@@ -51,6 +58,7 @@ func TestIsGoogleEnvironment(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("K_SERVICE", "")
 			t.Setenv("CLOUD_RUN_JOB", "")
+			t.Setenv("CLOUD_RUN_WORKER_POOL", "")
 			t.Setenv("KUBERNETES_SERVICE_HOST", "")
 			for key, value := range tt.env {
 				t.Setenv(key, value)
