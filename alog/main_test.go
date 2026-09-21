@@ -80,8 +80,26 @@ func TestLogLevelFromEnv(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts severity names", func(t *testing.T) {
+		for value, want := range map[string]LogLevel{
+			"DEBUG":     LevelDebug,
+			"info":      LevelInfo,
+			"Notice":    LevelNotice,
+			" WARNING ": LevelWarning,
+			"error":     LevelError,
+			"CRITICAL":  LevelCritical,
+			"alert":     LevelAlert,
+			"EMERGENCY": LevelEmergency,
+		} {
+			t.Setenv("ALOG_LEVEL", value)
+			if got := logLevelFromEnv("ALOG_LEVEL", LevelInfo); got != want {
+				t.Errorf("logLevelFromEnv(%q) = %v, want %v", value, got, want)
+			}
+		}
+	})
+
 	t.Run("panics on invalid level", func(t *testing.T) {
-		t.Setenv("ALOG_LEVEL", "debug")
+		t.Setenv("ALOG_LEVEL", "verbose")
 
 		defer func() {
 			if recover() == nil {

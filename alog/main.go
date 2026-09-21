@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -46,17 +47,18 @@ func isGoogleEnvironment() bool {
 }
 
 func logLevelFromEnv(name string, fallback LogLevel) LogLevel {
-	value := os.Getenv(name)
+	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
 		return fallback
 	}
 
-	level, err := strconv.Atoi(value)
-	if err != nil {
-		panic(fmt.Sprintf("%s must be an integer", name))
+	if level, err := strconv.Atoi(value); err == nil {
+		return LogLevel(level)
 	}
-
-	return LogLevel(level)
+	if level, ok := levelFromName(value); ok {
+		return level
+	}
+	panic(fmt.Sprintf("%s must be an integer or a severity name such as DEBUG, INFO or WARNING, got %q", name, value))
 }
 
 // Debug logs a Debug level log.

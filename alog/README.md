@@ -43,9 +43,10 @@ alog.SetLoggingEnvironment(alog.EnvironmentLocal)  // ANSI-colored text
 The minimum level is also configured automatically. Local output defaults to
 `alog.LevelDebug`. Google output defaults to `alog.LevelInfo`.
 
-On Google runtimes, set `ALOG_LEVEL` to an integer level to override the default. For
-example, `ALOG_LEVEL=-4` enables debug logs and `ALOG_LEVEL=4` keeps warning and more
-severe logs.
+On Google runtimes, set `ALOG_LEVEL` to override the default, either as a severity name
+(case-insensitive) or as an integer level. For example, `ALOG_LEVEL=DEBUG` (or `-4`)
+enables debug logs and `ALOG_LEVEL=WARNING` (or `4`) keeps warning and more severe logs.
+Any other value panics at startup.
 
 ```go
 alog.SetLevel(alog.LevelWarning) // only Warning and more severe levels

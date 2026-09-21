@@ -1,5 +1,7 @@
 package alog
 
+import "strings"
+
 // LogLevel int is used to map the logging levels consistent with Google Cloud Logging.
 type LogLevel int
 
@@ -51,4 +53,15 @@ func (l LogLevel) String() string {
 	default:
 		return "INFO"
 	}
+}
+
+// levelFromName returns the level whose [LogLevel.String] name matches name,
+// ignoring case.
+func levelFromName(name string) (LogLevel, bool) {
+	for _, l := range []LogLevel{LevelDebug, LevelInfo, LevelNotice, LevelWarning, LevelError, LevelCritical, LevelAlert, LevelEmergency} {
+		if strings.EqualFold(l.String(), name) {
+			return l, true
+		}
+	}
+	return 0, false
 }
