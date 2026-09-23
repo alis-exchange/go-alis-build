@@ -221,6 +221,27 @@ type CustomRule struct {
 	paths []string
 	// Indicates if the rule is wrapped.
 	isWrapped bool
+	// Optional failure detail, separate from the rule description.
+	message string
+}
+
+// WithMessage sets an optional human-readable failure detail and returns the
+// same rule for chaining, e.g.
+//
+//	v.Custom("get.ok", err == nil).WithMessage(err.Error())
+//
+// The detail does not change Rule, Satisfied, Validate or the broken-rule
+// output. Consumers that report individual rules read it through Message.
+func (c *CustomRule) WithMessage(msg string) *CustomRule {
+	c.message = msg
+	return c
+}
+
+// Message returns the failure detail set with WithMessage, or "" if none was
+// set. It is not part of the Rule interface; discover it with a type
+// assertion on interface{ Message() string }.
+func (c *CustomRule) Message() string {
+	return c.message
 }
 
 // Rule returns the description of the custom rule.
