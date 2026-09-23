@@ -306,7 +306,14 @@ Existing `evalspb.Run` fields keep their branch-native placement and types. The 
 
 Integration results continue to use `checks`.
 
-`validation.Validator` exposes a rule description and satisfied state but not a separate legacy failed-check message. Integration check-message parity is therefore the approved limitation: failed check messages use the rule description.
+A failed check's `id` is always the rule description, so case history and trends stay keyed on it. Its `message` is the rule's failure detail when one was set with `CustomRule.WithMessage`, and the rule description otherwise. Passed checks have an empty message. Specialized-case `validations` follow the same rules.
+
+```go
+order, err := client.CreateOrder(ctx, req)
+v.Custom("grpc.status_ok", err == nil).WithMessage(status.Convert(err).Message())
+```
+
+`status.Convert(nil).Message()` is empty, so the detail is only non-empty when the call failed.
 
 Maintainer details for the normalized four-branch parity gate are documented
 in [knowledge/wire-types/run.md](knowledge/wire-types/run.md).

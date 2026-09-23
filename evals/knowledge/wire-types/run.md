@@ -29,7 +29,9 @@ Specialized cases also expose additive `validations` fields:
 These additive fields carry developer/framework validation outcomes without
 moving existing result fields.
 
-One authoring limitation is explicit: `validation.Validator` provides an
-integration rule description and satisfied state, but not a separate legacy
-failed-check message. Integration check-message parity is therefore normalized;
-failed check messages use the rule description.
+`Check.id` and `Validation.id` are always the rule description. A failed
+check or validation's `message` is the rule's failure detail when the rule
+carries one (`validation.CustomRule.WithMessage`, read through
+`interface{ Message() string }`), and the rule description otherwise. Passed
+entries have an empty message. Rules without a detail produce the same output
+as before, so integration check-message parity is unchanged for them.

@@ -259,7 +259,7 @@ func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur
 		if !r.Satisfied() {
 			checkStatus = evalspb.Status_FAILED
 			status = evalspb.Status_FAILED
-			msg = r.Rule()
+			msg = failureMessage(r)
 		}
 		checks = append(checks, &evalspb.IntegrationTestResults_Case_Check{
 			Id:      r.Rule(),
@@ -275,6 +275,18 @@ func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur
 	}
 }
 
+// failureMessage returns the message for a broken rule: its failure detail
+// when the rule carries one (validation.CustomRule.WithMessage), else its
+// description. The description stays the id so check history keys are stable.
+func failureMessage(r validation.Rule) string {
+	if d, ok := r.(interface{ Message() string }); ok {
+		if msg := d.Message(); msg != "" {
+			return msg
+		}
+	}
+	return r.Rule()
+}
+
 func validationsFromValidator(v *validation.Validator) []*evalspb.Validation {
 	rules := v.Rules()
 	validations := make([]*evalspb.Validation, 0, len(rules))
@@ -283,7 +295,7 @@ func validationsFromValidator(v *validation.Validator) []*evalspb.Validation {
 		var msg string
 		if !r.Satisfied() {
 			status = evalspb.Status_FAILED
-			msg = r.Rule()
+			msg = failureMessage(r)
 		}
 		validations = append(validations, &evalspb.Validation{
 			Id:      r.Rule(),

@@ -30,9 +30,16 @@ At case end the evals runtime reads `validator.Rules()` and writes integration
 `NOT_EVALUATED`.
 
 Each case receives a fresh validator. Rule declaration order becomes check
-order. The validator exposes a rule description and pass/fail state, but no
-separate failed-check message; failed integration check messages therefore use
-the rule description.
+order. A check's `id` is always the rule description, so it stays stable for
+case history and trends. A failed check's `message` is the rule's failure
+detail when one was set with `CustomRule.WithMessage`, and the rule
+description otherwise. Passed checks have an empty message, even when a detail
+was set.
+
+```go
+order, err := client.CreateOrder(ctx, req)
+v.Custom("grpc.status_ok", err == nil).WithMessage(status.Convert(err).Message())
+```
 
 Normal Go errors remain normal inside the case. Add an explicit validation rule
 when an error should affect the evaluation result.
