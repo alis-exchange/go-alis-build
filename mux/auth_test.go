@@ -81,6 +81,97 @@ func TestAuthMiddlewareStartsLoginTransaction(t *testing.T) {
 	}
 }
 
+// LoginOptions lets a service add OpenID Connect interaction parameters to
+// the login redirect; nil (the default) leaves the redirect exactly as it was.
+func TestAuthMiddlewareLoginOptions(t *testing.T) {
+	mux = http.NewServeMux()
+	gateway = nil
+	oldAuthClient, oldOptions := AuthClient, LoginOptions
+	AuthClient = authn.NewClient("https://identity.example.com")
+	AuthClient.TokenURL = ":"
+	LoginOptions = func(r *http.Request) []authn.AuthorizeOption {
+		return []authn.AuthorizeOption{authn.WithPrompt("login"), authn.WithLoginHint(r.URL.Query().Get("hint"))}
+	}
+	defer func() { AuthClient, LoginOptions = oldAuthClient, oldOptions }()
+
+	AuthenticatedGet("/secure", func(w http.ResponseWriter, r *http.Request) error { return nil })
+	req := httptest.NewRequest(http.MethodGet, "http://app.example.com/secure?hint=ada%40example.com", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	authURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, authURL.Query().Get("prompt"), "login")
+	expect(t, authURL.Query().Get("login_hint"), "ada@example.com")
+	expect(t, authURL.Query().Get("redirect_uri"), "http://app.example.com/auth/callback")
+}
+
+// /auth/switch clears this service's auth cookies and starts a login that
+// asks the identity provider for its account chooser, returning afterwards
+// to a relative path only (never an absolute URL from the query).
+func TestSwitchAccountHandle(t *testing.T) {
+	oldAuthClient := AuthClient
+	AuthClient = authn.NewClient("https://identity.example.com")
+	defer func() { AuthClient = oldAuthClient }()
+
+	for _, tc := range []struct {
+		returnTo, want string
+	}{
+		{"/dashboard?tab=one", "/dashboard?tab=one"},
+		{"https://evil.example/phish", "/"},
+		{"//evil.example", "/"},
+		{"", "/"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://app.example.com"+SwitchAccountPath+"?return_to="+url.QueryEscape(tc.returnTo), nil)
+		rec := httptest.NewRecorder()
+		if err := switchAccountHandle(rec, req); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303", rec.Code)
+		}
+		authURL, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect(t, authURL.Host, "identity.example.com")
+		expect(t, authURL.Query().Get("prompt"), "select_account")
+
+		cleared := map[string]bool{}
+		var transaction *http.Cookie
+		for _, c := range rec.Result().Cookies() {
+			switch c.Name {
+			case AccessTokenCookie, RefreshTokenCookie:
+				if c.MaxAge < 0 {
+					cleared[c.Name] = true
+				}
+			case "alis_authn_login":
+				transaction = c
+			}
+		}
+		if !cleared[AccessTokenCookie] || !cleared[RefreshTokenCookie] {
+			t.Errorf("return_to=%q: auth cookies not cleared: %v", tc.returnTo, cleared)
+		}
+		if transaction == nil {
+			t.Fatalf("return_to=%q: no login transaction cookie", tc.returnTo)
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(transaction.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tx struct {
+			ReturnTo string `json:"return_to"`
+		}
+		if err := json.Unmarshal(raw, &tx); err != nil {
+			t.Fatal(err)
+		}
+		expect(t, tx.ReturnTo, tc.want)
+	}
+}
+
 func TestCallbackHandleCompletesLoginTransaction(t *testing.T) {
 	oldAuthClient := AuthClient
 	var tokenRequest struct {

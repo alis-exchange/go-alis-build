@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	go.alis.build/alog v0.1.0
-	go.alis.build/iam/v3 v3.10.0
+	go.alis.build/iam/v3 v3.13.0
 	golang.org/x/net v0.57.0
 	google.golang.org/api v0.293.0
 )

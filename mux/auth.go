@@ -25,6 +25,16 @@ const (
 	//
 	// The package registers a GET handler for this path during init.
 	LogoutPath string = "/auth/logout"
+
+	// SwitchAccountPath is the route path registered for switching accounts:
+	// it clears this service's authentication cookies and starts a new login
+	// that asks the identity provider to show its account chooser
+	// (prompt=select_account), returning to the relative path in the
+	// `return_to` query parameter (or "/"). An identity provider without an
+	// account chooser simply shows its normal sign-in page.
+	//
+	// The package registers a GET handler for this path during init.
+	SwitchAccountPath string = "/auth/switch"
 )
 
 var (
@@ -98,6 +108,13 @@ var (
 	// requests.
 	AuthClient *authn.Client
 
+	// LoginOptions, when set, returns the OpenID Connect interaction options
+	// (authn.WithPrompt, authn.WithMaxAge, authn.WithLoginHint) the login
+	// redirect for an unauthenticated browser navigation carries. Nil, the
+	// default, leaves the redirect exactly as before; identity providers that
+	// predate the parameters ignore them.
+	LoginOptions func(r *http.Request) []authn.AuthorizeOption
+
 	// What to do for unauthorized requests. By default this just returns a 401 status.
 	UnauthorizedHandler = func(w http.ResponseWriter, r *http.Request, details string) error {
 		return UnauthorizedErr("%s", details)
@@ -113,6 +130,7 @@ func init() {
 	AuthClient = authn.NewClient(identityServiceURL)
 	Get(AuthCallbackPath, callbackHandle)
 	Get(LogoutPath, logoutHandle)
+	Get(SwitchAccountPath, switchAccountHandle)
 }
 
 // authMiddleware authenticates a request before invoking handler.
@@ -153,7 +171,11 @@ func authMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error 
 			fullPath += "?" + r.URL.RawQuery
 		}
 		callbackURI := RequestHost(r) + AuthCallbackPath
-		login, err := AuthClient.StartLogin(w, r, callbackURI, fullPath)
+		var opts []authn.AuthorizeOption
+		if LoginOptions != nil {
+			opts = LoginOptions(r)
+		}
+		login, err := AuthClient.StartLogin(w, r, callbackURI, fullPath, opts...)
 		if err != nil {
 			return InternalServerErr("Failed to start login: %s", err.Error())
 		}
@@ -265,6 +287,25 @@ func callbackHandle(w http.ResponseWriter, r *http.Request) error {
 func logoutHandle(w http.ResponseWriter, r *http.Request) error {
 	ClearAuthCookies(w)
 	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	return nil
+}
+
+// switchAccountHandle clears the auth cookies and starts a login that asks
+// for the identity provider's account chooser. return_to is honoured only as
+// a relative path, so the parameter can never turn this into an open
+// redirect.
+func switchAccountHandle(w http.ResponseWriter, r *http.Request) error {
+	ClearAuthCookies(w)
+	returnTo := r.URL.Query().Get("return_to")
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+		returnTo = "/"
+	}
+	callbackURI := RequestHost(r) + AuthCallbackPath
+	login, err := AuthClient.StartLogin(w, r, callbackURI, returnTo, authn.WithPrompt("select_account"))
+	if err != nil {
+		return InternalServerErr("Failed to start login: %s", err.Error())
+	}
+	http.Redirect(w, r, login.URL, http.StatusSeeOther)
 	return nil
 }
 
