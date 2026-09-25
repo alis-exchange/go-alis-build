@@ -40,8 +40,10 @@ func GenerateNonce() (string, error) {
 	return randomURLValue(32)
 }
 
-// StartLogin creates a short-lived login transaction cookie and returns the authorization URL.
-func (c *Client) StartLogin(w http.ResponseWriter, r *http.Request, redirectURI, returnTo string) (*LoginTransaction, error) {
+// StartLogin creates a short-lived login transaction cookie and returns the
+// authorization URL. opts add OpenID Connect interaction parameters to that
+// URL (see AuthorizeOption); existing callers pass none and are unaffected.
+func (c *Client) StartLogin(w http.ResponseWriter, r *http.Request, redirectURI, returnTo string, opts ...AuthorizeOption) (*LoginTransaction, error) {
 	state, err := GenerateState()
 	if err != nil {
 		return nil, err
@@ -62,7 +64,7 @@ func (c *Client) StartLogin(w http.ResponseWriter, r *http.Request, redirectURI,
 	}
 
 	return &LoginTransaction{
-		URL:      c.AuthorizeURL(redirectURI, state, nonce),
+		URL:      c.AuthorizeURLWithOptions(redirectURI, state, nonce, opts...),
 		State:    state,
 		Nonce:    nonce,
 		ReturnTo: returnTo,

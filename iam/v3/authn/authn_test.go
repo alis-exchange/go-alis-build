@@ -48,6 +48,46 @@ func TestAuthorizeURL(t *testing.T) {
 	expect(t, parsed.Query().Get("nonce"), "nonce-value")
 }
 
+// The OIDC interaction parameters are opt-in: the plain AuthorizeURL stays
+// byte-for-byte what it was, and options only add query parameters, which
+// an identity provider that predates them ignores (RFC 6749 §3.1).
+func TestAuthorizeURLWithOptions(t *testing.T) {
+	client := NewClient("https://identity.alisx.com")
+
+	plain := client.AuthorizeURL("https://app.example.com/auth/callback", "st", "nonce-value")
+	same := client.AuthorizeURLWithOptions("https://app.example.com/auth/callback", "st", "nonce-value")
+	expect(t, same, plain)
+
+	withOpts := client.AuthorizeURLWithOptions("https://app.example.com/auth/callback", "st", "nonce-value",
+		WithPrompt("select_account", "consent"), WithMaxAge(5*time.Minute), WithLoginHint("ada@example.com"))
+	parsed, err := url.Parse(withOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, parsed.Query().Get("prompt"), "select_account consent")
+	expect(t, parsed.Query().Get("max_age"), "300")
+	expect(t, parsed.Query().Get("login_hint"), "ada@example.com")
+	expect(t, parsed.Query().Get("redirect_uri"), "https://app.example.com/auth/callback")
+	expect(t, parsed.Query().Get("nonce"), "nonce-value")
+}
+
+// StartLogin forwards options to the authorization URL it returns.
+func TestStartLoginForwardsOptions(t *testing.T) {
+	client := NewClient("https://identity.alisx.com")
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "https://app.example.com/dashboard", nil)
+	login, err := client.StartLogin(rec, r, "https://app.example.com/auth/callback", "/dashboard", WithPrompt("login"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(login.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, parsed.Query().Get("prompt"), "login")
+	expect(t, parsed.Query().Get("state"), login.State)
+}
+
 func TestLoginTransaction(t *testing.T) {
 	var tokenRequest struct {
 		GrantType   string `json:"grant_type"`

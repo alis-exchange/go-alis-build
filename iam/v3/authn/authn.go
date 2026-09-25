@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,14 +47,54 @@ func NewClient(authorizationServerBaseURL string) *Client {
 }
 
 func (c *Client) AuthorizeURL(redirectURI, state string, nonce ...string) string {
+	var n string
+	if len(nonce) > 0 {
+		n = nonce[0]
+	}
+	return c.AuthorizeURLWithOptions(redirectURI, state, n)
+}
+
+// AuthorizeOption adds an OpenID Connect interaction parameter to an
+// authorization request (OpenID Connect Core 1.0 §3.1.2.1). Options only add
+// query parameters, so an identity provider that predates them ignores them
+// (RFC 6749 §3.1) and the request behaves as before.
+type AuthorizeOption func(url.Values)
+
+// WithPrompt sets the `prompt` parameter: `login` forces a fresh sign-in,
+// `select_account` asks the identity provider to show its account chooser,
+// `consent` re-asks for consent. Several values are space-delimited.
+func WithPrompt(values ...string) AuthorizeOption {
+	return func(q url.Values) { q.Set("prompt", strings.Join(values, " ")) }
+}
+
+// WithMaxAge sets the `max_age` parameter: the identity provider must
+// re-authenticate the user when their last authentication is older than
+// this. Its ID token then carries an `auth_time` claim.
+func WithMaxAge(d time.Duration) AuthorizeOption {
+	return func(q url.Values) { q.Set("max_age", strconv.FormatInt(int64(d/time.Second), 10)) }
+}
+
+// WithLoginHint sets the `login_hint` parameter: the email the identity
+// provider should pre-fill or pre-select. A hint only; it never identifies
+// the user.
+func WithLoginHint(hint string) AuthorizeOption {
+	return func(q url.Values) { q.Set("login_hint", hint) }
+}
+
+// AuthorizeURLWithOptions builds the authorization URL like AuthorizeURL,
+// then applies opts. With no options the two are identical.
+func (c *Client) AuthorizeURLWithOptions(redirectURI, state, nonce string, opts ...AuthorizeOption) string {
 	values := url.Values{}
 	values.Set("redirect_uri", redirectURI)
 	values.Set("state", state)
 	if c.ID != "" {
 		values.Set("client_id", c.ID)
 	}
-	if len(nonce) > 0 && nonce[0] != "" {
-		values.Set("nonce", nonce[0])
+	if nonce != "" {
+		values.Set("nonce", nonce)
+	}
+	for _, opt := range opts {
+		opt(values)
 	}
 	return c.AuthURL + "?" + values.Encode()
 }
