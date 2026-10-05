@@ -6,12 +6,21 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2"
+	"go.alis.build/protodb/v2/filtering"
 	"go.alis.build/protodb/v2/memadapter"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -417,5 +426,264 @@ func TestMemTransactionRollsBackOnError(t *testing.T) {
 	}
 	if _, err := tbl.Read(ctx, strKey("b")); !protodb.IsNotFound(err) {
 		t.Fatalf("row \"b\" created by a rolled-back transaction is still visible: got %v", err)
+	}
+}
+
+// newBackups returns a filterable Backup table holding rows.
+func newBackups(t *testing.T, cfg memadapter.Config, rows ...*databasepb.Backup) *memadapter.Table[*databasepb.Backup] {
+	t.Helper()
+	tbl := memadapter.New[*databasepb.Backup](cfg)
+	for _, b := range rows {
+		if err := tbl.Create(context.Background(), &protodb.Row[*databasepb.Backup]{Key: strKey(b.GetName()), Resource: b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tbl
+}
+
+// listNames lists every row matching filter and returns their names.
+func listNames(t *testing.T, tbl protodb.ResourceTable[*databasepb.Backup], filter string) ([]string, error) {
+	t.Helper()
+	rows, _, err := tbl.List(context.Background(), protodb.ListOptions{Filter: filter})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(rows))
+	for i, r := range rows {
+		names[i] = r.Resource.GetName()
+	}
+	return names, nil
+}
+
+func TestMemFilterUnknownPathIsInvalidArgument(t *testing.T) {
+	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
+	if _, err := listNames(t, tbl, "Backup.nope = 1"); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("got %v, want InvalidArgument", err)
+	}
+	if _, err := listNames(t, tbl, "nope = 1"); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("got %v, want InvalidArgument", err)
+	}
+}
+
+func TestMemFilterOnNonProtoResourceIsUnimplemented(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "R"})
+	if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("a"), Resource: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tbl.List(ctx, protodb.ListOptions{Filter: "R.x = 1"}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("got %v, want Unimplemented", err)
+	}
+	// The key still works without a proto resource.
+	rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: "key = 'a'"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("got %v, %v", rows, err)
+	}
+}
+
+func TestMemFilterUnsupportedConstructIsUnimplemented(t *testing.T) {
+	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
+	if _, err := listNames(t, tbl, "{ 'a': 1 } == Backup.name"); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("got %v, want Unimplemented", err)
+	}
+}
+
+func TestMemFilterInvalidFilterIsInvalidArgument(t *testing.T) {
+	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
+	if _, err := listNames(t, tbl, "Backup.name = "); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("got %v, want InvalidArgument", err)
+	}
+}
+
+func TestMemFilterOnColumn(t *testing.T) {
+	cfg := backupConfig()
+	cfg.Columns = map[string]func(protodb.Key, any) any{
+		"create_time": func(_ protodb.Key, r any) any {
+			b := r.(*databasepb.Backup)
+			if b.GetCreateTime() == nil {
+				return nil
+			}
+			return b.GetCreateTime().AsTime()
+		},
+	}
+	cfg.FilterIdentifiers = append(cfg.FilterIdentifiers, filtering.Timestamp("create_time"))
+	tbl := newBackups(t, cfg,
+		&databasepb.Backup{Name: "old", CreateTime: timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))},
+		&databasepb.Backup{Name: "new", CreateTime: timestamppb.New(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))},
+		&databasepb.Backup{Name: "none"},
+	)
+	got, err := listNames(t, tbl, "create_time > timestamp('2024-01-01T00:00:00Z')")
+	if err != nil || !reflect.DeepEqual(got, []string{"new"}) {
+		t.Fatalf("got %v, %v; want [new]", got, err)
+	}
+	got, err = listNames(t, tbl, "create_time = NULL")
+	if err != nil || !reflect.DeepEqual(got, []string{"none"}) {
+		t.Fatalf("got %v, %v; want [none]", got, err)
+	}
+}
+
+// TestMemFilterFieldPresence pins how unset fields read, matching Spanner:
+// an unset message field (or a path through one) is NULL, a proto3 scalar
+// without presence reads its default, and repeated fields are not supported.
+func TestMemFilterFieldPresence(t *testing.T) {
+	tbl := newBackups(t, backupConfig(),
+		&databasepb.Backup{Name: "bare"},
+		&databasepb.Backup{Name: "sized", SizeBytes: 10, EncryptionInfo: &databasepb.EncryptionInfo{
+			EncryptionType: databasepb.EncryptionInfo_GOOGLE_DEFAULT_ENCRYPTION,
+		}},
+	)
+	cases := []struct {
+		filter string
+		want   []string
+	}{
+		{"Backup.size_bytes = 0", []string{"bare"}},
+		{"Backup.size_bytes = NULL", nil},
+		{"Backup.encryption_info = NULL", []string{"bare"}},
+		{"Backup.encryption_info.encryption_type = NULL", []string{"bare"}},
+		{"Backup.encryption_info.encryption_type = 'GOOGLE_DEFAULT_ENCRYPTION'", []string{"sized"}},
+	}
+	for _, tc := range cases {
+		got, err := listNames(t, tbl, tc.filter)
+		if err != nil {
+			t.Errorf("%s: %v", tc.filter, err)
+			continue
+		}
+		if len(got) == 0 {
+			got = nil
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.filter, got, tc.want)
+		}
+	}
+	if _, err := listNames(t, tbl, "Backup.referencing_databases = 'x'"); status.Code(err) != codes.Unimplemented {
+		t.Errorf("repeated field: got %v, want Unimplemented", err)
+	}
+}
+
+// TestMemFilterExplicitPresence checks that an unset proto3 `optional`
+// scalar is NULL, unlike a scalar without presence.
+func TestMemFilterExplicitPresence(t *testing.T) {
+	desc := optionalMessage(t)
+	set := dynamicpb.NewMessage(desc)
+	set.Set(desc.Fields().ByName("name"), protoreflect.ValueOfString("set"))
+	set.Set(desc.Fields().ByName("count"), protoreflect.ValueOfInt64(0))
+	unset := dynamicpb.NewMessage(desc)
+	unset.Set(desc.Fields().ByName("name"), protoreflect.ValueOfString("unset"))
+
+	ctx := context.Background()
+	tbl := memadapter.New[proto.Message](memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "M"})
+	for _, m := range []proto.Message{set, unset} {
+		name := m.ProtoReflect().Get(desc.Fields().ByName("name")).String()
+		if err := tbl.Create(ctx, &protodb.Row[proto.Message]{Key: strKey(name), Resource: m}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: "M.count = NULL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Key.KeyValues()[0] != "unset" {
+		t.Fatalf("got %v, want only the unset row", rows)
+	}
+}
+
+// optionalMessage builds a proto3 message `M { string name = 1; optional
+// int64 count = 2; }` at runtime.
+func optionalMessage(t *testing.T) protoreflect.MessageDescriptor {
+	t.Helper()
+	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("memadapter_optional_test.proto"),
+		Package: proto.String("memadaptertest"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("M"),
+			Field: []*descriptorpb.FieldDescriptorProto{
+				{
+					Name: proto.String("name"), Number: proto.Int32(1), JsonName: proto.String("name"),
+					Type:  descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+					Label: descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				},
+				{
+					Name: proto.String("count"), Number: proto.Int32(2), JsonName: proto.String("count"),
+					Type:           descriptorpb.FieldDescriptorProto_TYPE_INT64.Enum(),
+					Label:          descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+					OneofIndex:     proto.Int32(0),
+					Proto3Optional: proto.Bool(true),
+				},
+			},
+			OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("_count")}},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fd.Messages().ByName("M")
+}
+
+// pairKey is a two-column key whose second column is named "key".
+type pairKey struct{ parent, key string }
+
+func (k pairKey) KeyValues() []any { return []any{k.parent, k.key} }
+
+func TestMemFilterKeyColumnNamedKeyWins(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[*databasepb.Backup](memadapter.Config{
+		KeyColumns:     []string{"parent", "key"},
+		ResourceColumn: "Backup",
+	})
+	row := &protodb.Row[*databasepb.Backup]{Key: pairKey{"p", "x"}, Resource: &databasepb.Backup{Name: "x"}}
+	if err := tbl.Create(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: "key = 'x'"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("got %v, %v; want the row whose key column is x", rows, err)
+	}
+}
+
+func TestMemFilterUnsignedFieldsReadAsInt64(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[*wrapperspb.UInt64Value](memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "W"})
+	if err := tbl.Create(ctx, &protodb.Row[*wrapperspb.UInt64Value]{Key: strKey("a"), Resource: wrapperspb.UInt64(5)}); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: "W.value = 5"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("got %v, %v; want one row", rows, err)
+	}
+}
+
+func TestMemFilterNilResourceIsNull(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[*databasepb.Backup](backupConfig())
+	if err := tbl.Create(ctx, &protodb.Row[*databasepb.Backup]{Key: strKey("nil")}); err != nil {
+		t.Fatal(err)
+	}
+	for filter, want := range map[string]int{"Backup.size_bytes = 0": 0, "Backup.size_bytes = NULL": 1, "Backup = NULL": 1} {
+		rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: filter})
+		if err != nil || len(rows) != want {
+			t.Errorf("%s: got %d rows, %v; want %d", filter, len(rows), err, want)
+		}
+	}
+}
+
+func TestMemFilterWithTail(t *testing.T) {
+	tbl := newBackups(t, backupConfig(),
+		&databasepb.Backup{Name: "a", SizeBytes: 1},
+		&databasepb.Backup{Name: "b", SizeBytes: 2},
+		&databasepb.Backup{Name: "c", SizeBytes: 1},
+		&databasepb.Backup{Name: "d", SizeBytes: 2},
+		&databasepb.Backup{Name: "e", SizeBytes: 1},
+	)
+	rows, _, err := tbl.List(context.Background(), protodb.ListOptions{Filter: "Backup.size_bytes = 1", PageSize: 2, Tail: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Resource.GetName())
+	}
+	if !reflect.DeepEqual(got, []string{"c", "e"}) {
+		t.Fatalf("got %v, want the last two matches [c e]", got)
 	}
 }

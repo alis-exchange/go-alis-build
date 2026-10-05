@@ -56,6 +56,7 @@ import (
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"go.alis.build/protodb/v2"
+	"go.alis.build/protodb/v2/filtering"
 	"go.alis.build/protodb/v2/ordering"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -80,6 +81,34 @@ type Config struct {
 	// matches the leading column by equality, not prefix — supply a custom
 	// ParentMatch that compares the first key value with parent by ==.
 	ParentMatch func(parent string, key protodb.Key) bool
+	// ResourceColumn turns on List/Stream filtering. It is the name filters
+	// use for the row's resource, matching the resource column a
+	// spanneradapter table declares (e.g. "Book" in "Book.create_time").
+	// Paths below it are read from the resource with protoreflect, so R must
+	// be a proto.Message to filter on them. When empty, any non-empty Filter
+	// returns Unimplemented, as before.
+	//
+	// A filter path resolves, in order: a KeyColumns name to that key
+	// value; "key" (when no key column has that name) to the first key
+	// value; ResourceColumn or a path below it to the resource or one of
+	// its fields; a Columns name to that column. A nil resource, an unset
+	// message field, or an unset field with explicit presence is NULL; a
+	// proto3 scalar without presence reads its default, and 64-bit unsigned
+	// fields read as int64, as in Spanner. An enum number the descriptor
+	// does not know reads as an int64, so comparing it with an enum name
+	// fails with InvalidArgument. Filter constructs the in-memory evaluator cannot reproduce
+	// exactly return Unimplemented (see filtering.Parser.Compile).
+	ResourceColumn string
+	// FilterIdentifiers declares typed filter identifiers exactly as they
+	// are passed to the spanneradapter table's filtering.Parser (for
+	// example filtering.Timestamp("Book.create_time")), so both adapters
+	// interpret the same filter the same way.
+	FilterIdentifiers []filtering.Identifier
+	// Columns computes named non-key columns from a row, standing in for
+	// Spanner generated columns (for example "create_time" derived from
+	// Book.create_time). Filters can reference them by name. A column
+	// function must not call back into memadapter.
+	Columns map[string]func(key protodb.Key, resource any) any
 }
 
 // entry is one stored row. Immutable once published into Table.entries:
@@ -96,6 +125,10 @@ type entry[R any] struct {
 type Table[R any] struct {
 	cfg     Config
 	entries map[string]*entry[R]
+	// parser compiles filters; parserErr records why it could not be built
+	// from Config.FilterIdentifiers. Both are unset without ResourceColumn.
+	parser    *filtering.Parser
+	parserErr error
 }
 
 // Table implements protodb.ResourceTable — verified at compile time so a
@@ -109,6 +142,9 @@ func New[R any](cfg Config) *Table[R] {
 		cfg.ParentMatch = defaultParentMatch
 	}
 	t := &Table[R]{cfg: cfg, entries: make(map[string]*entry[R])}
+	if cfg.ResourceColumn != "" {
+		t.parser, t.parserErr = filtering.NewParser(cfg.FilterIdentifiers...)
+	}
 	registerTable(t)
 	return t
 }
@@ -318,8 +354,9 @@ func (t *Table[R]) List(ctx context.Context, opts protodb.ListOptions) ([]*proto
 	if pageSize == 0 {
 		pageSize = protodb.DefaultPageSize
 	}
-	if strings.TrimSpace(opts.Filter) != "" {
-		return nil, "", errFilterUnimplemented
+	pred, err := t.compileFilter(opts.Filter, opts.FilterParams)
+	if err != nil {
+		return nil, "", err
 	}
 	order, err := t.effectiveOrder(opts.OrderBy, opts.Tail)
 	if err != nil {
@@ -327,7 +364,10 @@ func (t *Table[R]) List(ctx context.Context, opts protodb.ListOptions) ([]*proto
 	}
 	fp := fingerprint(opts.Parent, opts.Filter, opts.OrderBy, opts.Tail)
 
-	rows := t.orderedSnapshot(ctx, opts.Parent, order)
+	rows, err := t.orderedSnapshot(ctx, opts.Parent, order, pred)
+	if err != nil {
+		return nil, "", err
+	}
 
 	start := 0
 	if opts.PageToken != "" {
@@ -371,8 +411,9 @@ func (t *Table[R]) List(ctx context.Context, opts protodb.ListOptions) ([]*proto
 // Stream implements protodb.ResourceTable.
 func (t *Table[R]) Stream(ctx context.Context, opts protodb.StreamOptions) iter.Seq2[*protodb.Row[R], error] {
 	return func(yield func(*protodb.Row[R], error) bool) {
-		if strings.TrimSpace(opts.Filter) != "" {
-			yield(nil, errFilterUnimplemented)
+		pred, err := t.compileFilter(opts.Filter, opts.FilterParams)
+		if err != nil {
+			yield(nil, err)
 			return
 		}
 		order, err := t.effectiveOrder(opts.OrderBy, false)
@@ -387,7 +428,11 @@ func (t *Table[R]) Stream(ctx context.Context, opts protodb.StreamOptions) iter.
 		// into any memadapter table outside a transaction, and would
 		// block writers for the whole traversal even when it wouldn't
 		// deadlock.
-		rows := t.orderedSnapshot(ctx, opts.Parent, order)
+		rows, err := t.orderedSnapshot(ctx, opts.Parent, order, pred)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		for _, p := range rows {
 			if err := ctx.Err(); err != nil {
 				yield(nil, err)
@@ -400,14 +445,11 @@ func (t *Table[R]) Stream(ctx context.Context, opts protodb.StreamOptions) iter.
 	}
 }
 
-// errFilterUnimplemented is returned by List and Stream for any non-empty
-// Filter. memadapter has no filter engine — this is a loud, deliberate
-// limitation of the in-memory test double, not an oversight: consumers
-// that need AIP-160 filtering exercised end-to-end should test against
-// spanneradapter (or another adapter with a real filter implementation),
-// not memadapter.
+// errFilterUnimplemented is returned by List and Stream for a non-empty
+// Filter on a table without Config.ResourceColumn: without it memadapter
+// does not know how filter paths map onto a row.
 var errFilterUnimplemented = status.Error(codes.Unimplemented,
-	"memadapter: List/Stream Filter is not implemented; only Filter == \"\" is supported")
+	"memadapter: List/Stream Filter needs Config.ResourceColumn; only Filter == \"\" is supported without it")
 
 // orderCol is one column of a resolved effective order: an index into a
 // key's KeyValues() (per Config.KeyColumns) plus a sort direction.
@@ -465,24 +507,43 @@ type snapshotRow[R any] struct {
 }
 
 // orderedSnapshot copies out every entry matching parent (under lock),
-// releases the lock, and returns them sorted by order. Because entries are
-// never mutated in place (see entry's doc comment), it's safe to keep
-// using the copied *entry pointers after the lock is released.
-func (t *Table[R]) orderedSnapshot(ctx context.Context, parent string, order []orderCol) []snapshotRow[R] {
+// releases the lock, keeps the entries pred matches (all of them when pred
+// is nil), and returns them sorted by order. Filtering happens before any
+// paging, so every page but the last is full. Because entries are never
+// mutated in place (see entry's doc comment), it's safe to keep using the
+// copied *entry pointers after the lock is released; evaluating pred
+// outside the lock also lets Config.Columns functions run unlocked.
+func (t *Table[R]) orderedSnapshot(
+	ctx context.Context, parent string, order []orderCol, pred *filtering.Predicate,
+) ([]snapshotRow[R], error) {
 	unlock := lock(ctx)
-	rows := make([]snapshotRow[R], 0, len(t.entries))
+	entries := make([]*entry[R], 0, len(t.entries))
 	for _, e := range t.entries {
 		if parent != "" && !t.cfg.ParentMatch(parent, e.key) {
 			continue
 		}
-		rows = append(rows, snapshotRow[R]{e: e, tuple: tupleFor(order, e.key.KeyValues())})
+		entries = append(entries, e)
 	}
 	unlock()
+
+	rows := make([]snapshotRow[R], 0, len(entries))
+	for _, e := range entries {
+		if pred != nil {
+			ok, err := pred.Match(t.resolver(e))
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		rows = append(rows, snapshotRow[R]{e: e, tuple: tupleFor(order, e.key.KeyValues())})
+	}
 
 	sort.Slice(rows, func(i, j int) bool {
 		return orderCompare(order, rows[i].tuple, rows[j].tuple) < 0
 	})
-	return rows
+	return rows, nil
 }
 
 // tupleFor projects keyValues down to order's columns, in order.
