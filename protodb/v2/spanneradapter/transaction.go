@@ -50,6 +50,12 @@ type SpannerTransactionRunner struct {
 //     NOT see fn's own buffered writes.
 //   - Multiple tables may participate: any table operation receiving fn's
 //     ctx joins this transaction.
+//   - NESTED CALLS JOIN: RunTransaction with a ctx that already carries a
+//     Spanner transaction runs fn in that transaction instead of starting a
+//     new one (Spanner refuses nested read-write transactions). The inner
+//     fn's writes commit or roll back with the outer transaction, and the
+//     outer call owns retries, re-running the inner fn with it. An inner
+//     error the outer fn swallows does not undo the inner writes.
 //
 // For example:
 //
@@ -64,6 +70,11 @@ func (r *SpannerTransactionRunner) RunTransaction(ctx context.Context, fn func(c
 
 	if r.Client == nil {
 		return status.Error(codes.InvalidArgument, "Spanner client is nil")
+	}
+
+	if SpannerTxFromContext(ctx) != nil {
+		// Nested call: join the outer transaction.
+		return fn(ctx)
 	}
 
 	_, err := r.Client.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {

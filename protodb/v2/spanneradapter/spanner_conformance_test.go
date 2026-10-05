@@ -385,3 +385,31 @@ func TestSpannerTiedOrderPagination(t *testing.T) {
 		t.Fatalf("Tail window/order wrong: got %v,%v want %v,%v", tail[0].Key, tail[1].Key, want[3], want[4])
 	}
 }
+
+// TestSpannerNestedTransactionJoins checks against the emulator that a
+// nested RunTransaction joins the outer one: both writes land in one commit.
+func TestSpannerNestedTransactionJoins(t *testing.T) {
+	client := newSpannerDatabase(t)
+	ctx := context.Background()
+	table := newBooksTable(client, newParser(t))
+	if err := table.truncate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runner := &spanneradapter.SpannerTransactionRunner{Client: client}
+	err := runner.RunTransaction(ctx, func(ctx context.Context) error {
+		if err := table.Create(ctx, &protodb.Row[string]{Key: spanneradapter.StringKey("outer"), Resource: "1"}); err != nil {
+			return err
+		}
+		return runner.RunTransaction(ctx, func(ctx context.Context) error {
+			return table.Create(ctx, &protodb.Row[string]{Key: spanneradapter.StringKey("inner"), Resource: "2"})
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"outer", "inner"} {
+		if _, err := table.Read(ctx, spanneradapter.StringKey(k)); err != nil {
+			t.Errorf("%s not committed: %v", k, err)
+		}
+	}
+}
