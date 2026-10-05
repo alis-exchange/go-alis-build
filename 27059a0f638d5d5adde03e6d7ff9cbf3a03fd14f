@@ -1,0 +1,1 @@
+Task: fix-2-2 from the phase-2 verifier. Files: internal/querytest/querytest.go (EnumString case), spanneradapter/spanner_query_test.go (skip list named). Evidence: EnumString passes on memadapter and on emulator 1.5.56.
