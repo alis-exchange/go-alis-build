@@ -52,6 +52,7 @@ const (
 
 	booksTable   = "Books"
 	shelvesTable = "Shelves"
+	backupsTable = "Backups"
 )
 
 // resolveEmulator implements the two gates. It either finds an emulator
@@ -116,7 +117,8 @@ func newSpannerDatabase(t *testing.T) *spanner.Client {
 		ExtraStatements: []string{
 			// The bundle has to name every proto type the schema below
 			// mentions; the descriptors travel out-of-band as bytes.
-			"CREATE PROTO BUNDLE (`google.iam.v1.Policy`)",
+			"CREATE PROTO BUNDLE (`google.iam.v1.Policy`, `google.spanner.admin.database.v1.Backup`, " +
+				"`google.spanner.admin.database.v1.Backup.State`, `google.protobuf.Timestamp`)",
 			"CREATE TABLE " + booksTable + " (" +
 				"`key` STRING(MAX) NOT NULL," +
 				"Res STRING(MAX)," +
@@ -128,6 +130,17 @@ func newSpannerDatabase(t *testing.T) *spanner.Client {
 				"Res STRING(MAX)," +
 				"Policy `google.iam.v1.Policy`," +
 				") PRIMARY KEY (a, b)",
+			// The shared query cases (internal/querytest) run against
+			// Backup rows; create_time mirrors the generated timestamp
+			// columns real tables order by.
+			"CREATE TABLE " + backupsTable + " (" +
+				"`key` STRING(MAX) NOT NULL," +
+				"Backup `google.spanner.admin.database.v1.Backup`," +
+				"Policy `google.iam.v1.Policy`," +
+				// Seconds only: the emulator cannot read the INT32 nanos field
+				// (and the fixtures have no sub-second times).
+				"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Backup.create_time.seconds)) STORED," +
+				") PRIMARY KEY (`key`)",
 		},
 		ProtoDescriptors: descriptors,
 	})
@@ -211,6 +224,7 @@ func protoBundleDescriptors() ([]byte, error) {
 		set.File = append(set.File, protodesc.ToFileDescriptorProto(fd))
 	}
 	add((&iampb.Policy{}).ProtoReflect().Descriptor().ParentFile())
+	add((&databasepb.Backup{}).ProtoReflect().Descriptor().ParentFile())
 	return proto.Marshal(set)
 }
 

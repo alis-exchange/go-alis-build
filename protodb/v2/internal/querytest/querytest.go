@@ -95,7 +95,16 @@ func FilterCases() []FilterCase {
 // against it. key converts a fixture key into the table's protodb.Key.
 func Run(t *testing.T, newTable func(t *testing.T) protodb.ResourceTable[*databasepb.Backup], key func(string) protodb.Key) {
 	t.Helper()
-	for _, tc := range FilterCases() {
+	RunCases(t, FilterCases(), newTable, key)
+}
+
+// RunCases is Run over a chosen subset of FilterCases.
+func RunCases(
+	t *testing.T, cases []FilterCase,
+	newTable func(t *testing.T) protodb.ResourceTable[*databasepb.Backup], key func(string) protodb.Key,
+) {
+	t.Helper()
+	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			ctx := context.Background()
 			tbl := newTable(t)
