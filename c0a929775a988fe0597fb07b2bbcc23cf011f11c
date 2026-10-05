@@ -1,0 +1,1 @@
+Task: fix-3-1 from the final verifier. Files: database.go, spanneradapter/transaction.go (joining wording), memadapter/memadapter_test.go (TestMemFilterOnColumn setup). Existing tests green.
