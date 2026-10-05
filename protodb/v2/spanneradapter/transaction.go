@@ -52,7 +52,8 @@ type SpannerTransactionRunner struct {
 //     ctx joins this transaction.
 //   - NESTED CALLS JOIN: RunTransaction with a ctx that already carries a
 //     Spanner transaction runs fn in that transaction instead of starting a
-//     new one (Spanner refuses nested read-write transactions). The inner
+//     new one (Spanner refuses nested read-write transactions), whichever
+//     client or database opened it. The inner
 //     fn's writes commit or roll back with the outer transaction, and the
 //     outer call owns retries, re-running the inner fn with it. An inner
 //     error the outer fn swallows does not undo the inner writes.

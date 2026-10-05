@@ -11,7 +11,6 @@ import (
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2"
-	"go.alis.build/protodb/v2/filtering"
 	"go.alis.build/protodb/v2/memadapter"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -506,7 +505,6 @@ func TestMemFilterOnColumn(t *testing.T) {
 			return b.GetCreateTime().AsTime()
 		},
 	}
-	cfg.FilterIdentifiers = append(cfg.FilterIdentifiers, filtering.Timestamp("create_time"))
 	tbl := newBackups(t, cfg,
 		&databasepb.Backup{Name: "old", CreateTime: timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))},
 		&databasepb.Backup{Name: "new", CreateTime: timestamppb.New(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))},

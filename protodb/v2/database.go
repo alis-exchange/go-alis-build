@@ -13,11 +13,15 @@ type TransactionRunner interface {
 	// RunTransaction executes fn with a transactional context. If fn returns
 	// nil, the transaction is committed; otherwise it is rolled back.
 	//
-	// A nested call, made with a ctx that already carries a transaction from
-	// the same runner's backend, joins that transaction instead of starting
-	// a new one: fn's writes commit or roll back with the outer transaction,
-	// and the outer call owns retries. An inner error the outer fn swallows
-	// does not undo the inner writes; return it to roll back.
+	// A nested call, made with a ctx that already carries a transaction of
+	// the same adapter (any Spanner transaction for spanneradapter, any
+	// memadapter transaction for memadapter), joins that transaction instead
+	// of starting a new one: fn's writes commit or roll back with the outer
+	// transaction, and the outer call owns retries. Joining does not check
+	// which client or database opened the outer transaction, just as table
+	// operations use whatever transaction ctx carries. An inner error the
+	// outer fn swallows does not undo the inner writes; return it to roll
+	// back.
 	RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
