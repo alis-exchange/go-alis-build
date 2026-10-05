@@ -219,6 +219,10 @@ To match rows where a field is unset, compare it with `NULL`: `Book.delete_time 
 filters. Before v2.2.0, `= NULL` compared against the string `"NULL"` and never matched an unset
 value.
 
+`Parse` backtick-quotes the column each path starts from (`` `Book`.delete_time ``), so a column
+named after a GoogleSQL keyword, such as a resource column called `Set`, `Order` or `Group`,
+filters like any other. `filtering.Reserved` is no longer needed.
+
 `Parser.Compile` evaluates the same filters in memory (`memadapter` uses it), with SQL's NULL
 rules. Where `Parse` binds something other than the value itself, such as an identifier on the
 right of a comparison (bound as the string `'b'` in `a = b`), `Compile` returns `Unimplemented`

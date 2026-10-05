@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	iampbv2 "cloud.google.com/go/iam/apiv2/iampb"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2"
+	"go.alis.build/protodb/v2/filtering"
 	"go.alis.build/protodb/v2/memadapter"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -530,6 +532,41 @@ func TestMemFilterOnColumn(t *testing.T) {
 	got, err = listNames(t, tbl, "create_time = NULL")
 	if err != nil || !reflect.DeepEqual(got, []string{"none"}) {
 		t.Fatalf("got %v, %v; want [none]", got, err)
+	}
+}
+
+// TestMemFilterOnKeywordResourceColumn checks that a resource column named
+// Set, a GoogleSQL keyword, filters like any other, with the same filters and
+// identifiers the SQL path quotes (see filtering's
+// TestNullOnKeywordResourceColumn), so both adapters stay in step.
+func TestMemFilterOnKeywordResourceColumn(t *testing.T) {
+	ctx := context.Background()
+	tbl := memadapter.New[*iampbv2.Policy](memadapter.Config{
+		KeyColumns:        []string{"key"},
+		ResourceColumn:    "Set",
+		FilterIdentifiers: []filtering.Identifier{filtering.Timestamp("Set.delete_time")},
+	})
+	for _, p := range []*iampbv2.Policy{
+		{Name: "x"},
+		{Name: "y", DeleteTime: timestamppb.Now()},
+	} {
+		if err := tbl.Create(ctx, &protodb.Row[*iampbv2.Policy]{Key: strKey(p.GetName()), Resource: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for filter, want := range map[string]string{
+		"Set.delete_time = NULL":  "x",
+		"Set.delete_time != NULL": "y",
+		"Set.name = 'x'":          "x",
+	} {
+		rows, _, err := tbl.List(ctx, protodb.ListOptions{Filter: filter})
+		if err != nil {
+			t.Errorf("%s: %v", filter, err)
+			continue
+		}
+		if len(rows) != 1 || rows[0].Resource.GetName() != want {
+			t.Errorf("%s: got %v, want only %s", filter, rows, want)
+		}
 	}
 }
 

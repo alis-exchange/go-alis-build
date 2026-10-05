@@ -14,7 +14,7 @@ func TestParamBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stmt.SQL != "(app_name = @p0 AND user_id = @p1)" {
+	if stmt.SQL != "(`app_name` = @p0 AND `user_id` = @p1)" {
 		t.Fatalf("got %q", stmt.SQL)
 	}
 	if stmt.Params["p0"] != "chat" {
@@ -57,7 +57,7 @@ func TestParamInLike(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stmt.SQL != "name LIKE @p0" {
+	if stmt.SQL != "`name` LIKE @p0" {
 		t.Fatalf("got %q", stmt.SQL)
 	}
 	if len(stmt.Params) != 1 {
@@ -76,7 +76,7 @@ func TestParamInPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stmt.SQL != "STARTS_WITH(name, @p0)" {
+	if stmt.SQL != "STARTS_WITH(`name`, @p0)" {
 		t.Fatalf("got %q", stmt.SQL)
 	}
 	if len(stmt.Params) != 1 {
@@ -94,7 +94,7 @@ func TestParamInSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stmt.SQL != "ENDS_WITH(name, @p0)" {
+	if stmt.SQL != "ENDS_WITH(`name`, @p0)" {
 		t.Fatalf("got %q", stmt.SQL)
 	}
 	if len(stmt.Params) != 1 {

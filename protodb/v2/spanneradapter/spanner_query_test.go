@@ -10,6 +10,7 @@ import (
 	"go.alis.build/protodb/v2/filtering"
 	"go.alis.build/protodb/v2/internal/querytest"
 	"go.alis.build/protodb/v2/spanneradapter"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestSpannerQueryCases runs the shared filter and ordering cases against
@@ -95,4 +96,49 @@ func usesTimestampIdentifier(filter string) bool {
 		}
 	}
 	return false
+}
+
+// TestSpannerFilterOnKeywordResourceColumn checks that filters on a resource
+// column named Set, a GoogleSQL keyword, run on Spanner. The emulator cannot
+// run the filtering.Timestamp rewrite, so the NULL test uses a plain parser;
+// memadapter's TestMemFilterOnKeywordResourceColumn covers the rewrite.
+func TestSpannerFilterOnKeywordResourceColumn(t *testing.T) {
+	client := newSpannerDatabase(t)
+	parser, err := filtering.NewParser()
+	if err != nil {
+		t.Fatalf("filtering.NewParser: %v", err)
+	}
+	ctx := context.Background()
+	table := newSpannerTable(tableConfig[*databasepb.Backup]{
+		Client:         client,
+		TableName:      setsTable,
+		Spec:           spanneradapter.StringKeySpec("key"),
+		Codec:          spanneradapter.ProtoCodec[*databasepb.Backup](),
+		Encode:         func(b *databasepb.Backup) any { return b },
+		ResourceColumn: "Set",
+		PolicyColumn:   "Policy",
+		Parser:         parser,
+	})
+	for _, b := range []*databasepb.Backup{
+		{Name: "x"},
+		{Name: "y", ExpireTime: timestamppb.Now()},
+	} {
+		if err := table.Create(ctx, &protodb.Row[*databasepb.Backup]{Key: spanneradapter.StringKey(b.GetName()), Resource: b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for filter, want := range map[string]string{
+		"Set.name = 'x'":          "x",
+		"Set.expire_time = NULL":  "x",
+		"Set.expire_time != NULL": "y",
+	} {
+		rows, _, err := table.List(ctx, protodb.ListOptions{Filter: filter})
+		if err != nil {
+			t.Errorf("%s: %v", filter, err)
+			continue
+		}
+		if len(rows) != 1 || rows[0].Resource.GetName() != want {
+			t.Errorf("%s: got %v, want only %s", filter, rows, want)
+		}
+	}
 }

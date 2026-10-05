@@ -301,7 +301,7 @@ func TestBuildStreamParentFilterAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `key`,`Res`,`Policy` FROM T WHERE STARTS_WITH(`key`, @parent) AND (a = @p0) ORDER BY `ts` DESC, `key` ASC"
+	want := "SELECT `key`,`Res`,`Policy` FROM T WHERE STARTS_WITH(`key`, @parent) AND (`a` = @p0) ORDER BY `ts` DESC, `key` ASC"
 	if stmt.SQL != want {
 		t.Fatalf("got %q want %q", stmt.SQL, want)
 	}

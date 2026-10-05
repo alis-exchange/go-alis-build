@@ -414,7 +414,10 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			return "", nil, false, fmt.Errorf("unsupported function: %s", call.Function)
 		}
 	case *expr.Expr_IdentExpr:
-		return f.parseIdentifier(expression.GetIdentExpr().GetName()), params, false, nil
+		// Every column reference starts here, so quoting the name once makes
+		// each path that builds on it (Set.delete_time, LIKE, IFNULL, ...)
+		// safe when the column is a reserved keyword such as Set or Order.
+		return f.parseIdentifier(quoteName(expression.GetIdentExpr().GetName())), params, false, nil
 	case *expr.Expr_ConstExpr:
 		constExpr := expression.GetConstExpr()
 		parsedConstant, err := f.parseConstant(constExpr)
@@ -501,8 +504,8 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 //
 // Example:
 //
-//	concat(first_name, ' ', last_name) -> CONCAT(first_name, @p0, last_name)
-//	greatest(a, b, 10) -> GREATEST(a, b, @p0)
+//	concat(first_name, ' ', last_name) -> CONCAT(`first_name`, @p0, `last_name`)
+//	greatest(a, b, 10) -> GREATEST(`a`, `b`, @p0)
 func (f *Parser) parseMultiArgFunction(fnName string, args []*expr.Expr, state *parseState) (any, map[string]any, bool, error) {
 	params := state.params
 
@@ -586,22 +589,27 @@ func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, state *parseState
 
 // parseIdentifier transforms an identifier based on its registered type.
 //
-// If the identifier is registered in the parser's identifiers map, it applies
-// the appropriate SQL transformation:
+// sql is a rendered path whose first segment is backtick-quoted, as the
+// IdentExpr case of parseExpr renders it (`Set`.delete_time). The lookup uses
+// the unquoted path, the form identifiers are registered under. If the path is
+// registered, the appropriate SQL transformation is applied to the quoted form:
 //
-//   - reservedIdentifier: Wraps in backticks -> `select`
+//   - reservedIdentifier: Quoted like any other path -> `select`
 //   - timestampIdentifier: Converts protobuf Timestamp to Spanner TIMESTAMP
 //   - durationIdentifier: Converts protobuf Duration to seconds (float)
 //   - dateIdentifier: Converts google.type.Date to Spanner DATE
 //   - enumStringIdentifier: Casts to STRING -> CAST(field AS STRING)
 //   - enumIntegerIdentifier: Casts to INT64 -> CAST(field AS INT64)
 //
-// If the identifier is not registered, it is returned unchanged.
+// Anything else, including SQL a previous call already rewrote, is returned
+// unchanged.
 func (f *Parser) parseIdentifier(sql string) string {
-	if ident, ok := f.identifiers[sql]; ok {
+	path, ok := unquotePath(sql)
+	if !ok {
+		return sql
+	}
+	if ident, ok := f.identifiers[path]; ok {
 		switch ident.(type) {
-		case reservedIdentifier:
-			sql = fmt.Sprintf("`%s`", sql)
 		case timestampIdentifier:
 			sql = fmt.Sprintf("TIMESTAMP_ADD(TIMESTAMP_SECONDS(%s.seconds),INTERVAL CAST(FLOOR(IFNULL(%s.nanos,0) / 1000) AS INT64) MICROSECOND)", sql, sql)
 		case durationIdentifier:
@@ -616,6 +624,32 @@ func (f *Parser) parseIdentifier(sql string) string {
 	}
 
 	return sql
+}
+
+// quoteName backtick-quotes a top-level column name. Quoting a name that is
+// not a keyword is still valid GoogleSQL, so every name is quoted rather than
+// checking it against a keyword list.
+func quoteName(name string) string {
+	return "`" + name + "`"
+}
+
+// unquotePath reverses the quoting quoteName applies to a path's first
+// segment: `Set`.delete_time becomes Set.delete_time. It reports false when
+// sql does not start with a quoted segment followed by the end or a dot, as
+// for an already rewritten TIMESTAMP_ADD(...) or LOWER(`name`).
+func unquotePath(sql string) (string, bool) {
+	if !strings.HasPrefix(sql, "`") {
+		return "", false
+	}
+	end := strings.IndexByte(sql[1:], '`') + 1
+	if end == 0 {
+		return "", false
+	}
+	rest := sql[end+1:]
+	if rest != "" && rest[0] != '.' {
+		return "", false
+	}
+	return sql[1:end] + rest, true
 }
 
 // isNullConst reports whether e is the CEL null literal. The string literal

@@ -10,7 +10,7 @@ func TestSanitizeNoSpaceEquals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no-space '=' must parse: %v", err)
 	}
-	if stmt.SQL != "app_name = @p0" {
+	if stmt.SQL != "`app_name` = @p0" {
 		t.Fatalf("got %q", stmt.SQL)
 	}
 }

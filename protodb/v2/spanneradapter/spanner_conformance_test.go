@@ -61,6 +61,9 @@ const (
 	shelvesTable = "Shelves"
 	// backupsTable holds Backup protos for the shared query cases.
 	backupsTable = "Backups"
+	// setsTable stores Backup protos in a resource column named Set, a
+	// GoogleSQL keyword, to prove filters quote the column.
+	setsTable = "Sets"
 )
 
 // resolveEmulator implements the two gates. It either finds an emulator
@@ -148,6 +151,11 @@ func newSpannerDatabase(t *testing.T) *spanner.Client {
 				// Seconds only: the emulator cannot read the INT32 nanos field
 				// (and the fixtures have no sub-second times).
 				"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Backup.create_time.seconds)) STORED," +
+				") PRIMARY KEY (`key`)",
+			"CREATE TABLE " + setsTable + " (" +
+				"`key` STRING(MAX) NOT NULL," +
+				"`Set` `google.spanner.admin.database.v1.Backup`," +
+				"Policy `google.iam.v1.Policy`," +
 				") PRIMARY KEY (`key`)",
 		},
 		ProtoDescriptors: descriptors,

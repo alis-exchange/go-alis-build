@@ -257,8 +257,8 @@ func (t mapIdentifier) Path() string {
 }
 
 // reservedIdentifier represents a column with a SQL reserved keyword name.
-// When used in SQL, the column name is wrapped in backticks to avoid syntax errors.
-// Example: `select`, `from`, `group`
+// The parser backtick-quotes every column name, so it needs no rewrite of
+// its own. Example: `select`, `from`, `group`
 type reservedIdentifier struct {
 	name string
 }
@@ -382,8 +382,9 @@ func Date(path string) Identifier {
 
 /*
 Reserved allows for the querying of columns with reserved keywords.
-It instructs the parser to wrap the column names with backticks(`).
-This is only required if you have a column with a reserved keyword
+
+The parser now backtick-quotes every column name, so Reserved is no longer
+required. It is kept so existing callers keep compiling.
 
 It takes in the name of the column.
 */
