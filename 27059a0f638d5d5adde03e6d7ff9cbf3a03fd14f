@@ -1,1 +1,8 @@
 Task: fix-2-2 from the phase-2 verifier. Files: internal/querytest/querytest.go (EnumString case), spanneradapter/spanner_query_test.go (skip list named). Evidence: EnumString passes on memadapter and on emulator 1.5.56.
+
+Phase 2 verification (memadapter filters and ordering)
+
+Automated: `cd protodb/v2 && go test -race ./... -count=1` ok; `PROTODB_SPANNER_CONFORMANCE=1 go test ./spanneradapter/ -run TestSpannerQueryCases` ok on emulator 1.5.56 (Docker 29.8.1): plain filters, EnumString, ordering (NULL placement, ties, Tail, Stream), IS NULL with full pages. Skipped on emulator: 5 cases using the filtering.Timestamp rewrite (emulator cannot type INT32 `.nanos`; backlog to verify on real Spanner).
+gorelease -base=v2.1.0 -version=v2.2.0: compatible additions only (filtering.Parser.Compile, Predicate; memadapter.Config ResourceColumn, FilterIdentifiers, Columns).
+Independent phase verifier: round 1 Reject (filter/order value-model mismatch, missing EnumString emulator case, dynamic WKTs, sub-microsecond timestamps) -> fix-2-1 d4955c0, fix-2-2 27059a0; round 2 Approve.
+Hand check: none needed; library behaviour fully covered by tests on both adapters.
