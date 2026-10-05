@@ -1,0 +1,9 @@
+Task: compile == null and != null to IS NULL / IS NOT NULL in the protodb/v2 filter parser.
+
+Changes:
+- parser.go: isNullConst detects the CEL null literal by AST node (not text, so the string 'NULL' still binds); parseNullTest renders `<operand> IS NULL` / `IS NOT NULL` for == / != with null on either side, keeping parseIdentifier rewrites; a constant compared with null stays a bound parameter (no SQL splicing).
+- filter_test.go: null tests now expect IS NULL / IS NOT NULL with no params; new cases for null on the left, null on both sides, constants next to null, a registered Timestamp identifier, enum + null combined with AND, the 'NULL' string literal, and IFNULL unchanged.
+
+Files: protodb/v2/filtering/parser.go, protodb/v2/filtering/filter_test.go
+
+Why: Spanner never makes `x = NULL` true, so "field is unset" filters (e.g. soft-delete `delete_time = NULL`) were impossible; the old SQL compared against the string "NULL".
