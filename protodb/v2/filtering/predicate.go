@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -12,8 +13,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Predicate is a compiled filter that evaluates rows in memory, with the same
@@ -478,33 +477,28 @@ func (p *Predicate) evalIn(left, list *expr.Expr, resolve func(string) (any, err
 }
 
 // normalize converts a resolved value into the evaluator's value model, the
-// way the SQL path renders the same column: Timestamps become time.Time,
-// Durations float seconds, google.type.Date a UTC-midnight time.Time, and
-// enums their name or number when path is registered with EnumString or
-// EnumInteger. Other messages stay as they are: they can be tested for
-// NULL but not compared.
+// way the SQL path renders the same column: Timestamps become time.Time
+// truncated to microseconds (as Spanner stores them), Durations float
+// seconds, google.type.Date a UTC-midnight time.Time, enums their name or
+// number when path is registered with EnumString or EnumInteger, and any
+// string, bool, integer or float kind a string, bool, int64 or float64.
+// Other messages stay as they are: they can be tested for NULL but not
+// compared.
 func (p *Predicate) normalize(path string, raw any) (any, error) {
 	switch v := raw.(type) {
 	case nil:
 		return nil, nil
-	case int:
-		return int64(v), nil
-	case int8:
-		return int64(v), nil
-	case int16:
-		return int64(v), nil
-	case int32:
-		return int64(v), nil
-	case uint8:
-		return int64(v), nil
-	case uint16:
-		return int64(v), nil
-	case uint32:
-		return int64(v), nil
-	case float32:
-		return float64(v), nil
+	case time.Time:
+		return v.Truncate(time.Microsecond), nil
+	case []byte:
+		return v, nil
 	case protoreflect.EnumNumber:
 		return int64(v), nil
+	case protoreflect.Enum:
+		if ev := v.Descriptor().Values().ByNumber(v.Number()); ev != nil {
+			return p.normalize(path, ev)
+		}
+		return int64(v.Number()), nil
 	case protoreflect.EnumValueDescriptor:
 		switch p.parser.identifiers[path].(type) {
 		case enumStringIdentifier:
@@ -516,32 +510,53 @@ func (p *Predicate) normalize(path string, raw any) (any, error) {
 		}
 	case proto.Message:
 		return normalizeMessage(v)
+	}
+	rv := reflect.ValueOf(raw)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Bool:
+		return rv.Bool(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int(), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if rv.Uint() > math.MaxInt64 {
+			return nil, status.Errorf(codes.InvalidArgument, "filtering: %s is %d, which does not fit in an INT64", path, rv.Uint())
+		}
+		return int64(rv.Uint()), nil
+	case reflect.Float32, reflect.Float64:
+		return rv.Float(), nil
 	default:
 		return raw, nil
 	}
 }
 
-// normalizeMessage converts the well-known value messages; an unset (nil or
-// invalid) message is NULL.
+// normalizeMessage converts the well-known value messages, matched by full
+// name so dynamic messages convert too; an unset (nil or invalid) message is
+// NULL.
 func normalizeMessage(m proto.Message) (any, error) {
 	r := m.ProtoReflect()
 	if !r.IsValid() {
 		return nil, nil
 	}
-	switch v := m.(type) {
-	case *timestamppb.Timestamp:
-		return v.AsTime(), nil
-	case *durationpb.Duration:
-		return v.AsDuration().Seconds(), nil
-	}
-	if r.Descriptor().FullName() == "google.type.Date" {
-		fields := r.Descriptor().Fields()
+	fields := r.Descriptor().Fields()
+	switch r.Descriptor().FullName() {
+	case "google.protobuf.Timestamp":
+		sec := r.Get(fields.ByName("seconds")).Int()
+		nanos := r.Get(fields.ByName("nanos")).Int()
+		return time.Unix(sec, nanos).UTC().Truncate(time.Microsecond), nil
+	case "google.protobuf.Duration":
+		sec := r.Get(fields.ByName("seconds")).Int()
+		nanos := r.Get(fields.ByName("nanos")).Int()
+		return float64(sec) + float64(nanos)/1e9, nil
+	case "google.type.Date":
 		year := r.Get(fields.ByName("year")).Int()
 		month := r.Get(fields.ByName("month")).Int()
 		day := r.Get(fields.ByName("day")).Int()
 		return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), nil
+	default:
+		return m, nil
 	}
-	return m, nil
 }
 
 // and applies SQL's three-valued AND to true, false and nil (unknown).

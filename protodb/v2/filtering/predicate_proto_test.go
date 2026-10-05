@@ -113,3 +113,67 @@ func TestPredicateUnsupportedMessageComparison(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got)
 }
+
+// TestPredicateWidensByKind checks that column values of any integer kind,
+// including named types such as generated proto enums, compare like the
+// SQL path's INT64.
+func TestPredicateWidensByKind(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	row := rowOf(map[string]any{
+		"u":  uint64(5),
+		"ui": uint(5),
+		"st": databasepb.Backup_READY,
+		"f":  float32(1.5),
+	})
+	for _, f := range []string{"u = 5", "ui = 5", "st = 2", "st = 'READY'", "f = 1.5"} {
+		pred, err := p.Compile(f)
+		require.NoError(t, err, f)
+		got, err := pred.Match(row)
+		require.NoError(t, err, f)
+		assert.True(t, got, f)
+	}
+
+	pred, err := p.Compile("big = 1")
+	require.NoError(t, err)
+	_, err = pred.Match(rowOf(map[string]any{"big": uint64(1) << 63}))
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestPredicateDynamicWellKnownTypes checks that Timestamp and Duration are
+// recognised by full name, so dynamic messages convert like generated ones.
+func TestPredicateDynamicWellKnownTypes(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	ts := dynamicpb.NewMessage((&timestamppb.Timestamp{}).ProtoReflect().Descriptor())
+	ts.Set(ts.Descriptor().Fields().ByName("seconds"), protoreflect.ValueOfInt64(100))
+	d := dynamicpb.NewMessage((&durationpb.Duration{}).ProtoReflect().Descriptor())
+	d.Set(d.Descriptor().Fields().ByName("seconds"), protoreflect.ValueOfInt64(7200))
+	row := rowOf(map[string]any{"ts": ts, "d": d})
+	for _, f := range []string{"ts = timestamp('1970-01-01T00:01:40Z')", "d > duration('1h')"} {
+		pred, err := p.Compile(f)
+		require.NoError(t, err, f)
+		got, err := pred.Match(row)
+		require.NoError(t, err, f)
+		assert.True(t, got, f)
+	}
+}
+
+// TestPredicateTruncatesTimestampsToMicroseconds matches the SQL rewrite,
+// which drops sub-microsecond nanos.
+func TestPredicateTruncatesTimestampsToMicroseconds(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	row := rowOf(map[string]any{"ts": &timestamppb.Timestamp{Seconds: 100, Nanos: 1500}})
+	cases := map[string]bool{
+		"ts = timestamp('1970-01-01T00:01:40.000001Z')": true,
+		"ts > timestamp('1970-01-01T00:01:40.000001Z')": false,
+	}
+	for f, want := range cases {
+		pred, err := p.Compile(f)
+		require.NoError(t, err, f)
+		got, err := pred.Match(row)
+		require.NoError(t, err, f)
+		assert.Equal(t, want, got, f)
+	}
+}

@@ -790,3 +790,43 @@ func TestMemOrderByColumnMixedTypesIsFailedPrecondition(t *testing.T) {
 		t.Fatalf("got %v, want FailedPrecondition", err)
 	}
 }
+
+// TestMemOrderByTimestampMessageColumn checks that a Columns function may
+// return the resource's *timestamppb.Timestamp directly, as filters accept.
+func TestMemOrderByTimestampMessageColumn(t *testing.T) {
+	created := map[string]*timestamppb.Timestamp{
+		"a": timestamppb.New(time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)),
+		"b": nil,
+		"c": timestamppb.New(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+	}
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns: map[string]func(protodb.Key, any) any{
+			"ct": func(k protodb.Key, _ any) any { return created[k.KeyValues()[0].(string)] },
+		},
+	})
+	for _, k := range []string{"a", "b", "c"} {
+		if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey(k), Resource: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := orderedNames(t, tbl, "ct")
+	if err != nil || !reflect.DeepEqual(got, []string{"b", "c", "a"}) {
+		t.Fatalf("got %v, %v; want [b c a] (nil first)", got, err)
+	}
+}
+
+// TestMemOrderByOtherMessageColumnIsFailedPrecondition checks that a column
+// returning a message other than Timestamp or Duration is rejected, not read.
+func TestMemOrderByOtherMessageColumnIsFailedPrecondition(t *testing.T) {
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns:    map[string]func(protodb.Key, any) any{"m": func(protodb.Key, any) any { return &databasepb.Backup{Name: "x"} }},
+	})
+	if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey("a"), Resource: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orderedNames(t, tbl, "m"); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("got %v, want FailedPrecondition", err)
+	}
+}

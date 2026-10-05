@@ -582,7 +582,8 @@ func tupleFor[R any](order []orderCol, e *entry[R]) ([]any, error) {
 }
 
 // orderValue normalises a Config.Columns value for sorting and page tokens:
-// nil and time.Time are kept, and any value whose kind is a string, bool,
+// nil and time.Time are kept, Timestamp and Duration messages become
+// time.Time (to the microsecond) and float seconds, and any value whose kind is a string, bool,
 // integer or float (including named types such as proto enums) becomes a
 // string, bool, int64 or float64. Anything else, or an unsigned value too
 // large for int64, is FailedPrecondition.
@@ -590,8 +591,25 @@ func orderValue(column string, v any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
-	if t, ok := v.(time.Time); ok {
-		return t, nil
+	switch x := v.(type) {
+	case time.Time:
+		return x, nil
+	case proto.Message:
+		// Accept the well-known value messages filters accept, matched by
+		// full name; an unset message is NULL.
+		r := x.ProtoReflect()
+		if !r.IsValid() {
+			return nil, nil
+		}
+		name := r.Descriptor().FullName()
+		if name == "google.protobuf.Timestamp" || name == "google.protobuf.Duration" {
+			fields := r.Descriptor().Fields()
+			sec, nanos := r.Get(fields.ByName("seconds")).Int(), r.Get(fields.ByName("nanos")).Int()
+			if name == "google.protobuf.Timestamp" {
+				return time.Unix(sec, nanos).UTC().Truncate(time.Microsecond), nil
+			}
+			return float64(sec) + float64(nanos)/1e9, nil
+		}
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
