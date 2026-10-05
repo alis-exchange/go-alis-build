@@ -213,6 +213,17 @@ rows, _, err := table.List(ctx, protodb.ListOptions{
 `like()`/`prefix()`/`suffix()` calls — the bound placeholder is embedded directly rather than
 re-wrapped, so `like(name, param('p'))` binds exactly one parameter.
 
+To match rows where a field is unset, compare it with `NULL`: `Book.delete_time = NULL` compiles to
+`... IS NULL` and `!= NULL` to `IS NOT NULL`, keeping the identifier's rewrite (for example a
+`filtering.Timestamp` field). `<`, `<=`, `>` and `>=` against `NULL` are rejected as invalid
+filters. Before v2.2.0, `= NULL` compared against the string `"NULL"` and never matched an unset
+value.
+
+`Parser.Compile` evaluates the same filters in memory (`memadapter` uses it), with SQL's NULL
+rules. Where `Parse` binds something other than the value itself, such as an identifier on the
+right of a comparison (bound as the string `'b'` in `a = b`), `Compile` returns `Unimplemented`
+rather than giving a different answer from Spanner.
+
 ## Ordering
 
 `OrderBy` is an [AIP-132](https://google.aip.dev/132) order-by expression, parsed by the
@@ -571,16 +582,51 @@ func TestBookService_Create(t *testing.T) {
 
 **Limits, deliberate rather than gaps to fill later:**
 
-- **No filter engine.** Any non-empty `Filter` on `List`/`Stream` returns `Unimplemented` —
-  memadapter has no CEL/filter evaluation. Test filtering behavior against a real filter
-  implementation (e.g. `spanneradapter`), not `memadapter`.
-- **`OrderBy` is key-columns only.** memadapter has no schema beyond the key it's configured
-  with (`Config.KeyColumns`); ordering by a non-key column returns `Unimplemented`.
+- **Filters and non-key ordering are opt-in.** Without `Config.ResourceColumn`, a non-empty
+  `Filter` returns `Unimplemented`; without `Config.Columns`, ordering by a non-key column does
+  too. See below.
 - **Isolation, not rollback.** `memadapter.NewTransactionRunner()` provides atomicity by holding
   one package-global mutex for `fn`'s entire execution — not a real rollback mechanism. `fn`
   runs exactly once (no abort/retry simulation), which is a valid degenerate case of
   `ReadModifyWrite`'s "may run more than once" contract, but means memadapter cannot exercise
   retry-related bugs.
+
+#### Filtering and ordering in memory
+
+Configure the table the way the Spanner table is configured, and `Filter` and `OrderBy` behave
+the same way, with filtering applied before paging:
+
+```go
+table := memadapter.New[*bookpb.Book](memadapter.Config{
+	KeyColumns:     []string{"key"},
+	ResourceColumn: "Book", // filters say Book.title, Book.create_time, ...
+	FilterIdentifiers: []filtering.Identifier{ // same identifiers as the Spanner table's parser
+		filtering.Timestamp("Book.create_time"),
+		filtering.Timestamp("Book.delete_time"),
+	},
+	Columns: map[string]func(protodb.Key, any) any{ // stand-ins for generated columns
+		"create_time": func(_ protodb.Key, r any) any {
+			if t := r.(*bookpb.Book).GetCreateTime(); t != nil {
+				return t.AsTime()
+			}
+			return nil // NULL: sorts first ascending, last descending
+		},
+	},
+})
+
+rows, next, err := table.List(ctx, protodb.ListOptions{
+	Filter:  "Book.delete_time = NULL",
+	OrderBy: "create_time desc",
+})
+```
+
+A filter path is a key column, `key` (the first key value), `Book` or a field below it (read with
+protoreflect, so `R` must be a proto message), or a `Columns` name. An unset message field, or an
+unset field with explicit presence, is `NULL`; a plain proto3 scalar reads its default, as in
+Spanner. Repeated and map fields, and filter forms the in-memory evaluator cannot reproduce exactly,
+return `Unimplemented`. A `Columns` function returns `nil`, a string, bool, number, or `time.Time`;
+any other type, or a mix of types across rows, fails with `FailedPrecondition`. Column functions
+must not call back into memadapter.
 
 ### `protodbtest`
 
