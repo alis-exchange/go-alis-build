@@ -49,8 +49,11 @@ func TestSpannerQueryCases(t *testing.T) {
 
 	// The emulator cannot read INT32 proto fields ("Type not found: INT32"),
 	// which the filtering.Timestamp rewrite does through `.nanos`; real
-	// Spanner reads them as INT64. Those cases are skipped here, and the NULL
-	// cases rerun below without the Timestamp identifiers so IS NULL and full
+	// Spanner reads them as INT64. Every case touching a TimestampPaths field
+	// is therefore skipped here: AndWithEnumAndNotNull, TimestampComparison,
+	// IsNull, FullPagesWhenFiltering and Stream. TimestampComparison and the
+	// AND case are never checked against SQL; the three NULL-only cases
+	// rerun below without the Timestamp identifiers, so IS NULL and full
 	// pages are still checked against real SQL.
 	var supported, timestampCases []querytest.FilterCase
 	for _, tc := range querytest.FilterCases() {

@@ -77,6 +77,7 @@ func FilterCases() []FilterCase {
 	return []FilterCase{
 		{Name: "Equal", Filter: "Backup.name = 'backups/b01'", WantPages: [][]string{k(1)}},
 		{Name: "NotEqual", Filter: "Backup.name != 'backups/b01'", WantPages: [][]string{k(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)}},
+		{Name: "EnumString", Filter: "Backup.state = 'READY'", WantPages: [][]string{k(1, 3, 5, 7, 9, 11)}},
 		{Name: "AndWithEnumAndNotNull", Filter: "Backup.state = 'READY' AND Backup.expire_time != NULL", WantPages: [][]string{k(1, 3)}},
 		{Name: "Or", Filter: "Backup.name = 'backups/b02' OR Backup.name = 'backups/b04'", WantPages: [][]string{k(2, 4)}},
 		{Name: "InOnKey", Filter: "key IN ['backups/b05', 'backups/b06']", WantPages: [][]string{k(5, 6)}},
