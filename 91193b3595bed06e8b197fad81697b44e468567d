@@ -1,0 +1,11 @@
+Task: in-memory filter evaluation core (Parser.Compile, Predicate.Match).
+
+Changes:
+- filter.go: parseFilter extracted from Parse (sanitize + CEL parse + ToProto), shared with Compile.
+- predicate.go: Compile (validates via Parse, recovers its panics), Predicate, Match; eval for consts, idents/selects (resolver + normalize), AND/OR (Kleene), ==/!= incl. null tests, ordering, IN; compare for string/int64/float64/bool/time/bytes; NaN per IEEE; Unimplemented for right-hand identifiers, identifiers/null in IN lists, structs, comprehensions, functions (next todo).
+- predicate_test.go: core, three-valued, per-type ordering, NaN, SQL-divergence rejections, non-boolean root, Compile panics, error parity with Parse.
+
+Files: protodb/v2/filtering/filter.go, predicate.go, predicate_test.go
+
+Why: memadapter needs to evaluate the same AIP-160 filters as spanneradapter, before paging, so generated tests can use filters and soft-delete push-down.
+Verification: two independent verifier rounds; all findings fixed; user approved committing after the 2-round limit.
