@@ -1,1 +1,8 @@
 Task: fix-3-1 from the final verifier. Files: database.go, spanneradapter/transaction.go (joining wording), memadapter/memadapter_test.go (TestMemFilterOnColumn setup). Existing tests green.
+
+Phase 3 and release-gate verification (nested transactions)
+
+Automated: go mod tidy (no go.mod/go.sum diff); go vet ./... ok; go test -race ./... ok; PROTODB_SPANNER_CONFORMANCE=1 go test ./... ok on emulator 1.5.56 (incl. TestSpannerNestedTransactionJoins, TestSpannerQueryCases); golangci-lint --new-from-rev=protodb/v2/v2.1.0: 6 issues, all from bd45dcb (pre-track emulator tests), none from this track.
+gorelease -base=v2.1.0 -version=v2.2.0: compatible additions only; valid as v2.2.0 (tag protodb/v2/v2.2.0).
+Final whole-track verifier: Approve; AC1-16 each mapped to a test; cross-phase probe (filter + IS NULL + Columns ordering + paging inside nested RunTransaction with rollback) passed. Follow-ups: doc wording + test setup (fix-3-1, this commit); real-Spanner check of the Timestamp-identifier SQL and the %c timestamp format remain on the backlog.
+Hand check: none needed (library; no user-visible surface).
