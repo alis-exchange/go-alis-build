@@ -5,3 +5,10 @@ Changes: parser.go guards the four ordering operators with isNullConst and retur
 Files: protodb/v2/filtering/parser.go, protodb/v2/filtering/filter_test.go
 
 Why: an ordering comparison with NULL is never true in Spanner, so silently emitting SQL hid a caller mistake.
+
+Phase 1 verification (IS NULL in the SQL parser)
+
+Automated: `cd protodb/v2 && go test -race ./filtering/ -count=1` ok; `go vet ./...` ok; golangci-lint on changed lines: 0 issues.
+Independent phase verifier: Approve. Checked every ==/!= path (functions, nested selects, param(), lists, constants), param numbering inside AND chains, sanitize interaction (!= NULL; <> NULL and IS NULL remain CEL syntax errors), ErrInvalidFilter wrapping, unchanged exported API.
+Hand check: none needed; library change fully covered by SQL-string tests.
+Follow-ups on backlog: parenthesise nested comparisons (pre-existing).
