@@ -1,0 +1,7 @@
+Task: normalise proto values and typed identifiers in Predicate.
+
+Changes: predicate.go normalize(path, raw) uses the parser identifier map (EnumString -> name, EnumInteger -> number), normalizeMessage (Timestamp, Duration, google.type.Date via protoreflect, invalid message -> NULL), compare handles EnumValueDescriptor vs string/int64 and rejects messages; predicate_proto_test.go covers registered/unregistered timestamps, enums, durations, dynamicpb google.type.Date, and message comparison rejection.
+
+Files: protodb/v2/filtering/predicate.go, predicate_proto_test.go
+
+Why: memadapter resolves raw proto values; they must compare like the SQL rewrites of the same identifiers. go.mod unchanged (no genproto date import).
