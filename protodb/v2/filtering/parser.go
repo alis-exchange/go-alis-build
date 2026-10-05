@@ -91,6 +91,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			}
 			return fmt.Sprintf("(%s OR %s)", leftSQL, rightSQL), params, false, nil
 		case "_>_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return "", nil, false, fmt.Errorf("%s cannot compare against null; use = NULL or != NULL", call.GetFunction())
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
@@ -114,6 +117,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s > @%s", leftSQL, paramName), params, false, nil
 		case "_>=_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return "", nil, false, fmt.Errorf("%s cannot compare against null; use = NULL or != NULL", call.GetFunction())
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
@@ -138,6 +144,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			return fmt.Sprintf("%s >= @%s", leftSQL, paramName), params, false, nil
 
 		case "_<_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return "", nil, false, fmt.Errorf("%s cannot compare against null; use = NULL or != NULL", call.GetFunction())
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
@@ -161,6 +170,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s < @%s", leftSQL, paramName), params, false, nil
 		case "_<=_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return "", nil, false, fmt.Errorf("%s cannot compare against null; use = NULL or != NULL", call.GetFunction())
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err

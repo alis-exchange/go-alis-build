@@ -790,6 +790,14 @@ func (s *ParserSuite) TestNullCombinedWithEnum() {
 	)
 }
 
+func (s *ParserSuite) TestNullInOrderingComparisonIsInvalid() {
+	for _, f := range []string{"name > null", "name >= null", "name < NULL", "name <= null", "null < name"} {
+		_, err := s.parser.Parse(f)
+		var invalid ErrInvalidFilter
+		s.Require().ErrorAs(err, &invalid, f)
+	}
+}
+
 func (s *ParserSuite) TestNullStringLiteralStillBinds() {
 	s.assertStatement("name = 'NULL'", "name = @p0", map[string]any{"p0": "NULL"})
 }
