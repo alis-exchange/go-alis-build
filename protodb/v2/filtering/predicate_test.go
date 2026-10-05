@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,4 +177,126 @@ func TestCompileReturnsSameErrorsAsParse(t *testing.T) {
 	_, cerr := p.Compile("name = ")
 	require.Error(t, perr)
 	assert.Equal(t, perr.Error(), cerr.Error())
+}
+
+func TestPredicateFunctions(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	created := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+	row := rowOf(map[string]any{
+		"name": "Alice", "nick": nil, "created": created, "secs": float64(5400),
+		"day": time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC), "a": int64(2), "b": int64(9),
+	})
+	params := map[string]any{"who": "Alice"}
+	cases := []struct {
+		filter string
+		want   bool
+	}{
+		{"created > timestamp('2024-01-01T00:00:00Z')", true},
+		{"created < timestamp('2024-01-01T00:00:00Z')", false},
+		{"secs > duration('1h')", true},
+		{"day = date('2024-05-01')", true},
+		{"name = param('who')", true},
+		{"prefix(name, 'Al')", true},
+		{"suffix(name, 'ce')", true},
+		{"like(name, 'A_i%')", true},
+		{"like(name, 'a%')", false}, // LIKE is case-sensitive in Spanner
+		{"like(name, 'Al.%')", false},
+		{"lower(name) = 'alice'", true},
+		{"upper(name) = 'ALICE'", true},
+		{"concat(name, '!') = 'Alice!'", true},
+		{"greatest(a, b, 4) = 9", true},
+		{"least(a, b, 4) = 2", true},
+		{"ifnull(nick, 'N/A') = 'N/A'", true},
+		{"ifnull(name, 'N/A') = 'Alice'", true},
+		{"coalesce(nick, name) = 'Alice'", true},
+		{"lower(nick) = 'x'", false},                 // NULL propagates
+		{"(concat(nick, 'x') = 'x') = false", false}, // ...as unknown, not false
+		{"greatest(a, nick) = 9", false},
+		{"PREFIX(name, 'Al')", true}, // uppercase names, as Parse accepts
+		{"LOWER(name) = 'alice'", true},
+		{"IFNULL(nick, 'N/A') = 'N/A'", true},
+	}
+	for _, tc := range cases {
+		pred, err := p.Compile(tc.filter, params)
+		require.NoError(t, err, tc.filter)
+		got, err := pred.Match(row)
+		require.NoError(t, err, tc.filter)
+		assert.Equal(t, tc.want, got, tc.filter)
+	}
+	_, err = p.Compile("name = param('missing')", params)
+	assert.Error(t, err)
+}
+
+func TestPredicateFunctionArgumentsSQLTreatsDifferently(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	row := rowOf(map[string]any{"name": "Alice", "nick": nil, "other": "Al"})
+	// Parse binds a null constant argument as the string "NULL", and an
+	// identifier in a pattern position as a string literal.
+	for _, f := range []string{
+		"ifnull(nick, null) = 'x'",
+		"prefix(name, other)",
+		"like(name, other)",
+		"name = concat('Al', 'ice')",    // bound as the text CONCAT(@p0, @p1)
+		"prefix(name, upper('al'))",     // bound as the text UPPER(al)
+		"prefix('name', 'Al')",          // rendered unquoted: reads column name
+		"lower('NAME') = 'name'",        // same
+		"(name = 'a') = (nick = 'b')",   // right-hand comparison bound as text
+		"name IN [concat('Al', 'ice')]", // list element bound as text
+	} {
+		pred, err := p.Compile(f)
+		require.NoError(t, err, f)
+		_, err = pred.Match(row)
+		assert.Equal(t, codes.Unimplemented, status.Code(err), f)
+	}
+}
+
+func TestPredicateFunctionArity(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	for _, f := range []string{"greatest() = 1", "least() = 1", "concat() = ''", "coalesce() = 1"} {
+		pred, err := p.Compile(f)
+		if err != nil {
+			continue // rejected up front is fine too
+		}
+		_, err = pred.Match(rowOf(map[string]any{}))
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), f)
+	}
+}
+
+func TestPredicateLikeEscapes(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	row := rowOf(map[string]any{"x": "a%b", "y": "axb"})
+	cases := []struct {
+		filter string
+		want   bool
+	}{
+		{`like(x, 'a\\%b')`, true},
+		{`like(y, 'a\\%b')`, false},
+		{`like(y, 'a%b')`, true},
+		{`like(x, 'a_b')`, true},
+	}
+	for _, tc := range cases {
+		pred, err := p.Compile(tc.filter)
+		require.NoError(t, err, tc.filter)
+		got, err := pred.Match(row)
+		require.NoError(t, err, tc.filter)
+		assert.Equal(t, tc.want, got, tc.filter)
+	}
+	pred, err := p.Compile(`like(x, 'a\\')`)
+	require.NoError(t, err)
+	_, err = pred.Match(row)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestPredicateGreatestWithNaN(t *testing.T) {
+	p, err := NewParser()
+	require.NoError(t, err)
+	pred, err := p.Compile("greatest(a, nan) = 1.0")
+	require.NoError(t, err)
+	got, err := pred.Match(rowOf(map[string]any{"a": float64(1), "nan": math.NaN()}))
+	require.NoError(t, err)
+	assert.False(t, got) // GREATEST is NaN, and NaN equals nothing
 }
