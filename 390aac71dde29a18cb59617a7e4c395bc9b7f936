@@ -1,0 +1,1 @@
+Task: README for IS NULL filters, Parser.Compile, memadapter filtering and column ordering. Files: protodb/v2/README.md. Why: the old memadapter limits section said filters and non-key ordering were unsupported.
