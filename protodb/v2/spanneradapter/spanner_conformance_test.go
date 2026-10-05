@@ -44,16 +44,22 @@ const (
 	// run exercise the same Spanner build.
 	emulatorImage = "gcr.io/cloud-spanner-emulator/emulator:1.5.56"
 
-	// The emulator tests run only when one of these is set: an existing
-	// emulator's address, or any value to start one in Docker.
+	// emulatorHostEnv names a running emulator to use; the emulator tests
+	// run when it or conformanceEnv is set.
 	emulatorHostEnv = "SPANNER_EMULATOR_HOST"
-	conformanceEnv  = "PROTODB_SPANNER_CONFORMANCE"
+	// conformanceEnv, set to any value, starts an emulator in Docker.
+	conformanceEnv = "PROTODB_SPANNER_CONFORMANCE"
 
-	testProjectID  = "protodb-test"
+	// testProjectID is the emulator project every test database lives in.
+	testProjectID = "protodb-test"
+	// testInstanceID is the emulator instance every test database lives in.
 	testInstanceID = "protodb-test"
 
-	booksTable   = "Books"
+	// booksTable has a single string key.
+	booksTable = "Books"
+	// shelvesTable has a two-column tagged key.
 	shelvesTable = "Shelves"
+	// backupsTable holds Backup protos for the shared query cases.
 	backupsTable = "Backups"
 )
 
@@ -175,6 +181,8 @@ func newSpannerDatabase(t *testing.T) *spanner.Client {
 	return client
 }
 
+// createInstance creates the shared emulator instance, tolerating one that
+// already exists from an earlier test against the same emulator.
 func createInstance(ctx context.Context, t *testing.T) {
 	t.Helper()
 	admin, err := instadmin.NewInstanceAdminClient(ctx)
@@ -250,8 +258,10 @@ type shelfKey struct {
 	B string `pdb:"b"`
 }
 
+// KeyValues implements protodb.Key.
 func (k shelfKey) KeyValues() []any { return spanneradapter.KeyValuesOf(k) }
 
+// newShelvesTable builds the two-column tagged-key reference table.
 func newShelvesTable(t *testing.T, client *spanner.Client, parser *filtering.Parser) *spannerTable[string] {
 	t.Helper()
 	spec, err := spanneradapter.KeySpecFor[shelfKey]()
@@ -270,6 +280,7 @@ func newShelvesTable(t *testing.T, client *spanner.Client, parser *filtering.Par
 	})
 }
 
+// newParser returns a filtering.Parser with no typed identifiers.
 func newParser(t *testing.T) *filtering.Parser {
 	t.Helper()
 	parser, err := filtering.NewParser()

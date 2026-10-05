@@ -30,6 +30,7 @@ type tokenPayload struct {
 	KeyValues   []any
 }
 
+// init registers time.Time with gob, so page tokens can carry it.
 func init() {
 	// string, int64, bool, and float64 are gob's built-in basic types and
 	// are auto-registered by the gob package itself, so they need no

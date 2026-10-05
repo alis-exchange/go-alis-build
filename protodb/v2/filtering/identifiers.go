@@ -30,9 +30,13 @@ type anyIdentifier struct {
 	path string
 }
 
+// envType returns cel.AnyType, the type the identifier declares in the CEL
+// environment.
 func (t anyIdentifier) envType() *cel.Type {
 	return cel.AnyType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t anyIdentifier) Path() string {
 	return t.path
 }
@@ -43,9 +47,13 @@ type boolIdentifier struct {
 	path string
 }
 
+// envType returns cel.BoolType, the type the identifier declares in the CEL
+// environment.
 func (t boolIdentifier) envType() *cel.Type {
 	return cel.BoolType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t boolIdentifier) Path() string {
 	return t.path
 }
@@ -56,9 +64,13 @@ type bytesIdentifier struct {
 	path string
 }
 
+// envType returns cel.BytesType, the type the identifier declares in the CEL
+// environment.
 func (t bytesIdentifier) envType() *cel.Type {
 	return cel.BytesType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t bytesIdentifier) Path() string {
 	return t.path
 }
@@ -69,9 +81,13 @@ type doubleIdentifier struct {
 	path string
 }
 
+// envType returns cel.DoubleType, the type the identifier declares in the CEL
+// environment.
 func (t doubleIdentifier) envType() *cel.Type {
 	return cel.DoubleType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t doubleIdentifier) Path() string {
 	return t.path
 }
@@ -83,9 +99,13 @@ type durationIdentifier struct {
 	path string
 }
 
+// envType returns cel.DurationType, the type the identifier declares in the CEL
+// environment.
 func (t durationIdentifier) envType() *cel.Type {
 	return cel.DurationType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t durationIdentifier) Path() string {
 	return t.path
 }
@@ -96,9 +116,13 @@ type intIdentifier struct {
 	path string
 }
 
+// envType returns cel.IntType, the type the identifier declares in the CEL
+// environment.
 func (t intIdentifier) envType() *cel.Type {
 	return cel.IntType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t intIdentifier) Path() string {
 	return t.path
 }
@@ -109,9 +133,13 @@ type nullIdentifier struct {
 	path string
 }
 
+// envType returns cel.NullType, the type the identifier declares in the CEL
+// environment.
 func (t nullIdentifier) envType() *cel.Type {
 	return cel.NullType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t nullIdentifier) Path() string {
 	return t.path
 }
@@ -122,9 +150,13 @@ type stringIdentifier struct {
 	path string
 }
 
+// envType returns cel.StringType, the type the identifier declares in the CEL
+// environment.
 func (t stringIdentifier) envType() *cel.Type {
 	return cel.StringType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t stringIdentifier) Path() string {
 	return t.path
 }
@@ -136,9 +168,13 @@ type timestampIdentifier struct {
 	path string
 }
 
+// envType returns cel.TimestampType, the type the identifier declares in the CEL
+// environment.
 func (t timestampIdentifier) envType() *cel.Type {
 	return cel.TimestampType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t timestampIdentifier) Path() string {
 	return t.path
 }
@@ -150,6 +186,9 @@ type dateIdentifier struct {
 	path string
 }
 
+// envType returns the google.type.Date object type, with the comparison and
+// arithmetic traits a date supports, as the type the identifier declares
+// in the CEL environment.
 func (t dateIdentifier) envType() *cel.Type {
 	return cel.ObjectType("google.type.Date", traits.AdderType|
 		traits.ComparerType|
@@ -157,6 +196,8 @@ func (t dateIdentifier) envType() *cel.Type {
 		traits.ReceiverType|
 		traits.SubtractorType)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t dateIdentifier) Path() string {
 	return t.path
 }
@@ -167,9 +208,13 @@ type uintIdentifier struct {
 	path string
 }
 
+// envType returns cel.UintType, the type the identifier declares in the CEL
+// environment.
 func (t uintIdentifier) envType() *cel.Type {
 	return cel.UintType
 }
+
+// Path returns the filter path the identifier applies to.
 func (t uintIdentifier) Path() string {
 	return t.path
 }
@@ -181,9 +226,13 @@ type listIdentifier struct {
 	elemType *cel.Type
 }
 
+// envType returns a CEL list of the element type, the type the identifier
+// declares in the CEL environment.
 func (t listIdentifier) envType() *cel.Type {
 	return cel.ListType(t.elemType)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t listIdentifier) Path() string {
 	return t.path
 }
@@ -196,9 +245,13 @@ type mapIdentifier struct {
 	valueType *cel.Type
 }
 
+// envType returns a CEL map of the key and value types, the type the
+// identifier declares in the CEL environment.
 func (t mapIdentifier) envType() *cel.Type {
 	return cel.MapType(t.keyType, t.valueType)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t mapIdentifier) Path() string {
 	return t.path
 }
@@ -210,9 +263,13 @@ type reservedIdentifier struct {
 	name string
 }
 
+// envType returns an opaque CEL type named after the reserved word, so the
+// parser accepts it as an identifier.
 func (t reservedIdentifier) envType() *cel.Type {
 	return types.NewOpaqueType(t.name)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t reservedIdentifier) Path() string {
 	return t.name
 }
@@ -237,6 +294,8 @@ type enumStringIdentifier struct {
 	name string // Fully qualified enum type name
 }
 
+// envType returns a CEL object type named after the enum, the type the
+// identifier declares in the CEL environment.
 func (t enumStringIdentifier) envType() *cel.Type {
 	return cel.ObjectType(t.name, traits.AdderType|
 		traits.ComparerType|
@@ -244,6 +303,8 @@ func (t enumStringIdentifier) envType() *cel.Type {
 		traits.ReceiverType|
 		traits.SubtractorType)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t enumStringIdentifier) Path() string {
 	return t.path
 }
@@ -256,6 +317,8 @@ type enumIntegerIdentifier struct {
 	name string // Fully qualified enum type name
 }
 
+// envType returns a CEL object type named after the enum, the type the
+// identifier declares in the CEL environment.
 func (t enumIntegerIdentifier) envType() *cel.Type {
 	return cel.ObjectType(t.name, traits.AdderType|
 		traits.ComparerType|
@@ -263,6 +326,8 @@ func (t enumIntegerIdentifier) envType() *cel.Type {
 		traits.ReceiverType|
 		traits.SubtractorType)
 }
+
+// Path returns the filter path the identifier applies to.
 func (t enumIntegerIdentifier) Path() string {
 	return t.path
 }

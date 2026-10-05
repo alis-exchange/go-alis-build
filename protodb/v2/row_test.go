@@ -13,34 +13,42 @@ import (
 // set at compile time. Every method panics — it is never actually called.
 type fakeTable struct{}
 
+// Create is never called; fakeTable only checks the method set.
 func (f *fakeTable) Create(ctx context.Context, rows ...*protodb.Row[string]) error {
 	panic("not implemented")
 }
 
+// Write is never called; fakeTable only checks the method set.
 func (f *fakeTable) Write(ctx context.Context, rows ...*protodb.Row[string]) error {
 	panic("not implemented")
 }
 
+// Read is never called; fakeTable only checks the method set.
 func (f *fakeTable) Read(ctx context.Context, key protodb.Key) (*protodb.Row[string], error) {
 	panic("not implemented")
 }
 
+// BatchRead is never called; fakeTable only checks the method set.
 func (f *fakeTable) BatchRead(ctx context.Context, keys ...protodb.Key) ([]*protodb.Row[string], error) {
 	panic("not implemented")
 }
 
+// List is never called; fakeTable only checks the method set.
 func (f *fakeTable) List(ctx context.Context, opts protodb.ListOptions) ([]*protodb.Row[string], string, error) {
 	panic("not implemented")
 }
 
+// Stream is never called; fakeTable only checks the method set.
 func (f *fakeTable) Stream(ctx context.Context, opts protodb.StreamOptions) iter.Seq2[*protodb.Row[string], error] {
 	panic("not implemented")
 }
 
+// Delete is never called; fakeTable only checks the method set.
 func (f *fakeTable) Delete(ctx context.Context, keys ...protodb.Key) error {
 	panic("not implemented")
 }
 
+// WritePolicies is never called; fakeTable only checks the method set.
 func (f *fakeTable) WritePolicies(ctx context.Context, entries ...protodb.PolicyEntry) error {
 	panic("not implemented")
 }

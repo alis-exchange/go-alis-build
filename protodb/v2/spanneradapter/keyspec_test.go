@@ -16,6 +16,7 @@ type sessionKey struct {
 	UserID    string `pdb:"user_id"`
 }
 
+// KeyValues implements protodb.Key.
 func (k sessionKey) KeyValues() []any { return KeyValuesOf(k) }
 
 // twoStr is used to test that Encode's canonical string is injective across
@@ -25,6 +26,7 @@ type twoStr struct {
 	B string `pdb:"b"`
 }
 
+// KeyValues implements protodb.Key.
 func (k twoStr) KeyValues() []any { return KeyValuesOf(k) }
 
 // badKey has an untagged exported field, which KeySpecFor must reject.
@@ -32,10 +34,11 @@ type badKey struct {
 	A string
 }
 
+// KeyValues implements protodb.Key.
 func (k badKey) KeyValues() []any { return KeyValuesOf(k) }
 
-// badKeyWrap wraps badKey so it satisfies protodb.Key while keeping the
-// untagged struct itself distinct (mirrors the brief's badKeyWrap helper).
+// badKeyWrap names badKey, the untagged struct, where a test wants to read as
+// "the wrapper that satisfies protodb.Key".
 type badKeyWrap = badKey
 
 // unsupportedKey has a field type KeySpecFor does not support.
@@ -43,6 +46,7 @@ type unsupportedKey struct {
 	A []byte `pdb:"a"`
 }
 
+// KeyValues implements protodb.Key.
 func (k unsupportedKey) KeyValues() []any { return KeyValuesOf(k) }
 
 // unexportedTaggedKey has an unexported field that carries a stray `pdb`
@@ -53,6 +57,7 @@ type unexportedTaggedKey struct {
 	private string `pdb:"private"`
 }
 
+// KeyValues implements protodb.Key.
 func (k unexportedTaggedKey) KeyValues() []any { return KeyValuesOf(k) }
 
 func TestKeyValuesOf(t *testing.T) {
@@ -86,6 +91,7 @@ type keywordParentKey struct {
 	Order string `pdb:"order"`
 }
 
+// KeyValues implements protodb.Key.
 func (k keywordParentKey) KeyValues() []any { return KeyValuesOf(k) }
 
 func TestKeySpecForParentFilterQuotesKeywordColumn(t *testing.T) {

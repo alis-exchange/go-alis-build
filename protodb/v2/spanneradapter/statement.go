@@ -452,6 +452,7 @@ func selectExpr(column string) string {
 	return quoteColumn(column) + " AS `" + column + "`"
 }
 
+// hasColumn reports whether order already names column.
 func hasColumn(order []ordering.ColumnOrder, column string) bool {
 	return slices.ContainsFunc(order, func(c ordering.ColumnOrder) bool { return c.Column == column })
 }

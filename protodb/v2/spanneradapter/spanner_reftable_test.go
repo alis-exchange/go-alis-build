@@ -50,8 +50,10 @@ type spannerTable[R any] struct {
 	stmts   spanneradapter.StatementBuilder
 }
 
+// spannerTable must satisfy protodb.ResourceTable; checked at compile time.
 var _ protodb.ResourceTable[string] = (*spannerTable[string])(nil)
 
+// newSpannerTable wires the Scanner and StatementBuilder for cfg.
 func newSpannerTable[R any](cfg tableConfig[R]) *spannerTable[R] {
 	return &spannerTable[R]{
 		cfg: cfg,
@@ -85,6 +87,7 @@ func (t *spannerTable[R]) writeColumns() []string {
 	return cols
 }
 
+// writeValues returns the values for writeColumns, in the same order.
 func (t *spannerTable[R]) writeValues(row *protodb.Row[R]) []any {
 	vals := append([]any{}, row.Key.KeyValues()...)
 	vals = append(vals, t.cfg.Encode(row.Resource))
@@ -104,6 +107,7 @@ func policyValue(p *iampb.Policy) any {
 	return p
 }
 
+// mutate applies one mutation per row, built by mut, in a single Apply.
 func (t *spannerTable[R]) mutate(ctx context.Context, rows []*protodb.Row[R], mut func(string, []string, []any) *spanner.Mutation) error {
 	if len(rows) == 0 {
 		return nil
@@ -256,6 +260,7 @@ func (t *spannerTable[R]) List(ctx context.Context, opts protodb.ListOptions) ([
 	return rows, nextPageToken, nil
 }
 
+// reverse reverses s in place.
 func reverse[T any](s []T) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
@@ -317,6 +322,8 @@ func (t *spannerTable[R]) WritePolicies(ctx context.Context, entries ...protodb.
 	})
 }
 
+// writePolicies replaces the policy of each existing row, failing with
+// NotFound if any row is missing.
 func (t *spannerTable[R]) writePolicies(ctx context.Context, entries []protodb.PolicyEntry) error {
 	keys := make([]protodb.Key, len(entries))
 	for i, e := range entries {

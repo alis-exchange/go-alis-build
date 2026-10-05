@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// newTestBuilder returns a StatementBuilder over a string-keyed test table.
 func newTestBuilder(t *testing.T) StatementBuilder {
 	t.Helper()
 	p, err := filtering.NewParser()

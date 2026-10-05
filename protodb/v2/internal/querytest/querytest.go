@@ -23,7 +23,9 @@ var (
 
 // Row is one fixture row: its key and resource.
 type Row struct {
-	Key    string
+	// Key is the row's single string key, also the backup's name.
+	Key string
+	// Backup is the stored resource.
 	Backup *databasepb.Backup
 }
 
@@ -53,12 +55,15 @@ func Rows() []Row {
 // FilterCase is one List (or Stream) call over Rows and the keys it must
 // return. With PageSize set, WantPages lists the keys of each page in turn.
 type FilterCase struct {
-	Name   string
+	// Name names the subtest.
+	Name string
+	// Filter is the AIP-160 filter under test.
 	Filter string
 	// Params binds param('name') in Filter.
 	Params map[string]any
 	// PageSize pages through List; zero lists everything in one page.
-	PageSize  int32
+	PageSize int32
+	// WantPages lists the keys of each page in turn.
 	WantPages [][]string
 	// Stream runs the case through Stream instead of List; WantPages then
 	// holds a single page with every key.
@@ -170,14 +175,18 @@ func OrderRows() []Row {
 
 // OrderCase is one paged List over OrderRows.
 type OrderCase struct {
-	Name     string
-	OrderBy  string
+	// Name names the subtest.
+	Name string
+	// OrderBy is the AIP-132 order under test.
+	OrderBy string
+	// PageSize is the List page size.
 	PageSize int32
 	// Tail lists from the end of the order, each page still in order.
 	Tail bool
 	// Stream runs the case through Stream instead of List; WantPages then
 	// holds a single page with every key.
-	Stream    bool
+	Stream bool
+	// WantPages lists the keys of each page in turn.
 	WantPages [][]string
 }
 

@@ -29,6 +29,7 @@ import (
 // test-only dependency on the first adapter would undercut that.
 type strKey string
 
+// KeyValues implements protodb.Key.
 func (k strKey) KeyValues() []any { return []any{string(k)} }
 
 // TestMemCRUD is the brief's canonical smoke test: Create, duplicate
@@ -338,6 +339,7 @@ type twoColKey struct {
 	B string
 }
 
+// KeyValues implements protodb.Key.
 func (k twoColKey) KeyValues() []any { return []any{k.A, k.B} }
 
 // TestMemListPagesThroughTiedOrderColumn exercises effectiveOrder's
@@ -622,6 +624,7 @@ func optionalMessage(t *testing.T) protoreflect.MessageDescriptor {
 // pairKey is a two-column key whose second column is named "key".
 type pairKey struct{ parent, key string }
 
+// KeyValues implements protodb.Key.
 func (k pairKey) KeyValues() []any { return []any{k.parent, k.key} }
 
 func TestMemFilterKeyColumnNamedKeyWins(t *testing.T) {

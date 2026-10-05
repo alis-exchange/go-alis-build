@@ -718,6 +718,7 @@ type pageToken struct {
 	Values      []any // the last row's tuple (see tupleFor), in effective-order column sequence
 }
 
+// init registers time.Time with gob, so page-token cursors can carry it.
 func init() {
 	// string, int64, bool, and float64 are gob's built-in basic types,
 	// auto-registered by the gob package itself. time.Time is the one

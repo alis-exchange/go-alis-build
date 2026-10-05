@@ -644,6 +644,8 @@ func compare(a, b any) (int, error) {
 	return 0, status.Errorf(codes.InvalidArgument, "filtering: cannot compare %T with %T", a, b)
 }
 
+// cmpOrdered returns -1, 0 or 1 as a is less than, equal to or greater
+// than b.
 func cmpOrdered[T int64 | float64](a, b T) int {
 	switch {
 	case a < b:
@@ -705,6 +707,8 @@ func isPath(e *expr.Expr) bool {
 	return e.GetIdentExpr() != nil || e.GetSelectExpr() != nil
 }
 
+// isNaN reports whether v is a float64 NaN, which compares unequal to
+// everything, itself included.
 func isNaN(v any) bool {
 	f, ok := v.(float64)
 	return ok && math.IsNaN(f)

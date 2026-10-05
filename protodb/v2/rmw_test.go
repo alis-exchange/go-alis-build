@@ -15,6 +15,7 @@ import (
 // ReadModifyWrite tests.
 type rmwKey string
 
+// KeyValues implements protodb.Key.
 func (k rmwKey) KeyValues() []any { return []any{string(k)} }
 
 // rmwTable is a minimal, map-backed protodb.ResourceTable[string] used only
@@ -24,10 +25,12 @@ type rmwTable struct {
 	rows map[string]string
 }
 
+// Create is never called by ReadModifyWrite.
 func (t *rmwTable) Create(ctx context.Context, rows ...*protodb.Row[string]) error {
 	panic("not implemented")
 }
 
+// Write stores each row in the map.
 func (t *rmwTable) Write(ctx context.Context, rows ...*protodb.Row[string]) error {
 	for _, r := range rows {
 		k := string(r.Key.(rmwKey))
@@ -36,6 +39,7 @@ func (t *rmwTable) Write(ctx context.Context, rows ...*protodb.Row[string]) erro
 	return nil
 }
 
+// Read returns the stored row, or NotFound.
 func (t *rmwTable) Read(ctx context.Context, key protodb.Key) (*protodb.Row[string], error) {
 	k := string(key.(rmwKey))
 	v, ok := t.rows[k]
@@ -45,22 +49,27 @@ func (t *rmwTable) Read(ctx context.Context, key protodb.Key) (*protodb.Row[stri
 	return &protodb.Row[string]{Key: key, Resource: v}, nil
 }
 
+// BatchRead is never called by ReadModifyWrite.
 func (t *rmwTable) BatchRead(ctx context.Context, keys ...protodb.Key) ([]*protodb.Row[string], error) {
 	panic("not implemented")
 }
 
+// List is never called by ReadModifyWrite.
 func (t *rmwTable) List(ctx context.Context, opts protodb.ListOptions) ([]*protodb.Row[string], string, error) {
 	panic("not implemented")
 }
 
+// Stream is never called by ReadModifyWrite.
 func (t *rmwTable) Stream(ctx context.Context, opts protodb.StreamOptions) iter.Seq2[*protodb.Row[string], error] {
 	panic("not implemented")
 }
 
+// Delete is never called by ReadModifyWrite.
 func (t *rmwTable) Delete(ctx context.Context, keys ...protodb.Key) error {
 	panic("not implemented")
 }
 
+// WritePolicies is never called by ReadModifyWrite.
 func (t *rmwTable) WritePolicies(ctx context.Context, entries ...protodb.PolicyEntry) error {
 	panic("not implemented")
 }
@@ -70,6 +79,7 @@ func (t *rmwTable) WritePolicies(ctx context.Context, entries ...protodb.PolicyE
 // real transactional backend.
 type runnerOnce struct{}
 
+// RunTransaction runs fn once with ctx unchanged.
 func (runnerOnce) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	return fn(ctx)
 }
@@ -79,6 +89,7 @@ func (runnerOnce) RunTransaction(ctx context.Context, fn func(ctx context.Contex
 // prove fn's re-runs are safe when fn only mutates the row it is given.
 type runnerTwice struct{ runs int }
 
+// RunTransaction runs fn twice and returns the second result.
 func (r *runnerTwice) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	r.runs++
 	_ = fn(ctx)

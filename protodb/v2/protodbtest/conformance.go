@@ -289,6 +289,7 @@ func (c Conformance[R]) Run(t *testing.T) {
 	})
 }
 
+// must fails the test immediately when a setup step returns an error.
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

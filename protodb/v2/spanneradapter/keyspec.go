@@ -74,8 +74,11 @@ func StringKeySpec(column string) KeySpec {
 	return &stringKeySpec{column: column}
 }
 
+// Columns returns the single key column.
 func (s *stringKeySpec) Columns() []string { return []string{s.column} }
 
+// ParentFilter scopes to keys starting with parent (STARTS_WITH); an empty
+// parent adds no filter.
 func (s *stringKeySpec) ParentFilter(parent string) (string, map[string]any) {
 	if parent == "" {
 		return "", nil
@@ -83,6 +86,7 @@ func (s *stringKeySpec) ParentFilter(parent string) (string, map[string]any) {
 	return fmt.Sprintf("STARTS_WITH(`%s`, @parent)", s.column), map[string]any{"parent": parent}
 }
 
+// Decode reads the key column into a StringKey.
 func (s *stringKeySpec) Decode(row *spanner.Row) (protodb.Key, error) {
 	var v string
 	if err := row.ColumnByName(s.column, &v); err != nil {
@@ -91,6 +95,8 @@ func (s *stringKeySpec) Decode(row *spanner.Row) (protodb.Key, error) {
 	return StringKey(v), nil
 }
 
+// Encode returns the key's canonical string, used to match rows to keys
+// within one process.
 func (s *stringKeySpec) Encode(key protodb.Key) (string, error) { return encodeKey(key) }
 
 // KeySpecOption configures KeySpecFor.
@@ -119,10 +125,15 @@ func WithParentColumns(n int) KeySpecOption {
 type fieldKind int
 
 const (
+	// kindString is a string field: a STRING key column.
 	kindString fieldKind = iota
+	// kindInt64 is an int64 field: an INT64 key column.
 	kindInt64
+	// kindBool is a bool field: a BOOL key column.
 	kindBool
+	// kindFloat64 is a float64 field: a FLOAT64 key column.
 	kindFloat64
+	// kindTime is a time.Time field: a TIMESTAMP key column.
 	kindTime
 )
 
@@ -227,6 +238,7 @@ func KeySpecFor[K protodb.Key](opts ...KeySpecOption) (KeySpec, error) {
 	return &taggedKeySpec{structType: structType, ptrKind: ptrKind, fields: fields}, nil
 }
 
+// Columns returns the `pdb` tag names in struct field order.
 func (s *taggedKeySpec) Columns() []string {
 	cols := make([]string, len(s.fields))
 	for i, f := range s.fields {
@@ -235,6 +247,8 @@ func (s *taggedKeySpec) Columns() []string {
 	return cols
 }
 
+// ParentFilter scopes to rows whose first key column equals parent; an
+// empty parent adds no filter.
 func (s *taggedKeySpec) ParentFilter(parent string) (string, map[string]any) {
 	if parent == "" {
 		return "", nil
@@ -242,6 +256,8 @@ func (s *taggedKeySpec) ParentFilter(parent string) (string, map[string]any) {
 	return fmt.Sprintf("%s = @parent", quoteColumn(s.fields[0].column)), map[string]any{"parent": parent}
 }
 
+// Decode reads every key column into a new key struct, returned as the
+// same value or pointer kind KeySpecFor was instantiated with.
 func (s *taggedKeySpec) Decode(row *spanner.Row) (protodb.Key, error) {
 	instPtr := reflect.New(s.structType)
 	for _, f := range s.fields {
@@ -285,6 +301,8 @@ func (s *taggedKeySpec) Decode(row *spanner.Row) (protodb.Key, error) {
 	return instPtr.Elem().Interface().(protodb.Key), nil
 }
 
+// Encode returns the key's canonical string, used to match rows to keys
+// within one process.
 func (s *taggedKeySpec) Encode(key protodb.Key) (string, error) { return encodeKey(key) }
 
 // KeyValuesOf returns the `pdb`-tagged field values of k, in field order.
