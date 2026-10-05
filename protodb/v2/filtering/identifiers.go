@@ -8,12 +8,16 @@ import (
 )
 
 /*
-Identifier represents a CEL type identifier for certain types.
+Identifier declares how a filter path is typed, so the parser can rewrite
+it into SQL that compares like the value it holds.
 
-Commonly used for identifying and transforming protocol buffer types.
+Commonly used for protocol buffer types stored in a PROTO column.
 For example:
-  - Timestamp() will convert a google.protobuf.Timestamp to a spanner Timestamp type.
-  - Duration() will convert a google.protobuf.Duration to a spanner String type.
+  - Timestamp() renders a google.protobuf.Timestamp as a Spanner TIMESTAMP.
+  - Duration() renders a google.protobuf.Duration as FLOAT64 seconds.
+  - EnumString() and EnumInteger() cast an enum to its name or number.
+
+Parser.Compile applies the same conversions when evaluating in memory.
 */
 type Identifier interface {
 	Path() string

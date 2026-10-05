@@ -11,10 +11,11 @@ import (
 
 // TestConformance runs the protodbtest conformance suite against
 // memadapter, proving memadapter satisfies the documented ResourceTable
-// contract. memadapter declares SupportsFilter false: it has no filter
-// engine (see memadapter.errFilterUnimplemented), so the suite's
-// FilterContract subtest asserts List/Stream return Unimplemented for any
-// non-empty Filter.
+// contract. This table sets no Config.ResourceColumn, so filtering is off
+// (see memadapter.errFilterUnimplemented) and SupportsFilter stays false:
+// the suite's FilterContract subtest asserts List/Stream return
+// Unimplemented for any non-empty Filter. Filtering itself is covered by
+// TestQueryCases.
 func TestConformance(t *testing.T) {
 	protodbtest.Conformance[string]{
 		NewTable: func(t *testing.T) protodb.ResourceTable[string] {

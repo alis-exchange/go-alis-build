@@ -1,4 +1,6 @@
-// Package filtering converts AIP-160 CEL filter expressions into Spanner statements.
+// Package filtering parses AIP-160 filter expressions. Parser.Parse converts
+// a filter into a Spanner SQL statement; Parser.Compile evaluates the same
+// filter in memory, for adapters that cannot run SQL.
 package filtering
 
 import (
@@ -184,10 +186,10 @@ Examples:
 
 	parser.Parse("Proto.effective_date.year > 2021 AND create_time > timestamp('2021-01-01T00:00:00Z') OR expire_after > duration('1h')")
 	parser.Parse("key = 'resources/1' OR Proto.effective_date = date('2021-01-01')")
-	parser.Parse("Proto.state = 'ACTIVE'"
+	parser.Parse("Proto.state = 'ACTIVE'")
 	parser.Parse("key IN ['resources/1', 'resources/2']")
-	parser.Parse("effective_date != null)
-	parser.Parse("count >= 10)
+	parser.Parse("effective_date != null")
+	parser.Parse("count >= 10")
 
 Callers may bind named parameters referenced via param('name') in the filter
 by passing a params map. Values in the map are bound directly as Spanner

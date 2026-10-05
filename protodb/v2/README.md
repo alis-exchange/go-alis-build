@@ -190,8 +190,8 @@ transaction open past that point.
 ## Filtering
 
 `ListOptions.Filter` / `StreamOptions.Filter` are [AIP-160](https://google.aip.dev/160) filter
-expressions, parsed by the `filtering` subpackage (absorbed unchanged from `sproto` — `sproto`'s
-copies remain for now but are unchanged and will be deprecated in favor of this package later).
+expressions, parsed by the `filtering` subpackage (absorbed from `sproto`, whose copies remain for
+now and will be deprecated in favor of this package later).
 
 Untrusted values enter a filter through `param('name')` plus `FilterParams` — **never** by
 splicing values into the filter string with `fmt.Sprintf` or string concatenation:

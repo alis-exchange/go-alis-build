@@ -148,7 +148,8 @@ func TestMemListBadPageToken(t *testing.T) {
 }
 
 // TestMemFilterIsUnimplemented checks that a non-empty Filter is loudly
-// rejected on both List and Stream — memadapter has no filter engine.
+// rejected on both List and Stream when the table sets no
+// Config.ResourceColumn, so filters cannot be mapped onto a row.
 func TestMemFilterIsUnimplemented(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
