@@ -1,0 +1,9 @@
+Task: evaluate filter functions in memory (Predicate).
+
+Changes: predicate.go evalFunction (timestamp/duration/date/param, prefix/suffix/like, lower/upper, concat, greatest/least, coalesce/ifnull), checkArity, boundAsText, evalArgs rules, non-regexp likeMatch with escapes, NaN in greatest/least, computed IN-list elements rejected; predicate_test.go function, arity, LIKE escape, NaN and SQL-divergence tests.
+
+Files: protodb/v2/filtering/predicate.go, predicate_test.go
+
+Why: memadapter filters must give Spanner's results for the functions AIP-160 filters use.
+Verification: two verifier rounds; all findings fixed with tests; user approved committing (and future round-2 commits this track).
+Known difference (backlog): Parse renders timestamp() as PARSE_TIMESTAMP(%c), memory parses RFC3339.
