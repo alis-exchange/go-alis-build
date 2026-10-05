@@ -24,6 +24,8 @@ func rowOf(values map[string]any) func(string) (any, error) {
 	}
 }
 
+// TestPredicateCore checks comparisons, AND/OR, IN and NULL tests under SQL
+// three-valued logic, including int64 against float64.
 func TestPredicateCore(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -63,6 +65,8 @@ func TestPredicateCore(t *testing.T) {
 	}
 }
 
+// TestPredicateOrdersEachType checks ordering of bools and bytes, and that NaN
+// compares false to everything except !=.
 func TestPredicateOrdersEachType(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -95,6 +99,8 @@ func TestPredicateOrdersEachType(t *testing.T) {
 	}
 }
 
+// TestPredicateRejectsWhatSQLTreatsDifferently checks that right-hand
+// identifiers and null list elements make Match return Unimplemented.
 func TestPredicateRejectsWhatSQLTreatsDifferently(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -110,6 +116,8 @@ func TestPredicateRejectsWhatSQLTreatsDifferently(t *testing.T) {
 	}
 }
 
+// TestPredicateNaNDoesNotHideTypeMismatch checks that comparing a NaN column
+// with a string is still InvalidArgument rather than simply false.
 func TestPredicateNaNDoesNotHideTypeMismatch(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -119,6 +127,8 @@ func TestPredicateNaNDoesNotHideTypeMismatch(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestPredicateNonBooleanFilterIsInvalidArgument checks that a filter that is
+// a bare identifier, not a boolean expression, fails Match with InvalidArgument.
 func TestPredicateNonBooleanFilterIsInvalidArgument(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -128,6 +138,8 @@ func TestPredicateNonBooleanFilterIsInvalidArgument(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestCompileDoesNotPanic checks that filters with no identifier on the left,
+// such as a bare constant, fail Compile with ErrInvalidFilter.
 func TestCompileDoesNotPanic(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -138,6 +150,8 @@ func TestCompileDoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestPredicateRejectsUnsupported checks that ordering against null is an
+// ErrInvalidFilter and a struct literal comparison is Unimplemented.
 func TestPredicateRejectsUnsupported(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -152,6 +166,8 @@ func TestPredicateRejectsUnsupported(t *testing.T) {
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
+// TestPredicateMismatchedTypesIsInvalidArgument checks that comparing a string
+// column with an integer fails Match with InvalidArgument.
 func TestPredicateMismatchedTypesIsInvalidArgument(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -161,6 +177,8 @@ func TestPredicateMismatchedTypesIsInvalidArgument(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestPredicateResolveErrorIsReturned checks that an error from the path
+// resolver is returned by Match.
 func TestPredicateResolveErrorIsReturned(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -170,6 +188,8 @@ func TestPredicateResolveErrorIsReturned(t *testing.T) {
 	assert.ErrorContains(t, err, `unknown path "missing"`)
 }
 
+// TestCompileReturnsSameErrorsAsParse checks that a malformed filter gives the
+// same error from Compile as from Parse.
 func TestCompileReturnsSameErrorsAsParse(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -179,6 +199,8 @@ func TestCompileReturnsSameErrorsAsParse(t *testing.T) {
 	assert.Equal(t, perr.Error(), cerr.Error())
 }
 
+// TestPredicateFunctions checks each supported function, in either case, with
+// NULL arguments propagating as unknown, and that an unknown param() fails.
 func TestPredicateFunctions(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -228,6 +250,8 @@ func TestPredicateFunctions(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestPredicateFunctionArgumentsSQLTreatsDifferently checks that function
+// arguments Parse binds as text or columns make Match return Unimplemented.
 func TestPredicateFunctionArgumentsSQLTreatsDifferently(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -252,6 +276,8 @@ func TestPredicateFunctionArgumentsSQLTreatsDifferently(t *testing.T) {
 	}
 }
 
+// TestPredicateFunctionArity checks that variadic functions called with no
+// arguments are rejected by Compile or fail Match with InvalidArgument.
 func TestPredicateFunctionArity(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -265,6 +291,8 @@ func TestPredicateFunctionArity(t *testing.T) {
 	}
 }
 
+// TestPredicateLikeEscapes checks that like() honors backslash escapes and
+// the _ wildcard, and that a trailing backslash is InvalidArgument.
 func TestPredicateLikeEscapes(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)
@@ -291,6 +319,8 @@ func TestPredicateLikeEscapes(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestPredicateGreatestWithNaN checks that greatest() returns NaN when any
+// argument is NaN, so the comparison is false.
 func TestPredicateGreatestWithNaN(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)

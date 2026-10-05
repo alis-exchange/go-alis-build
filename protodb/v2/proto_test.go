@@ -8,6 +8,8 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
+// TestMergeRespectsPaths checks that Merge replaces a listed repeated field
+// in dst with the value from src rather than appending to it.
 func TestMergeRespectsPaths(t *testing.T) {
 	dst := &fieldmaskpb.FieldMask{Paths: []string{"old"}}
 	src := &fieldmaskpb.FieldMask{Paths: []string{"new"}}
@@ -17,6 +19,7 @@ func TestMergeRespectsPaths(t *testing.T) {
 	}
 }
 
+// TestMergeDoesNotMutateSrc checks that Merge leaves the src message unchanged.
 func TestMergeDoesNotMutateSrc(t *testing.T) {
 	src := &fieldmaskpb.FieldMask{Paths: []string{"a"}}
 	protodb.Merge(&fieldmaskpb.FieldMask{}, src, "paths")
@@ -25,6 +28,8 @@ func TestMergeDoesNotMutateSrc(t *testing.T) {
 	}
 }
 
+// TestApplyReadMaskDoesNotMutateMask checks that extra paths passed to
+// ApplyReadMask are not appended to the caller's mask.
 func TestApplyReadMaskDoesNotMutateMask(t *testing.T) {
 	msg := &fieldmaskpb.FieldMask{Paths: []string{"x"}}
 	mask := &fieldmaskpb.FieldMask{Paths: []string{"paths"}}
@@ -36,6 +41,8 @@ func TestApplyReadMaskDoesNotMutateMask(t *testing.T) {
 	}
 }
 
+// TestApplyReadMaskNilMaskIsNoop checks that a nil mask leaves the message
+// unfiltered and returns no error.
 func TestApplyReadMaskNilMaskIsNoop(t *testing.T) {
 	msg := &fieldmaskpb.FieldMask{Paths: []string{"x"}}
 	if err := protodb.ApplyReadMask(msg, nil); err != nil {

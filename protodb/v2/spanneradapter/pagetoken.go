@@ -48,8 +48,8 @@ func EncodePageToken(t PageToken, fingerprint uint64) string {
 	// Encode errors here only arise from unregistered/unsupported types
 	// carried in OrderValues/KeyValues, which is a programmer error in the
 	// caller, not a runtime condition callers can recover from; encoding
-	// intentionally proceeds best-effort per the brief's reference
-	// implementation.
+	// intentionally proceeds best-effort rather than returning an error
+	// from an otherwise error-free signature.
 	_ = gob.NewEncoder(&buf).Encode(tokenPayload{fingerprint, t.OrderValues, t.KeyValues})
 	return base64.RawURLEncoding.EncodeToString(buf.Bytes())
 }

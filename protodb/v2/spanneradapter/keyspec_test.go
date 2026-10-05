@@ -8,7 +8,7 @@ import (
 	"go.alis.build/protodb/v2"
 )
 
-// sessionKey is the brief's canonical tagged-struct example: a multi-column
+// sessionKey is the canonical tagged-struct key in these tests: a multi-column
 // key with three pdb-tagged string fields.
 type sessionKey struct {
 	SessionID string `pdb:"session_id"`
@@ -60,6 +60,7 @@ type unexportedTaggedKey struct {
 // KeyValues implements protodb.Key.
 func (k unexportedTaggedKey) KeyValues() []any { return KeyValuesOf(k) }
 
+// TestKeyValuesOf checks that KeyValuesOf returns a tagged struct's field values in field order.
 func TestKeyValuesOf(t *testing.T) {
 	k := sessionKey{"s", "a", "u"}
 	if !reflect.DeepEqual(k.KeyValues(), []any{"s", "a", "u"}) {
@@ -67,6 +68,8 @@ func TestKeyValuesOf(t *testing.T) {
 	}
 }
 
+// TestKeySpecForColumns checks that KeySpecFor takes column names from the pdb tags in field order,
+// and that a one-column parent filters by equality on the first column, or not at all when empty.
 func TestKeySpecForColumns(t *testing.T) {
 	spec, err := KeySpecFor[sessionKey](WithParentColumns(1))
 	if err != nil {
@@ -94,6 +97,8 @@ type keywordParentKey struct {
 // KeyValues implements protodb.Key.
 func (k keywordParentKey) KeyValues() []any { return KeyValuesOf(k) }
 
+// TestKeySpecForParentFilterQuotesKeywordColumn checks that ParentFilter backtick-quotes a
+// leading column named after a reserved word.
 func TestKeySpecForParentFilterQuotesKeywordColumn(t *testing.T) {
 	spec, err := KeySpecFor[keywordParentKey]()
 	if err != nil {
@@ -105,24 +110,31 @@ func TestKeySpecForParentFilterQuotesKeywordColumn(t *testing.T) {
 	}
 }
 
+// TestKeySpecForRejectsUntagged checks that KeySpecFor errors on a struct with an untagged exported field.
 func TestKeySpecForRejectsUntagged(t *testing.T) {
 	if _, err := KeySpecFor[badKeyWrap](); err == nil {
 		t.Fatal("untagged exported field must error")
 	}
 }
 
+// TestKeySpecForRejectsUnsupportedFieldType checks that KeySpecFor errors on a tagged field of an
+// unsupported type ([]byte).
 func TestKeySpecForRejectsUnsupportedFieldType(t *testing.T) {
 	if _, err := KeySpecFor[unsupportedKey](); err == nil {
 		t.Fatal("unsupported field type must error")
 	}
 }
 
+// TestKeySpecForRejectsMultiColumnParent checks that KeySpecFor errors at construction when
+// WithParentColumns asks for more than one parent column.
 func TestKeySpecForRejectsMultiColumnParent(t *testing.T) {
 	if _, err := KeySpecFor[sessionKey](WithParentColumns(2)); err == nil {
 		t.Fatal("multi-column parent must error at construction")
 	}
 }
 
+// TestKeySpecForRejectsZeroOrNegativeParentColumns checks that KeySpecFor errors at construction
+// when WithParentColumns is given zero or a negative count.
 func TestKeySpecForRejectsZeroOrNegativeParentColumns(t *testing.T) {
 	for _, n := range []int{0, -1} {
 		if _, err := KeySpecFor[sessionKey](WithParentColumns(n)); err == nil {
@@ -131,6 +143,8 @@ func TestKeySpecForRejectsZeroOrNegativeParentColumns(t *testing.T) {
 	}
 }
 
+// TestKeyValuesOfSkipsUnexportedTaggedField checks that KeyValuesOf ignores an unexported field
+// carrying a pdb tag instead of panicking on it.
 func TestKeyValuesOfSkipsUnexportedTaggedField(t *testing.T) {
 	k := unexportedTaggedKey{Public: "pub", private: "priv"}
 	got := k.KeyValues() // must not panic despite the stray tag on `private`
@@ -139,6 +153,8 @@ func TestKeyValuesOfSkipsUnexportedTaggedField(t *testing.T) {
 	}
 }
 
+// TestStringKeySpec checks that StringKeySpec has the single named column and that its parent filter
+// is a STARTS_WITH prefix match, or no filter for an empty parent.
 func TestStringKeySpec(t *testing.T) {
 	spec := StringKeySpec("key")
 	if !reflect.DeepEqual(spec.Columns(), []string{"key"}) {
@@ -153,6 +169,8 @@ func TestStringKeySpec(t *testing.T) {
 	}
 }
 
+// TestStringKeyImplementsProtodbKey checks that StringKey satisfies protodb.Key and returns its string
+// as the single key value.
 func TestStringKeyImplementsProtodbKey(t *testing.T) {
 	var _ protodb.Key = StringKey("resources/1")
 	k := StringKey("resources/1")
@@ -161,6 +179,8 @@ func TestStringKeyImplementsProtodbKey(t *testing.T) {
 	}
 }
 
+// TestEncodeInjective checks that Encode gives different strings for keys whose field values
+// differ only in where a separator-like character falls.
 func TestEncodeInjective(t *testing.T) {
 	spec, err := KeySpecFor[twoStr]()
 	if err != nil {
@@ -179,6 +199,7 @@ func TestEncodeInjective(t *testing.T) {
 	}
 }
 
+// TestEncodeEqualForEqualKeys checks that Encode is deterministic: equal keys encode to the same string.
 func TestEncodeEqualForEqualKeys(t *testing.T) {
 	spec, err := KeySpecFor[twoStr]()
 	if err != nil {
@@ -197,6 +218,8 @@ func TestEncodeEqualForEqualKeys(t *testing.T) {
 	}
 }
 
+// TestKeySpecForDerefsPointerKind checks that KeySpecFor accepts a pointer-to-struct key type and
+// reads the columns of the pointed-to struct.
 func TestKeySpecForDerefsPointerKind(t *testing.T) {
 	// K may be a pointer to a struct; KeySpecFor derefs it at construction.
 	spec, err := KeySpecFor[*sessionKey]()
@@ -208,6 +231,7 @@ func TestKeySpecForDerefsPointerKind(t *testing.T) {
 	}
 }
 
+// TestToKey checks that ToKey converts a key's values, in order, into a spanner.Key.
 func TestToKey(t *testing.T) {
 	got := ToKey(sessionKey{"s", "a", "u"})
 	want := spanner.Key{"s", "a", "u"}
@@ -216,6 +240,7 @@ func TestToKey(t *testing.T) {
 	}
 }
 
+// TestToKeySets checks that ToKeySets builds a KeySet holding one spanner.Key per protodb.Key.
 func TestToKeySets(t *testing.T) {
 	keys := []protodb.Key{StringKey("a"), StringKey("b")}
 	got := ToKeySets(keys)
@@ -225,6 +250,7 @@ func TestToKeySets(t *testing.T) {
 	}
 }
 
+// TestToKeySetsEmpty checks that ToKeySets on nil returns an empty KeySet rather than panicking.
 func TestToKeySetsEmpty(t *testing.T) {
 	got := ToKeySets(nil)
 	want := spanner.KeySets()

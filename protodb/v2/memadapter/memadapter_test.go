@@ -32,8 +32,8 @@ type strKey string
 // KeyValues implements protodb.Key.
 func (k strKey) KeyValues() []any { return []any{string(k)} }
 
-// TestMemCRUD is the brief's canonical smoke test: Create, duplicate
-// Create, Read (hit and miss), and idempotent Delete of a missing key.
+// TestMemCRUD checks the basic row lifecycle: Create succeeds, a duplicate
+// Create is AlreadyExists, Read hits or is NotFound, and Delete of a missing key is nil.
 func TestMemCRUD(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
@@ -457,6 +457,8 @@ func listNames(t *testing.T, tbl protodb.ResourceTable[*databasepb.Backup], filt
 	return names, nil
 }
 
+// TestMemFilterUnknownPathIsInvalidArgument checks that a filter naming an unknown field under the resource, or an unknown top-level
+// path, fails with InvalidArgument.
 func TestMemFilterUnknownPathIsInvalidArgument(t *testing.T) {
 	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
 	if _, err := listNames(t, tbl, "Backup.nope = 1"); status.Code(err) != codes.InvalidArgument {
@@ -467,6 +469,8 @@ func TestMemFilterUnknownPathIsInvalidArgument(t *testing.T) {
 	}
 }
 
+// TestMemFilterOnNonProtoResourceIsUnimplemented checks that filtering on a non-proto resource is Unimplemented,
+// while a filter on the key column still works.
 func TestMemFilterOnNonProtoResourceIsUnimplemented(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "R"})
@@ -483,6 +487,8 @@ func TestMemFilterOnNonProtoResourceIsUnimplemented(t *testing.T) {
 	}
 }
 
+// TestMemFilterUnsupportedConstructIsUnimplemented checks that a filter using a construct the evaluator
+// does not support, such as a map literal, fails with Unimplemented.
 func TestMemFilterUnsupportedConstructIsUnimplemented(t *testing.T) {
 	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
 	if _, err := listNames(t, tbl, "{ 'a': 1 } == Backup.name"); status.Code(err) != codes.Unimplemented {
@@ -490,6 +496,8 @@ func TestMemFilterUnsupportedConstructIsUnimplemented(t *testing.T) {
 	}
 }
 
+// TestMemFilterInvalidFilterIsInvalidArgument checks that a syntactically incomplete filter fails
+// with InvalidArgument.
 func TestMemFilterInvalidFilterIsInvalidArgument(t *testing.T) {
 	tbl := newBackups(t, backupConfig(), &databasepb.Backup{Name: "a"})
 	if _, err := listNames(t, tbl, "Backup.name = "); status.Code(err) != codes.InvalidArgument {
@@ -497,6 +505,8 @@ func TestMemFilterInvalidFilterIsInvalidArgument(t *testing.T) {
 	}
 }
 
+// TestMemFilterOnColumn checks that a filter can compare a Config.Columns value, both
+// against a timestamp literal and against NULL when the function returns nil.
 func TestMemFilterOnColumn(t *testing.T) {
 	cfg := backupConfig()
 	cfg.Columns = map[string]func(protodb.Key, any) any{
@@ -627,6 +637,8 @@ type pairKey struct{ parent, key string }
 // KeyValues implements protodb.Key.
 func (k pairKey) KeyValues() []any { return []any{k.parent, k.key} }
 
+// TestMemFilterKeyColumnNamedKeyWins checks that when a later key column is named "key",
+// the path "key" resolves to that column, not to the first key value.
 func TestMemFilterKeyColumnNamedKeyWins(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[*databasepb.Backup](memadapter.Config{
@@ -643,6 +655,8 @@ func TestMemFilterKeyColumnNamedKeyWins(t *testing.T) {
 	}
 }
 
+// TestMemFilterUnsignedFieldsReadAsInt64 checks that a uint64 proto field compares equal to an
+// integer literal, since unsigned fields read as int64.
 func TestMemFilterUnsignedFieldsReadAsInt64(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[*wrapperspb.UInt64Value](memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "W"})
@@ -655,6 +669,8 @@ func TestMemFilterUnsignedFieldsReadAsInt64(t *testing.T) {
 	}
 }
 
+// TestMemFilterNilResourceIsNull checks that a row stored with a nil resource reads as NULL,
+// both for the resource itself and for its scalar fields, rather than as defaults.
 func TestMemFilterNilResourceIsNull(t *testing.T) {
 	ctx := context.Background()
 	tbl := memadapter.New[*databasepb.Backup](backupConfig())
@@ -669,6 +685,8 @@ func TestMemFilterNilResourceIsNull(t *testing.T) {
 	}
 }
 
+// TestMemFilterWithTail checks that a filtered Tail list returns the last PageSize matching
+// rows in ascending order.
 func TestMemFilterWithTail(t *testing.T) {
 	tbl := newBackups(t, backupConfig(),
 		&databasepb.Backup{Name: "a", SizeBytes: 1},
@@ -704,6 +722,8 @@ func orderedNames(t *testing.T, tbl *memadapter.Table[string], orderBy string) (
 	return out, nil
 }
 
+// TestMemOrderByColumnBadTypeIsFailedPrecondition checks that ordering by a column whose
+// function returns an unorderable type fails with FailedPrecondition.
 func TestMemOrderByColumnBadTypeIsFailedPrecondition(t *testing.T) {
 	tbl := memadapter.New[string](memadapter.Config{
 		KeyColumns: []string{"key"},
@@ -771,6 +791,8 @@ func TestMemOrderByColumnWidensIntegerKinds(t *testing.T) {
 	}
 }
 
+// TestMemOrderByColumnMixedTypesIsFailedPrecondition checks that ordering by a column whose
+// values have different types across rows fails with FailedPrecondition.
 func TestMemOrderByColumnMixedTypesIsFailedPrecondition(t *testing.T) {
 	tbl := memadapter.New[string](memadapter.Config{
 		KeyColumns: []string{"key"},
@@ -851,6 +873,8 @@ func runNested(t *testing.T, outer func(ctx context.Context) error) error {
 	}
 }
 
+// TestMemNestedTransactionJoins checks that a RunTransaction nested inside another joins the
+// outer transaction instead of deadlocking, and both writes commit.
 func TestMemNestedTransactionJoins(t *testing.T) {
 	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
 	runner := memadapter.NewTransactionRunner()
@@ -874,6 +898,8 @@ func TestMemNestedTransactionJoins(t *testing.T) {
 	}
 }
 
+// TestMemNestedTransactionErrorRollsBackBoth checks that an error from a nested RunTransaction
+// propagates out and rolls back the writes of both the inner and outer transaction.
 func TestMemNestedTransactionErrorRollsBackBoth(t *testing.T) {
 	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
 	runner := memadapter.NewTransactionRunner()

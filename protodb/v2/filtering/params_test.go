@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestParamBinding checks that param() values become bound @pN parameters,
+// so an injection-style value is passed as data and never reaches the SQL.
 func TestParamBinding(t *testing.T) {
 	p, _ := NewParser()
 	stmt, err := p.Parse("app_name == param('app') AND user_id == param('user')",
@@ -23,6 +25,8 @@ func TestParamBinding(t *testing.T) {
 	}
 }
 
+// TestParamUnknownName checks that param() naming a key missing from the
+// params map fails with ErrInvalidFilter.
 func TestParamUnknownName(t *testing.T) {
 	p, _ := NewParser()
 	_, err := p.Parse("a == param('missing')", map[string]any{})
@@ -32,6 +36,8 @@ func TestParamUnknownName(t *testing.T) {
 	}
 }
 
+// TestParamWithoutParamsMap checks that param() fails when Parse is given
+// no params map at all.
 func TestParamWithoutParamsMap(t *testing.T) {
 	p, _ := NewParser()
 	if _, err := p.Parse("a == param('x')"); err == nil {

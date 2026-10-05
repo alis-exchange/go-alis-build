@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// TestPageTokenRoundtrip checks that a page token decodes to the values it was encoded from,
+// with int64 values keeping their type.
 func TestPageTokenRoundtrip(t *testing.T) {
 	fp := Fingerprint("p", "f", "o", false)
 	in := PageToken{OrderValues: []any{int64(9), "z"}, KeyValues: []any{"k1", int64(7)}}
@@ -21,6 +23,8 @@ func TestPageTokenRoundtrip(t *testing.T) {
 	}
 }
 
+// TestPageTokenFingerprintMismatch checks that decoding a token under a different fingerprint
+// fails with InvalidArgument.
 func TestPageTokenFingerprintMismatch(t *testing.T) {
 	tok := EncodePageToken(PageToken{}, Fingerprint("p", "f", "o", false))
 	_, err := DecodePageToken(tok, Fingerprint("p", "DIFFERENT", "o", false))
@@ -29,12 +33,14 @@ func TestPageTokenFingerprintMismatch(t *testing.T) {
 	}
 }
 
+// TestPageTokenGarbage checks that decoding a malformed token fails with InvalidArgument.
 func TestPageTokenGarbage(t *testing.T) {
 	if _, err := DecodePageToken("!!!", 1); status.Code(err) != codes.InvalidArgument {
 		t.Fatal(err)
 	}
 }
 
+// TestPageTokenTimeValue checks that a time.Time order value survives a page token round trip.
 func TestPageTokenTimeValue(t *testing.T) {
 	fp := Fingerprint("", "", "ts desc", false)
 	ts := time.Date(2026, 8, 20, 1, 2, 3, 400, time.UTC)

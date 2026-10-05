@@ -97,6 +97,8 @@ func (r *runnerTwice) RunTransaction(ctx context.Context, fn func(ctx context.Co
 	return fn(ctx)
 }
 
+// TestReadModifyWrite checks that ReadModifyWrite calls fn once with the
+// stored row and writes back the row fn modified.
 func TestReadModifyWrite(t *testing.T) {
 	tbl := &rmwTable{rows: map[string]string{"k": "v0"}}
 	var calls int
@@ -113,6 +115,8 @@ func TestReadModifyWrite(t *testing.T) {
 	}
 }
 
+// TestReadModifyWriteNotFoundPropagates checks that a NotFound from Read is
+// returned as is and fn is never called.
 func TestReadModifyWriteNotFoundPropagates(t *testing.T) {
 	tbl := &rmwTable{rows: map[string]string{}}
 	var called bool
@@ -126,6 +130,8 @@ func TestReadModifyWriteNotFoundPropagates(t *testing.T) {
 	}
 }
 
+// TestReadModifyWriteFnErrorAborts checks that an error from fn reaches the
+// caller and nothing is written.
 func TestReadModifyWriteFnErrorAborts(t *testing.T) {
 	tbl := &rmwTable{rows: map[string]string{"k": "v0"}}
 	sentinel := errors.New("nope")

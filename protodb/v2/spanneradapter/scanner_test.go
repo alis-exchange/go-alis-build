@@ -7,6 +7,8 @@ import (
 	"cloud.google.com/go/spanner"
 )
 
+// TestScanRow checks that ScanRow decodes the key and resource columns of a row, and leaves
+// Policy nil when the Scanner has no policy column.
 func TestScanRow(t *testing.T) {
 	s := Scanner[string]{Spec: StringKeySpec("key"), Codec: StringCodec(), ResourceColumn: "Res"}
 	row, err := spanner.NewRow([]string{"key", "Res"}, []any{"k1", "hello"})
@@ -28,6 +30,7 @@ func TestScanRow(t *testing.T) {
 	}
 }
 
+// TestScannerColumns checks that Columns lists the key, resource and policy columns in that order.
 func TestScannerColumns(t *testing.T) {
 	s := Scanner[string]{Spec: StringKeySpec("key"), Codec: StringCodec(), ResourceColumn: "Res", PolicyColumn: "Policy"}
 	if !reflect.DeepEqual(s.Columns(), []string{"key", "Res", "Policy"}) {

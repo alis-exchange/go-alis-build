@@ -8,6 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// TestErrorToStatusPassthroughAndFallback checks that ErrorToStatus maps nil to nil, passes a gRPC
+// status error through unchanged, and turns any other error into Internal.
 func TestErrorToStatusPassthroughAndFallback(t *testing.T) {
 	if ErrorToStatus(nil) != nil {
 		t.Fatal("nil in, nil out")

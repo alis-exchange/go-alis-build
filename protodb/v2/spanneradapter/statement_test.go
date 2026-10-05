@@ -24,6 +24,8 @@ func newTestBuilder(t *testing.T) StatementBuilder {
 	return StatementBuilder{TableName: "T", Spec: StringKeySpec("key"), ResourceColumn: "Res", PolicyColumn: "Policy", Parser: p}
 }
 
+// TestBuildListMinimal checks the SQL for empty options: every scan column, ordered by key
+// ascending, with a LIMIT one above the default page size of 100.
 func TestBuildListMinimal(t *testing.T) {
 	stmt, order, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{})
 	if err != nil {
@@ -38,6 +40,8 @@ func TestBuildListMinimal(t *testing.T) {
 	}
 }
 
+// TestBuildListOrderDeterministicWithTiebreaker checks that the key is appended as a final
+// ascending tiebreaker after the requested order columns.
 func TestBuildListOrderDeterministicWithTiebreaker(t *testing.T) {
 	stmt, order, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{OrderBy: "b desc, a"})
 	if err != nil {
@@ -52,6 +56,8 @@ func TestBuildListOrderDeterministicWithTiebreaker(t *testing.T) {
 	}
 }
 
+// TestBuildListTailInverts checks that Tail reverses the direction of every order column,
+// including the key tiebreaker.
 func TestBuildListTailInverts(t *testing.T) {
 	_, order, _, _ := newTestBuilder(t).BuildList(protodb.ListOptions{OrderBy: "ts asc", Tail: true})
 	want := []ordering.ColumnOrder{{Column: "ts", Desc: true}, {Column: "key", Desc: true}} // inverted incl. tiebreaker
@@ -60,6 +66,8 @@ func TestBuildListTailInverts(t *testing.T) {
 	}
 }
 
+// TestBuildListPageSizeRules checks that a negative page size is InvalidArgument and that the
+// LIMIT is one above the requested page size.
 func TestBuildListPageSizeRules(t *testing.T) {
 	b := newTestBuilder(t)
 	if _, _, _, err := b.BuildList(protodb.ListOptions{PageSize: -1}); status.Code(err) != codes.InvalidArgument {
@@ -71,6 +79,8 @@ func TestBuildListPageSizeRules(t *testing.T) {
 	}
 }
 
+// TestBuildListFilterParamsAndParent checks that the parent prefix and the compiled filter are
+// ANDed in the WHERE clause and that both their parameters are bound.
 func TestBuildListFilterParamsAndParent(t *testing.T) {
 	stmt, _, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{
 		Parent: "res/", Filter: "a == param('x')", FilterParams: map[string]any{"x": "v"},
@@ -90,6 +100,8 @@ func TestBuildListFilterParamsAndParent(t *testing.T) {
 	}
 }
 
+// TestBuildListCursorPredicate checks that a page token adds a predicate selecting rows after
+// the token's key, bound as parameter c0.
 func TestBuildListCursorPredicate(t *testing.T) {
 	b := newTestBuilder(t)
 	fp := Fingerprint("", "", "", false)
@@ -106,6 +118,8 @@ func TestBuildListCursorPredicate(t *testing.T) {
 	}
 }
 
+// TestBuildListTokenFingerprintMismatch checks that a token issued for different list options
+// is rejected with InvalidArgument.
 func TestBuildListTokenFingerprintMismatch(t *testing.T) {
 	b := newTestBuilder(t)
 	tok := EncodePageToken(PageToken{}, Fingerprint("other", "", "", false))
@@ -114,8 +128,10 @@ func TestBuildListTokenFingerprintMismatch(t *testing.T) {
 	}
 }
 
-// --- beyond the brief -------------------------------------------------
+// --- projection, errors, cursors, Stream and page-token order values ----
 
+// TestBuildListSelectsNonKeyOrderColumns checks that an order column outside the scan columns is
+// appended to the SELECT list so its value can go into the next page token.
 func TestBuildListSelectsNonKeyOrderColumns(t *testing.T) {
 	stmt, _, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{OrderBy: "ts desc"})
 	if err != nil {
@@ -170,6 +186,8 @@ func TestBuildListProjectsExactlyWhatScannerNeeds(t *testing.T) {
 	}
 }
 
+// TestBuildListWithoutPolicyColumn checks that an empty PolicyColumn drops the policy column from
+// the SELECT list.
 func TestBuildListWithoutPolicyColumn(t *testing.T) {
 	b := newTestBuilder(t)
 	b.PolicyColumn = ""
@@ -183,18 +201,22 @@ func TestBuildListWithoutPolicyColumn(t *testing.T) {
 	}
 }
 
+// TestBuildListInvalidOrderBy checks that a malformed OrderBy fails with InvalidArgument.
 func TestBuildListInvalidOrderBy(t *testing.T) {
 	if _, _, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{OrderBy: "1bad ascending"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
 	}
 }
 
+// TestBuildListInvalidFilter checks that a malformed filter fails with InvalidArgument.
 func TestBuildListInvalidFilter(t *testing.T) {
 	if _, _, _, err := newTestBuilder(t).BuildList(protodb.ListOptions{Filter: "a =="}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
 	}
 }
 
+// TestBuildListFingerprintIsOverOriginalOptions checks that the returned fingerprint is computed
+// from the options as given, not from the Tail-inverted order.
 func TestBuildListFingerprintIsOverOriginalOptions(t *testing.T) {
 	opts := protodb.ListOptions{Parent: "res/", Filter: "a == 'b'", OrderBy: "ts asc", Tail: true}
 	_, _, fp, err := newTestBuilder(t).BuildList(opts)
@@ -206,6 +228,8 @@ func TestBuildListFingerprintIsOverOriginalOptions(t *testing.T) {
 	}
 }
 
+// TestBuildListTailCursorFollowsInvertedDirection checks that with Tail the cursor predicate
+// uses the inverted descending comparison, which also admits NULLs.
 func TestBuildListTailCursorFollowsInvertedDirection(t *testing.T) {
 	b := newTestBuilder(t)
 	opts := protodb.ListOptions{Tail: true}
@@ -221,6 +245,8 @@ func TestBuildListTailCursorFollowsInvertedDirection(t *testing.T) {
 	}
 }
 
+// TestBuildListTokenTooShortForOrder checks that a token carrying fewer order values than the
+// effective order has columns is rejected with InvalidArgument.
 func TestBuildListTokenTooShortForOrder(t *testing.T) {
 	b := newTestBuilder(t)
 	opts := protodb.ListOptions{OrderBy: "a, b"}
@@ -232,6 +258,8 @@ func TestBuildListTokenTooShortForOrder(t *testing.T) {
 	}
 }
 
+// TestBuildListParamNamespacesDoNotCollide checks that the parent, filter and cursor parameters
+// use distinct names and all three are bound together.
 func TestBuildListParamNamespacesDoNotCollide(t *testing.T) {
 	b := newTestBuilder(t)
 	opts := protodb.ListOptions{Parent: "res/", Filter: "a == param('x')", FilterParams: map[string]any{"x": "v"}}
@@ -251,6 +279,8 @@ func TestBuildListParamNamespacesDoNotCollide(t *testing.T) {
 	}
 }
 
+// TestBuildStream checks the stream SQL for empty options: every scan column ordered by key,
+// with no LIMIT.
 func TestBuildStream(t *testing.T) {
 	stmt, err := newTestBuilder(t).BuildStream(protodb.StreamOptions{})
 	if err != nil {
@@ -262,6 +292,8 @@ func TestBuildStream(t *testing.T) {
 	}
 }
 
+// TestBuildStreamParentFilterAndOrder checks that a stream statement applies the parent prefix,
+// the filter and the requested order with the key tiebreaker, binds their parameters and has no LIMIT.
 func TestBuildStreamParentFilterAndOrder(t *testing.T) {
 	stmt, err := newTestBuilder(t).BuildStream(protodb.StreamOptions{
 		Parent: "res/", Filter: "a == param('x')", FilterParams: map[string]any{"x": "v"}, OrderBy: "ts desc",
@@ -281,12 +313,15 @@ func TestBuildStreamParentFilterAndOrder(t *testing.T) {
 	}
 }
 
+// TestBuildStreamInvalidOrderBy checks that a malformed OrderBy on a stream fails with InvalidArgument.
 func TestBuildStreamInvalidOrderBy(t *testing.T) {
 	if _, err := newTestBuilder(t).BuildStream(protodb.StreamOptions{OrderBy: "1bad"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
 	}
 }
 
+// TestCursorPredicateExpansion checks the lexicographic expansion of the cursor predicate across
+// mixed-direction columns and the c0, c1, c2 parameters it binds.
 func TestCursorPredicateExpansion(t *testing.T) {
 	order := []ordering.ColumnOrder{{Column: "a", Desc: false}, {Column: "b", Desc: true}, {Column: "key", Desc: false}}
 	params := map[string]any{}
@@ -302,6 +337,8 @@ func TestCursorPredicateExpansion(t *testing.T) {
 	}
 }
 
+// TestCursorPredicateNullValuesBindNoParams checks that NULL cursor values become IS NULL and
+// IS NOT NULL tests, or FALSE, and bind no parameters.
 func TestCursorPredicateNullValuesBindNoParams(t *testing.T) {
 	order := []ordering.ColumnOrder{{Column: "a", Desc: false}, {Column: "b", Desc: true}, {Column: "key", Desc: false}}
 	params := map[string]any{}
@@ -317,6 +354,8 @@ func TestCursorPredicateNullValuesBindNoParams(t *testing.T) {
 	}
 }
 
+// TestOrderValuesFromRow checks that OrderValuesFromRow reads string, int64, float64, bool and
+// timestamp columns as Go values and a NULL column as nil.
 func TestOrderValuesFromRow(t *testing.T) {
 	ts := time.Date(2026, 8, 20, 10, 30, 0, 0, time.UTC)
 	row, err := spanner.NewRow(
@@ -339,6 +378,8 @@ func TestOrderValuesFromRow(t *testing.T) {
 	}
 }
 
+// TestOrderValuesFromRowRoundTripsThroughPageToken checks that values read by
+// OrderValuesFromRow survive a page token encode and decode unchanged.
 func TestOrderValuesFromRowRoundTripsThroughPageToken(t *testing.T) {
 	ts := time.Date(2026, 8, 20, 10, 30, 0, 0, time.UTC)
 	row, err := spanner.NewRow([]string{"ts", "key"}, []any{ts, "k5"})
@@ -360,6 +401,8 @@ func TestOrderValuesFromRowRoundTripsThroughPageToken(t *testing.T) {
 	}
 }
 
+// TestOrderValuesFromRowMissingColumn checks that OrderValuesFromRow errors when an order column
+// is absent from the row.
 func TestOrderValuesFromRowMissingColumn(t *testing.T) {
 	row, err := spanner.NewRow([]string{"a"}, []any{"x"})
 	if err != nil {
@@ -370,6 +413,8 @@ func TestOrderValuesFromRowMissingColumn(t *testing.T) {
 	}
 }
 
+// TestOrderValuesFromRowUnsupportedType checks that OrderValuesFromRow errors on a non-scalar
+// column type such as an array.
 func TestOrderValuesFromRowUnsupportedType(t *testing.T) {
 	row, err := spanner.NewRow([]string{"a"}, []any{[]string{"x", "y"}})
 	if err != nil {

@@ -53,6 +53,8 @@ func (f *fakeTable) WritePolicies(ctx context.Context, entries ...protodb.Policy
 	panic("not implemented")
 }
 
+// TestRowIsPureData checks that a Row can be built as a plain literal and that
+// ResourceTable can be implemented by a fake with no dependencies.
 func TestRowIsPureData(t *testing.T) {
 	r := &protodb.Row[string]{Key: nil, Resource: "x"}
 	if r.Resource != "x" {

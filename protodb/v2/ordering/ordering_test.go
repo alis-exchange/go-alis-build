@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestNewOrder checks that NewOrder accepts comma-separated columns with an
+// optional direction and rejects trailing commas, extra spaces and bad directions.
 func TestNewOrder(t *testing.T) {
 	type args struct {
 		order string
@@ -76,6 +78,8 @@ func TestNewOrder(t *testing.T) {
 	}
 }
 
+// TestColumnsPreservesInputOrder checks that Columns returns columns in input
+// order with desc set only where given.
 func TestColumnsPreservesInputOrder(t *testing.T) {
 	o, err := NewOrder("b desc, a asc, c")
 	if err != nil {
@@ -88,6 +92,7 @@ func TestColumnsPreservesInputOrder(t *testing.T) {
 	}
 }
 
+// TestInvert checks that Invert flips the direction of every column.
 func TestInvert(t *testing.T) {
 	o, _ := NewOrder("a desc, b")
 	got := o.Invert().Columns()
@@ -97,6 +102,7 @@ func TestInvert(t *testing.T) {
 	}
 }
 
+// TestEmptyOrder checks that an empty order string yields nil Columns.
 func TestEmptyOrder(t *testing.T) {
 	o, _ := NewOrder("")
 	if o.Columns() != nil {
@@ -104,6 +110,8 @@ func TestEmptyOrder(t *testing.T) {
 	}
 }
 
+// TestNilReceiverAndEmptyInvert checks that Columns and Invert are nil-safe on
+// a nil Order, and that inverting an empty Order gives a non-nil empty Order.
 func TestNilReceiverAndEmptyInvert(t *testing.T) {
 	// Test nil receiver for Columns()
 	var nilOrder *Order

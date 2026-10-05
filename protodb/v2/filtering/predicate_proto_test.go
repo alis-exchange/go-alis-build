@@ -46,6 +46,8 @@ func newDate(t *testing.T, year, month, day int32) proto.Message {
 	return m
 }
 
+// TestPredicateProtoValues checks that Match converts proto values: registered
+// and unregistered Timestamps, Duration, Date and enums by name or number.
 func TestPredicateProtoValues(t *testing.T) {
 	p, err := NewParser(
 		Timestamp("Backup.expire_time"),
@@ -97,6 +99,8 @@ func TestPredicateProtoValues(t *testing.T) {
 	}
 }
 
+// TestPredicateUnsupportedMessageComparison checks that comparing an arbitrary
+// message is Unimplemented, while a NULL test on it still works.
 func TestPredicateUnsupportedMessageComparison(t *testing.T) {
 	p, err := NewParser()
 	require.NoError(t, err)

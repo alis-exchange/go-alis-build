@@ -58,6 +58,8 @@ func TestParserSuite(t *testing.T) {
 // Comparison Operators Tests
 // =============================================================================
 
+// TestEquality checks that == against a string compiles to = with the string
+// bound as @p0.
 func (s *ParserSuite) TestEquality() {
 	s.assertStatement(
 		"name == 'Alice'",
@@ -66,6 +68,8 @@ func (s *ParserSuite) TestEquality() {
 	)
 }
 
+// TestEqualityWithInt checks that an integer literal on the right of == is
+// bound as an int64 parameter.
 func (s *ParserSuite) TestEqualityWithInt() {
 	s.assertStatement(
 		"age == 25",
@@ -74,6 +78,8 @@ func (s *ParserSuite) TestEqualityWithInt() {
 	)
 }
 
+// TestEqualityWithBool checks that a true literal on the right of == is bound
+// as a bool parameter.
 func (s *ParserSuite) TestEqualityWithBool() {
 	s.assertStatement(
 		"active == true",
@@ -82,6 +88,8 @@ func (s *ParserSuite) TestEqualityWithBool() {
 	)
 }
 
+// TestInequality checks that != compiles to SQL != with the string bound as
+// @p0.
 func (s *ParserSuite) TestInequality() {
 	s.assertStatement(
 		"name != 'Alice'",
@@ -90,6 +98,8 @@ func (s *ParserSuite) TestInequality() {
 	)
 }
 
+// TestGreaterThan checks that > compiles to SQL > with the integer bound as an
+// int64 parameter.
 func (s *ParserSuite) TestGreaterThan() {
 	s.assertStatement(
 		"age > 18",
@@ -98,6 +108,8 @@ func (s *ParserSuite) TestGreaterThan() {
 	)
 }
 
+// TestGreaterThanOrEqual checks that >= compiles to SQL >= with the integer
+// bound as an int64 parameter.
 func (s *ParserSuite) TestGreaterThanOrEqual() {
 	s.assertStatement(
 		"age >= 18",
@@ -106,6 +118,8 @@ func (s *ParserSuite) TestGreaterThanOrEqual() {
 	)
 }
 
+// TestLessThan checks that < compiles to SQL < with the integer bound as an
+// int64 parameter.
 func (s *ParserSuite) TestLessThan() {
 	s.assertStatement(
 		"age < 65",
@@ -114,6 +128,8 @@ func (s *ParserSuite) TestLessThan() {
 	)
 }
 
+// TestLessThanOrEqual checks that <= compiles to SQL <= with the integer bound
+// as an int64 parameter.
 func (s *ParserSuite) TestLessThanOrEqual() {
 	s.assertStatement(
 		"age <= 65",
@@ -122,6 +138,8 @@ func (s *ParserSuite) TestLessThanOrEqual() {
 	)
 }
 
+// TestComparisonWithDouble checks that a decimal literal such as 19.99 is bound
+// as a float64 parameter.
 func (s *ParserSuite) TestComparisonWithDouble() {
 	s.assertStatement(
 		"price > 19.99",
@@ -134,6 +152,8 @@ func (s *ParserSuite) TestComparisonWithDouble() {
 // Logical Operators Tests
 // =============================================================================
 
+// TestLogicalAnd checks that && compiles to a parenthesized AND with parameters
+// numbered left to right.
 func (s *ParserSuite) TestLogicalAnd() {
 	s.assertStatement(
 		"a == 1 && b == 2",
@@ -142,6 +162,8 @@ func (s *ParserSuite) TestLogicalAnd() {
 	)
 }
 
+// TestLogicalAndKeyword checks that the AND keyword produces the same
+// parenthesized AND as &&.
 func (s *ParserSuite) TestLogicalAndKeyword() {
 	s.assertStatement(
 		"a == 1 AND b == 2",
@@ -150,6 +172,8 @@ func (s *ParserSuite) TestLogicalAndKeyword() {
 	)
 }
 
+// TestLogicalOr checks that || compiles to a parenthesized OR with parameters
+// numbered left to right.
 func (s *ParserSuite) TestLogicalOr() {
 	s.assertStatement(
 		"a == 1 || b == 2",
@@ -158,6 +182,8 @@ func (s *ParserSuite) TestLogicalOr() {
 	)
 }
 
+// TestLogicalOrKeyword checks that the OR keyword produces the same
+// parenthesized OR as ||.
 func (s *ParserSuite) TestLogicalOrKeyword() {
 	s.assertStatement(
 		"a == 1 OR b == 2",
@@ -166,6 +192,8 @@ func (s *ParserSuite) TestLogicalOrKeyword() {
 	)
 }
 
+// TestNestedLogical checks that a parenthesized AND group inside an OR keeps
+// its own parentheses in the SQL.
 func (s *ParserSuite) TestNestedLogical() {
 	s.assertStatement(
 		"(a == 1 && b == 2) || c == 3",
@@ -174,6 +202,8 @@ func (s *ParserSuite) TestNestedLogical() {
 	)
 }
 
+// TestComplexLogical checks that a parenthesized OR on the right of && is
+// nested inside the outer AND.
 func (s *ParserSuite) TestComplexLogical() {
 	s.assertStatement(
 		"a == 1 && (b == 2 || c == 3)",
@@ -182,6 +212,8 @@ func (s *ParserSuite) TestComplexLogical() {
 	)
 }
 
+// TestMultipleAnd checks that a chain of && is left-associative, so the first
+// two terms are grouped together.
 func (s *ParserSuite) TestMultipleAnd() {
 	s.assertStatement(
 		"a == 1 && b == 2 && c == 3",
@@ -194,6 +226,8 @@ func (s *ParserSuite) TestMultipleAnd() {
 // String Functions Tests
 // =============================================================================
 
+// TestLike checks that like(name, pattern) compiles to name LIKE @p0 with the
+// pattern bound unchanged.
 func (s *ParserSuite) TestLike() {
 	s.assertStatement(
 		"like(name, '%Alice%')",
@@ -202,6 +236,8 @@ func (s *ParserSuite) TestLike() {
 	)
 }
 
+// TestLikeStartsWith checks that a trailing-wildcard like pattern is passed
+// through as a bound LIKE parameter.
 func (s *ParserSuite) TestLikeStartsWith() {
 	s.assertStatement(
 		"like(name, 'Alice%')",
@@ -210,6 +246,8 @@ func (s *ParserSuite) TestLikeStartsWith() {
 	)
 }
 
+// TestLikeEndsWith checks that a leading-wildcard like pattern is passed
+// through as a bound LIKE parameter.
 func (s *ParserSuite) TestLikeEndsWith() {
 	s.assertStatement(
 		"like(name, '%Alice')",
@@ -218,6 +256,8 @@ func (s *ParserSuite) TestLikeEndsWith() {
 	)
 }
 
+// TestLower checks that lower(name) compiles to LOWER(name) on the left of a
+// bound equality.
 func (s *ParserSuite) TestLower() {
 	s.assertStatement(
 		"lower(name) == 'alice'",
@@ -226,6 +266,8 @@ func (s *ParserSuite) TestLower() {
 	)
 }
 
+// TestUpper checks that upper(name) compiles to UPPER(name) on the left of a
+// bound equality.
 func (s *ParserSuite) TestUpper() {
 	s.assertStatement(
 		"upper(name) == 'ALICE'",
@@ -234,6 +276,7 @@ func (s *ParserSuite) TestUpper() {
 	)
 }
 
+// TestPrefix checks that prefix(name, s) compiles to STARTS_WITH(name, @p0).
 func (s *ParserSuite) TestPrefix() {
 	s.assertStatement(
 		"prefix(name, 'Al')",
@@ -242,6 +285,7 @@ func (s *ParserSuite) TestPrefix() {
 	)
 }
 
+// TestSuffix checks that suffix(name, s) compiles to ENDS_WITH(name, @p0).
 func (s *ParserSuite) TestSuffix() {
 	s.assertStatement(
 		"suffix(name, 'ce')",
@@ -250,6 +294,8 @@ func (s *ParserSuite) TestSuffix() {
 	)
 }
 
+// TestLikeLower checks that like over lower(name) compiles to LOWER(name) LIKE
+// @p0.
 func (s *ParserSuite) TestLikeLower() {
 	s.assertStatement(
 		"like(lower(name), '%alice%')",
@@ -258,6 +304,8 @@ func (s *ParserSuite) TestLikeLower() {
 	)
 }
 
+// TestLikeUpper checks that like over upper(name) compiles to UPPER(name) LIKE
+// @p0.
 func (s *ParserSuite) TestLikeUpper() {
 	s.assertStatement(
 		"like(upper(name), '%ALICE%')",
@@ -266,6 +314,8 @@ func (s *ParserSuite) TestLikeUpper() {
 	)
 }
 
+// TestPrefixWithLower checks that prefix over lower(name) compiles to
+// STARTS_WITH(LOWER(name), @p0).
 func (s *ParserSuite) TestPrefixWithLower() {
 	s.assertStatement(
 		"prefix(lower(name), 'al')",
@@ -274,6 +324,8 @@ func (s *ParserSuite) TestPrefixWithLower() {
 	)
 }
 
+// TestSuffixWithUpper checks that suffix over upper(name) compiles to
+// ENDS_WITH(UPPER(name), @p0).
 func (s *ParserSuite) TestSuffixWithUpper() {
 	s.assertStatement(
 		"suffix(upper(name), 'CE')",
@@ -286,6 +338,8 @@ func (s *ParserSuite) TestSuffixWithUpper() {
 // Multi-Arg Functions Tests
 // =============================================================================
 
+// TestConcat checks that concat keeps field arguments as columns and binds the
+// string separator as @p0.
 func (s *ParserSuite) TestConcat() {
 	s.assertStatement(
 		"concat(first_name, ' ', last_name)",
@@ -294,6 +348,8 @@ func (s *ParserSuite) TestConcat() {
 	)
 }
 
+// TestConcatTwoFields checks that concat of two fields compiles to
+// CONCAT(first_name, last_name) with no parameters.
 func (s *ParserSuite) TestConcatTwoFields() {
 	s.assertStatement(
 		"concat(first_name, last_name)",
@@ -302,6 +358,8 @@ func (s *ParserSuite) TestConcatTwoFields() {
 	)
 }
 
+// TestConcatWithConstant checks that a leading string constant in concat is
+// bound as @p0 ahead of the field.
 func (s *ParserSuite) TestConcatWithConstant() {
 	s.assertStatement(
 		"concat('Hello ', name)",
@@ -310,6 +368,8 @@ func (s *ParserSuite) TestConcatWithConstant() {
 	)
 }
 
+// TestGreatest checks that greatest keeps field arguments as columns and binds
+// the integer argument.
 func (s *ParserSuite) TestGreatest() {
 	s.assertStatement(
 		"greatest(a, b, 10)",
@@ -318,6 +378,8 @@ func (s *ParserSuite) TestGreatest() {
 	)
 }
 
+// TestGreatestTwoFields checks that greatest of two fields compiles to
+// GREATEST(price, min_price) with no parameters.
 func (s *ParserSuite) TestGreatestTwoFields() {
 	s.assertStatement(
 		"greatest(price, min_price)",
@@ -326,6 +388,8 @@ func (s *ParserSuite) TestGreatestTwoFields() {
 	)
 }
 
+// TestLeast checks that least keeps field arguments as columns and binds the
+// integer argument.
 func (s *ParserSuite) TestLeast() {
 	s.assertStatement(
 		"least(a, b, 10)",
@@ -334,6 +398,8 @@ func (s *ParserSuite) TestLeast() {
 	)
 }
 
+// TestLeastTwoFields checks that least of two fields compiles to
+// LEAST(quantity, max_quantity) with no parameters.
 func (s *ParserSuite) TestLeastTwoFields() {
 	s.assertStatement(
 		"least(quantity, max_quantity)",
@@ -342,6 +408,8 @@ func (s *ParserSuite) TestLeastTwoFields() {
 	)
 }
 
+// TestCoalesce checks that coalesce keeps field arguments as columns and binds
+// the trailing string default.
 func (s *ParserSuite) TestCoalesce() {
 	s.assertStatement(
 		"coalesce(nickname, name, 'Unknown')",
@@ -350,6 +418,8 @@ func (s *ParserSuite) TestCoalesce() {
 	)
 }
 
+// TestCoalesceTwoFields checks that coalesce of two fields compiles to
+// COALESCE(nickname, name) with no parameters.
 func (s *ParserSuite) TestCoalesceTwoFields() {
 	s.assertStatement(
 		"coalesce(nickname, name)",
@@ -358,6 +428,8 @@ func (s *ParserSuite) TestCoalesceTwoFields() {
 	)
 }
 
+// TestIfnull checks that ifnull(nickname, 'N/A') compiles to IFNULL(nickname,
+// @p0) with the default bound.
 func (s *ParserSuite) TestIfnull() {
 	s.assertStatement(
 		"ifnull(nickname, 'N/A')",
@@ -366,6 +438,8 @@ func (s *ParserSuite) TestIfnull() {
 	)
 }
 
+// TestIfnullWithInt checks that an integer default in ifnull is bound as an
+// int64 parameter.
 func (s *ParserSuite) TestIfnullWithInt() {
 	s.assertStatement(
 		"ifnull(count, 0)",
@@ -374,6 +448,8 @@ func (s *ParserSuite) TestIfnullWithInt() {
 	)
 }
 
+// TestIfnullTwoFields checks that ifnull of two fields compiles to IFNULL with
+// both columns and no parameters.
 func (s *ParserSuite) TestIfnullTwoFields() {
 	s.assertStatement(
 		"ifnull(primary_email, secondary_email)",
@@ -382,6 +458,8 @@ func (s *ParserSuite) TestIfnullTwoFields() {
 	)
 }
 
+// TestLowerConcat checks that lower wrapping concat compiles to
+// LOWER(CONCAT(...)) with the separator bound.
 func (s *ParserSuite) TestLowerConcat() {
 	s.assertStatement(
 		"lower(concat(first_name, ' ', last_name))",
@@ -390,6 +468,8 @@ func (s *ParserSuite) TestLowerConcat() {
 	)
 }
 
+// TestConcatLower checks that concat of lower(...) arguments compiles to
+// CONCAT(LOWER(...), @p0, LOWER(...)).
 func (s *ParserSuite) TestConcatLower() {
 	s.assertStatement(
 		"concat(lower(first_name), ' ', lower(last_name))",
@@ -402,6 +482,8 @@ func (s *ParserSuite) TestConcatLower() {
 // Built-in Type Functions Tests
 // =============================================================================
 
+// TestTimestampFunction checks that timestamp('...') binds the string for
+// PARSE_TIMESTAMP('%c',@p0) and rewrites the field to TIMESTAMP_ADD.
 func (s *ParserSuite) TestTimestampFunction() {
 	s.assertStatement(
 		"create_time > timestamp('2021-01-01T00:00:00Z')",
@@ -410,6 +492,8 @@ func (s *ParserSuite) TestTimestampFunction() {
 	)
 }
 
+// TestTimestampFunctionLessThan checks that < works with timestamp('...') on
+// the update_time Timestamp identifier, binding the RFC 3339 string.
 func (s *ParserSuite) TestTimestampFunctionLessThan() {
 	s.assertStatement(
 		"update_time < timestamp('2025-12-31T23:59:59Z')",
@@ -418,6 +502,8 @@ func (s *ParserSuite) TestTimestampFunctionLessThan() {
 	)
 }
 
+// TestDurationFunction checks that duration('1h') on a Duration identifier
+// compares seconds plus nanos/1e9 against 3600 bound as float64.
 func (s *ParserSuite) TestDurationFunction() {
 	s.assertStatement(
 		"expire_after > duration('1h')",
@@ -426,6 +512,8 @@ func (s *ParserSuite) TestDurationFunction() {
 	)
 }
 
+// TestDurationFunctionMinutes checks that duration('30m') is converted to 1800
+// seconds and bound as float64.
 func (s *ParserSuite) TestDurationFunctionMinutes() {
 	s.assertStatement(
 		"timeout < duration('30m')",
@@ -434,6 +522,8 @@ func (s *ParserSuite) TestDurationFunctionMinutes() {
 	)
 }
 
+// TestDurationFunctionSeconds checks that duration('90s') is converted to 90
+// seconds and bound as float64 under >=.
 func (s *ParserSuite) TestDurationFunctionSeconds() {
 	s.assertStatement(
 		"expire_after >= duration('90s')",
@@ -442,6 +532,8 @@ func (s *ParserSuite) TestDurationFunctionSeconds() {
 	)
 }
 
+// TestDateFunction checks that date('...') on a Date identifier compiles to
+// DATE(year, month, day) = DATE(@p0), binding the date string.
 func (s *ParserSuite) TestDateFunction() {
 	s.assertStatement(
 		"effective_date == date('2021-01-01')",
@@ -450,6 +542,8 @@ func (s *ParserSuite) TestDateFunction() {
 	)
 }
 
+// TestDateFunctionGreaterThan checks that > with date('...') on the birth_date
+// Date identifier compiles to DATE(...) > DATE(@p0).
 func (s *ParserSuite) TestDateFunctionGreaterThan() {
 	s.assertStatement(
 		"birth_date > date('1990-01-01')",
@@ -462,6 +556,8 @@ func (s *ParserSuite) TestDateFunctionGreaterThan() {
 // IN Operator Tests
 // =============================================================================
 
+// TestInStringArray checks that in with a string list compiles to IN
+// UNNEST(@p0) with a []string parameter.
 func (s *ParserSuite) TestInStringArray() {
 	s.assertStatement(
 		"name in ['Alice', 'Bob', 'Charlie']",
@@ -470,6 +566,8 @@ func (s *ParserSuite) TestInStringArray() {
 	)
 }
 
+// TestInIntArray checks that in with an integer list compiles to IN UNNEST(@p0)
+// with a []int64 parameter.
 func (s *ParserSuite) TestInIntArray() {
 	s.assertStatement(
 		"age in [18, 21, 65]",
@@ -478,6 +576,8 @@ func (s *ParserSuite) TestInIntArray() {
 	)
 }
 
+// TestInSingleValue checks that a one-element list still compiles to IN
+// UNNEST(@p0) with a one-element []string.
 func (s *ParserSuite) TestInSingleValue() {
 	// Using 'state' instead of 'status' since 'status' is registered as EnumString identifier
 	s.assertStatement(
@@ -487,6 +587,8 @@ func (s *ParserSuite) TestInSingleValue() {
 	)
 }
 
+// TestInWithKeyword checks that the uppercase IN keyword is accepted and
+// compiles to IN UNNEST(@p0).
 func (s *ParserSuite) TestInWithKeyword() {
 	s.assertStatement(
 		"name IN ['Alice', 'Bob']",
@@ -499,6 +601,8 @@ func (s *ParserSuite) TestInWithKeyword() {
 // Identifier Transformations Tests
 // =============================================================================
 
+// TestTimestampIdentifier checks that a field registered with Timestamp is
+// rewritten to the TIMESTAMP_ADD seconds and nanos expression.
 func (s *ParserSuite) TestTimestampIdentifier() {
 	s.assertStatement(
 		"create_time > timestamp('2021-01-01T00:00:00Z')",
@@ -507,6 +611,8 @@ func (s *ParserSuite) TestTimestampIdentifier() {
 	)
 }
 
+// TestDurationIdentifier checks that a Duration field is rewritten to seconds
+// plus nanos/1e9 and that duration('2h30m') binds 9000.
 func (s *ParserSuite) TestDurationIdentifier() {
 	s.assertStatement(
 		"expire_after > duration('2h30m')",
@@ -515,6 +621,8 @@ func (s *ParserSuite) TestDurationIdentifier() {
 	)
 }
 
+// TestDateIdentifier checks that a Date field is rewritten to DATE(year, month,
+// day) and works with !=.
 func (s *ParserSuite) TestDateIdentifier() {
 	s.assertStatement(
 		"effective_date != date('2020-12-31')",
@@ -523,6 +631,8 @@ func (s *ParserSuite) TestDateIdentifier() {
 	)
 }
 
+// TestReservedIdentifier checks that a field registered with Reserved, such as
+// select, is quoted with backticks.
 func (s *ParserSuite) TestReservedIdentifier() {
 	s.assertStatement(
 		"select == 'value'",
@@ -531,6 +641,8 @@ func (s *ParserSuite) TestReservedIdentifier() {
 	)
 }
 
+// TestReservedIdentifierFrom checks that the Reserved identifier from is quoted
+// as `from` in the SQL.
 func (s *ParserSuite) TestReservedIdentifierFrom() {
 	s.assertStatement(
 		"from == 'source'",
@@ -539,6 +651,8 @@ func (s *ParserSuite) TestReservedIdentifierFrom() {
 	)
 }
 
+// TestEnumStringIdentifier checks that an EnumString field is wrapped in
+// CAST(status AS STRING) with the name bound.
 func (s *ParserSuite) TestEnumStringIdentifier() {
 	s.assertStatement(
 		"status == 'ACTIVE'",
@@ -547,6 +661,8 @@ func (s *ParserSuite) TestEnumStringIdentifier() {
 	)
 }
 
+// TestEnumIntegerIdentifier checks that an EnumInteger field is wrapped in
+// CAST(priority AS INT64) with the number bound as int64.
 func (s *ParserSuite) TestEnumIntegerIdentifier() {
 	s.assertStatement(
 		"priority == 1",
@@ -559,6 +675,8 @@ func (s *ParserSuite) TestEnumIntegerIdentifier() {
 // Nested Field Access (SelectExpr) Tests
 // =============================================================================
 
+// TestSelectExpr checks that a dotted field path such as Proto.field is emitted
+// unchanged as the column.
 func (s *ParserSuite) TestSelectExpr() {
 	s.assertStatement(
 		"Proto.field == 'value'",
@@ -567,6 +685,8 @@ func (s *ParserSuite) TestSelectExpr() {
 	)
 }
 
+// TestDeepSelectExpr checks that a three-level path such as user.address.city
+// is emitted unchanged.
 func (s *ParserSuite) TestDeepSelectExpr() {
 	s.assertStatement(
 		"user.address.city == 'NYC'",
@@ -575,6 +695,8 @@ func (s *ParserSuite) TestDeepSelectExpr() {
 	)
 }
 
+// TestSelectExprWithComparison checks that a dotted field path works with > and
+// an int64 parameter.
 func (s *ParserSuite) TestSelectExprWithComparison() {
 	s.assertStatement(
 		"Proto.count > 10",
@@ -583,6 +705,8 @@ func (s *ParserSuite) TestSelectExprWithComparison() {
 	)
 }
 
+// TestSelectExprWithFunction checks that a dotted field path works as the first
+// argument of like.
 func (s *ParserSuite) TestSelectExprWithFunction() {
 	s.assertStatement(
 		"like(Proto.name, '%test%')",
@@ -591,6 +715,8 @@ func (s *ParserSuite) TestSelectExprWithFunction() {
 	)
 }
 
+// TestSelectExprWithIn checks that a dotted field path works with in, compiling
+// to Proto.state IN UNNEST(@p0).
 func (s *ParserSuite) TestSelectExprWithIn() {
 	s.assertStatement(
 		"Proto.state in ['ACTIVE', 'PENDING']",
@@ -603,18 +729,26 @@ func (s *ParserSuite) TestSelectExprWithIn() {
 // Error Cases Tests
 // =============================================================================
 
+// TestUnsupportedFunction checks that calling an unknown function returns a
+// parse error.
 func (s *ParserSuite) TestUnsupportedFunction() {
 	s.assertError("unknownfunc(name)")
 }
 
+// TestInvalidFilterSyntax checks that a comparison missing its right operand
+// returns a parse error.
 func (s *ParserSuite) TestInvalidFilterSyntax() {
 	s.assertError("name ==")
 }
 
+// TestInvalidFilterMissingOperand checks that a comparison missing its left
+// operand returns a parse error.
 func (s *ParserSuite) TestInvalidFilterMissingOperand() {
 	s.assertError("== 'value'")
 }
 
+// TestInvalidFilterUnbalancedParens checks that an unclosed parenthesis returns
+// a parse error.
 func (s *ParserSuite) TestInvalidFilterUnbalancedParens() {
 	s.assertError("(name == 'Alice'")
 }
@@ -623,6 +757,8 @@ func (s *ParserSuite) TestInvalidFilterUnbalancedParens() {
 // Complex Integration Tests
 // =============================================================================
 
+// TestComplexFilterWithTimestamp checks that an equality ANDed with a Timestamp
+// comparison binds the string as @p0 and the timestamp as @p1.
 func (s *ParserSuite) TestComplexFilterWithTimestamp() {
 	s.assertStatement(
 		"name == 'Alice' AND create_time > timestamp('2021-01-01T00:00:00Z')",
@@ -631,6 +767,8 @@ func (s *ParserSuite) TestComplexFilterWithTimestamp() {
 	)
 }
 
+// TestNestedFunctions checks that like(lower(concat(...))) nests as
+// LOWER(CONCAT(...)) LIKE @p0.
 func (s *ParserSuite) TestNestedFunctions() {
 	s.assertStatement(
 		"like(lower(concat(first_name, last_name)), '%smith%')",
@@ -639,6 +777,8 @@ func (s *ParserSuite) TestNestedFunctions() {
 	)
 }
 
+// TestMixedOperators checks that a parenthesized OR ANDed with a comparison
+// keeps the OR group nested inside the AND.
 func (s *ParserSuite) TestMixedOperators() {
 	s.assertStatement(
 		"(name == 'Alice' OR name == 'Bob') AND age > 18",
@@ -647,6 +787,8 @@ func (s *ParserSuite) TestMixedOperators() {
 	)
 }
 
+// TestMultipleFunctions checks that prefix, suffix and a comparison joined by
+// AND nest left to right with @p0 to @p2 in order.
 func (s *ParserSuite) TestMultipleFunctions() {
 	s.assertStatement(
 		"prefix(name, 'Al') AND suffix(name, 'ce') AND age >= 18",
@@ -655,6 +797,8 @@ func (s *ParserSuite) TestMultipleFunctions() {
 	)
 }
 
+// TestMultipleIdentifierTypes checks that Timestamp and Date identifiers in one
+// AND each get their own rewrite and parameter.
 func (s *ParserSuite) TestMultipleIdentifierTypes() {
 	s.assertStatement(
 		"create_time > timestamp('2021-01-01T00:00:00Z') AND effective_date == date('2021-06-01')",
@@ -663,6 +807,8 @@ func (s *ParserSuite) TestMultipleIdentifierTypes() {
 	)
 }
 
+// TestRealWorldFilter checks a filter mixing EnumString, Timestamp, like over
+// lower and EnumInteger, pinning the full SQL and @p0 to @p3.
 func (s *ParserSuite) TestRealWorldFilter() {
 	s.assertStatement(
 		"status == 'ACTIVE' AND create_time > timestamp('2021-01-01T00:00:00Z') AND (like(lower(name), '%test%') OR priority == 1)",
@@ -671,6 +817,8 @@ func (s *ParserSuite) TestRealWorldFilter() {
 	)
 }
 
+// TestFilterWithCoalesceAndComparison checks that a coalesce call can be the
+// left side of an equality.
 func (s *ParserSuite) TestFilterWithCoalesceAndComparison() {
 	s.assertStatement(
 		"coalesce(nickname, name) == 'Alice'",
@@ -679,6 +827,8 @@ func (s *ParserSuite) TestFilterWithCoalesceAndComparison() {
 	)
 }
 
+// TestFilterWithGreatestComparison checks that a greatest call can be the left
+// side of a > comparison.
 func (s *ParserSuite) TestFilterWithGreatestComparison() {
 	s.assertStatement(
 		"greatest(score1, score2) > 90",
@@ -687,6 +837,8 @@ func (s *ParserSuite) TestFilterWithGreatestComparison() {
 	)
 }
 
+// TestFilterWithLeastComparison checks that a least call can be the left side
+// of a < comparison.
 func (s *ParserSuite) TestFilterWithLeastComparison() {
 	s.assertStatement(
 		"least(price, max_price) < 100",
@@ -695,6 +847,8 @@ func (s *ParserSuite) TestFilterWithLeastComparison() {
 	)
 }
 
+// TestFilterWithIfnullComparison checks that the ifnull default and the
+// compared value are bound as separate parameters @p0 and @p1.
 func (s *ParserSuite) TestFilterWithIfnullComparison() {
 	s.assertStatement(
 		"ifnull(discount, 0) > 10",
@@ -703,6 +857,8 @@ func (s *ParserSuite) TestFilterWithIfnullComparison() {
 	)
 }
 
+// TestComplexNestedConditions checks that two parenthesized AND groups joined
+// by || keep both groups nested inside the OR.
 func (s *ParserSuite) TestComplexNestedConditions() {
 	s.assertStatement(
 		"(a == 1 && b == 2) || (c == 3 && d == 4)",
@@ -711,6 +867,8 @@ func (s *ParserSuite) TestComplexNestedConditions() {
 	)
 }
 
+// TestFilterWithInAndComparison checks that an in list ANDed with a comparison
+// binds the []string as @p0 and the integer as @p1.
 func (s *ParserSuite) TestFilterWithInAndComparison() {
 	s.assertStatement(
 		"name in ['Alice', 'Bob'] AND age > 18",
@@ -719,6 +877,8 @@ func (s *ParserSuite) TestFilterWithInAndComparison() {
 	)
 }
 
+// TestFilterWithSelectExprAndFunctions checks that dotted field paths work
+// inside lower and like and in a comparison within one AND.
 func (s *ParserSuite) TestFilterWithSelectExprAndFunctions() {
 	s.assertStatement(
 		"like(lower(Proto.name), '%test%') AND Proto.count > 0",
@@ -742,25 +902,34 @@ func (s *ParserSuite) assertStatementWith(identifiers []Identifier, filter, expe
 	s.Equal(expectedParams, stmt.Params, filter)
 }
 
+// TestNullEquality checks that == null compiles to IS NULL with no parameter.
 func (s *ParserSuite) TestNullEquality() {
 	s.assertStatement("name == null", "name IS NULL", map[string]any{})
 }
 
+// TestNullInequality checks that != null compiles to IS NOT NULL with no
+// parameter.
 func (s *ParserSuite) TestNullInequality() {
 	s.assertStatement("name != null", "name IS NOT NULL", map[string]any{})
 }
 
+// TestNullKeyword checks that NULL is case-insensitive and that the single =
+// operator also yields IS NULL.
 func (s *ParserSuite) TestNullKeyword() {
 	s.assertStatement("name == NULL", "name IS NULL", map[string]any{})
 	s.assertStatement("name = NULL", "name IS NULL", map[string]any{})
 	s.assertStatement("name = null", "name IS NULL", map[string]any{})
 }
 
+// TestNullOnLeft checks that null on the left side is swapped so the field
+// comes first in IS NULL and IS NOT NULL.
 func (s *ParserSuite) TestNullOnLeft() {
 	s.assertStatement("null == name", "name IS NULL", map[string]any{})
 	s.assertStatement("NULL != name", "name IS NOT NULL", map[string]any{})
 }
 
+// TestNullBothSides checks that comparing null with null compiles to NULL IS
+// NULL and NULL IS NOT NULL.
 func (s *ParserSuite) TestNullBothSides() {
 	s.assertStatement("null == null", "NULL IS NULL", map[string]any{})
 	s.assertStatement("null != null", "NULL IS NOT NULL", map[string]any{})
@@ -772,6 +941,8 @@ func (s *ParserSuite) TestNullAgainstConstantStaysBound() {
 	s.assertStatement("1 != null", "@p0 IS NOT NULL", map[string]any{"p0": int64(1)})
 }
 
+// TestNullOnTimestampIdentifier checks that = NULL on a Timestamp identifier
+// applies IS NULL to the rewritten TIMESTAMP_ADD expression.
 func (s *ParserSuite) TestNullOnTimestampIdentifier() {
 	s.assertStatementWith(
 		[]Identifier{Timestamp("Proto.delete_time")},
@@ -781,6 +952,8 @@ func (s *ParserSuite) TestNullOnTimestampIdentifier() {
 	)
 }
 
+// TestNullCombinedWithEnum checks that an EnumString equality ANDed with a
+// Timestamp = NULL check binds only the enum value.
 func (s *ParserSuite) TestNullCombinedWithEnum() {
 	s.assertStatementWith(
 		[]Identifier{Timestamp("Proto.delete_time"), EnumString("Proto.state", "test.State")},
@@ -790,6 +963,8 @@ func (s *ParserSuite) TestNullCombinedWithEnum() {
 	)
 }
 
+// TestNullInOrderingComparisonIsInvalid checks that null with >, >=, < or <= on
+// either side returns ErrInvalidFilter.
 func (s *ParserSuite) TestNullInOrderingComparisonIsInvalid() {
 	for _, f := range []string{"name > null", "name >= null", "name < NULL", "name <= null", "null < name"} {
 		_, err := s.parser.Parse(f)
@@ -798,10 +973,14 @@ func (s *ParserSuite) TestNullInOrderingComparisonIsInvalid() {
 	}
 }
 
+// TestNullStringLiteralStillBinds checks that the quoted string 'NULL' is bound
+// as a parameter, not treated as SQL NULL.
 func (s *ParserSuite) TestNullStringLiteralStillBinds() {
 	s.assertStatement("name = 'NULL'", "name = @p0", map[string]any{"p0": "NULL"})
 }
 
+// TestNullInsideIfnullUnchanged checks that null handling leaves IFNULL alone:
+// its default and the compared value stay bound.
 func (s *ParserSuite) TestNullInsideIfnullUnchanged() {
 	s.assertStatement("IFNULL(nickname, 'N/A') = 'x'", "IFNULL(nickname, @p0) = @p1", map[string]any{"p0": "N/A", "p1": "x"})
 }
@@ -810,6 +989,8 @@ func (s *ParserSuite) TestNullInsideIfnullUnchanged() {
 // Case Insensitivity Tests (Function Names)
 // =============================================================================
 
+// TestUppercaseLike checks that the function name LIKE is accepted in uppercase
+// and compiles like like.
 func (s *ParserSuite) TestUppercaseLike() {
 	s.assertStatement(
 		"LIKE(name, '%test%')",
@@ -818,6 +999,8 @@ func (s *ParserSuite) TestUppercaseLike() {
 	)
 }
 
+// TestUppercaseLower checks that the function name LOWER is accepted in
+// uppercase and compiles like lower.
 func (s *ParserSuite) TestUppercaseLower() {
 	s.assertStatement(
 		"LOWER(name) == 'test'",
@@ -826,6 +1009,8 @@ func (s *ParserSuite) TestUppercaseLower() {
 	)
 }
 
+// TestUppercaseUpper checks that the function name UPPER is accepted in
+// uppercase and compiles like upper.
 func (s *ParserSuite) TestUppercaseUpper() {
 	s.assertStatement(
 		"UPPER(name) == 'TEST'",
@@ -834,6 +1019,8 @@ func (s *ParserSuite) TestUppercaseUpper() {
 	)
 }
 
+// TestUppercasePrefix checks that PREFIX is accepted in uppercase and compiles
+// to STARTS_WITH.
 func (s *ParserSuite) TestUppercasePrefix() {
 	s.assertStatement(
 		"PREFIX(name, 'Al')",
@@ -842,6 +1029,8 @@ func (s *ParserSuite) TestUppercasePrefix() {
 	)
 }
 
+// TestUppercaseSuffix checks that SUFFIX is accepted in uppercase and compiles
+// to ENDS_WITH.
 func (s *ParserSuite) TestUppercaseSuffix() {
 	s.assertStatement(
 		"SUFFIX(name, 'ce')",
@@ -850,6 +1039,8 @@ func (s *ParserSuite) TestUppercaseSuffix() {
 	)
 }
 
+// TestUppercaseConcat checks that CONCAT is accepted in uppercase and still
+// binds the string separator.
 func (s *ParserSuite) TestUppercaseConcat() {
 	s.assertStatement(
 		"CONCAT(first, ' ', last)",
@@ -858,6 +1049,8 @@ func (s *ParserSuite) TestUppercaseConcat() {
 	)
 }
 
+// TestUppercaseGreatest checks that GREATEST is accepted in uppercase and
+// compiles to GREATEST(a, b).
 func (s *ParserSuite) TestUppercaseGreatest() {
 	s.assertStatement(
 		"GREATEST(a, b)",
@@ -866,6 +1059,8 @@ func (s *ParserSuite) TestUppercaseGreatest() {
 	)
 }
 
+// TestUppercaseLeast checks that LEAST is accepted in uppercase and compiles to
+// LEAST(a, b).
 func (s *ParserSuite) TestUppercaseLeast() {
 	s.assertStatement(
 		"LEAST(a, b)",
@@ -874,6 +1069,8 @@ func (s *ParserSuite) TestUppercaseLeast() {
 	)
 }
 
+// TestUppercaseCoalesce checks that COALESCE is accepted in uppercase and
+// compiles to COALESCE(a, b).
 func (s *ParserSuite) TestUppercaseCoalesce() {
 	s.assertStatement(
 		"COALESCE(a, b)",
@@ -882,6 +1079,8 @@ func (s *ParserSuite) TestUppercaseCoalesce() {
 	)
 }
 
+// TestUppercaseIfnull checks that IFNULL is accepted in uppercase and compiles
+// to IFNULL(a, b).
 func (s *ParserSuite) TestUppercaseIfnull() {
 	s.assertStatement(
 		"IFNULL(a, b)",

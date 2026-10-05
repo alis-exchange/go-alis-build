@@ -31,8 +31,8 @@ func TestApplyUsesBufferWriteWhenTxPresent(t *testing.T) {
 	_ = Apply(ctx, nil, nil)
 }
 
-// TestSpannerTxFromContext_TypedNilGuard locks in the hardening called out
-// in the task brief directly: a typed-nil *spanner.ReadWriteTransaction
+// TestSpannerTxFromContext_TypedNilGuard locks in a hardening of
+// SpannerTxFromContext: a typed-nil *spanner.ReadWriteTransaction
 // stored in ctx must come back out as nil, not as a non-nil-looking typed
 // pointer that later selects the tx branch and panics deep inside Spanner
 // client code.

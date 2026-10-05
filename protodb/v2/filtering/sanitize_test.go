@@ -2,6 +2,8 @@ package filtering
 
 import "testing"
 
+// TestSanitizeNoSpaceEquals checks that '=' without surrounding spaces still
+// parses to a bound equality.
 func TestSanitizeNoSpaceEquals(t *testing.T) {
 	p, _ := NewParser()
 	stmt, err := p.Parse("app_name='x'")
@@ -13,6 +15,8 @@ func TestSanitizeNoSpaceEquals(t *testing.T) {
 	}
 }
 
+// TestSanitizePreservesLiterals checks that operators and keywords inside
+// single- or double-quoted literals are bound verbatim, not rewritten.
 func TestSanitizePreservesLiterals(t *testing.T) {
 	p, _ := NewParser()
 	for _, tc := range []struct{ filter, wantParam string }{
@@ -31,6 +35,8 @@ func TestSanitizePreservesLiterals(t *testing.T) {
 	}
 }
 
+// TestSanitizeStillHandlesOperators checks that >=, <=, != and == all still
+// parse after sanitizing.
 func TestSanitizeStillHandlesOperators(t *testing.T) {
 	p, _ := NewParser()
 	for _, f := range []string{"a >= 1", "a <= 1", "a != 'x'", "a == 'x'"} {

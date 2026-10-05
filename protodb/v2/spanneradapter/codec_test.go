@@ -7,6 +7,8 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
+// TestProtoCodecRoundtrip checks that ProtoCodec's Value returns the message scanned into a
+// valid NullDest.
 func TestProtoCodecRoundtrip(t *testing.T) {
 	c := ProtoCodec[*fieldmaskpb.FieldMask]()
 	d := c.NullDest()
@@ -19,6 +21,8 @@ func TestProtoCodecRoundtrip(t *testing.T) {
 	}
 }
 
+// TestProtoCodecFreshDestPerCall checks that each NullDest call returns a new destination, so
+// scans never share one.
 func TestProtoCodecFreshDestPerCall(t *testing.T) {
 	c := ProtoCodec[*fieldmaskpb.FieldMask]()
 	if c.NullDest() == c.NullDest() {
@@ -26,6 +30,7 @@ func TestProtoCodecFreshDestPerCall(t *testing.T) {
 	}
 }
 
+// TestInt64Codec checks that Int64Codec's Value returns the int64 held in a valid NullInt64 destination.
 func TestInt64Codec(t *testing.T) {
 	c := Int64Codec()
 	d := c.NullDest().(*spanner.NullInt64)
