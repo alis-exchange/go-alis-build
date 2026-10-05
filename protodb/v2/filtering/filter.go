@@ -10,6 +10,7 @@ import (
 	"github.com/google/cel-go/common"
 	"github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/parser"
+	expr "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
 // sanitizersRegex holds compiled regular expressions used to transform
@@ -202,35 +203,12 @@ func (f *Parser) Parse(filter string, params ...map[string]any) (*spanner.Statem
 		callerParams = params[0]
 	}
 
-	filter = f.sanitize(filter)
-
-	source := common.NewTextSource(filter)
-	p, err := parser.NewParser()
+	root, filter, err := f.parseFilter(filter)
 	if err != nil {
-		return nil, ErrInvalidFilter{
-			filter: filter,
-			err:    err,
-		}
+		return nil, err
 	}
 
-	parsed, errors := p.Parse(source)
-	if errors != nil && len(errors.GetErrors()) > 0 {
-		return nil, ErrInvalidFilter{
-			filter: filter,
-			err:    fmt.Errorf("%s", errors.ToDisplayString()),
-		}
-	}
-
-	// Convert AST to protobuf format
-	parsedExpr, err := ast.ToProto(parsed)
-	if err != nil {
-		return nil, ErrInvalidFilter{
-			filter: filter,
-			err:    err,
-		}
-	}
-
-	sql, stmtParams, _, err := f.parseExpr(parsedExpr.GetExpr(), &parseState{callerParams: callerParams})
+	sql, stmtParams, _, err := f.parseExpr(root, &parseState{callerParams: callerParams})
 	if err != nil {
 		return nil, ErrInvalidFilter{
 			filter: filter,
@@ -250,4 +228,28 @@ func (f *Parser) Parse(filter string, params ...map[string]any) (*spanner.Statem
 		SQL:    sql.(string),
 		Params: stmtParams,
 	}, nil
+}
+
+// parseFilter sanitizes filter and parses it into a CEL expression tree. It is
+// the step Parse and Compile share, so the SQL and in-memory paths accept
+// exactly the same grammar. It also returns the sanitized filter, which error
+// messages quote.
+func (f *Parser) parseFilter(filter string) (*expr.Expr, string, error) {
+	filter = f.sanitize(filter)
+
+	p, err := parser.NewParser()
+	if err != nil {
+		return nil, filter, ErrInvalidFilter{filter: filter, err: err}
+	}
+
+	parsed, errs := p.Parse(common.NewTextSource(filter))
+	if errs != nil && len(errs.GetErrors()) > 0 {
+		return nil, filter, ErrInvalidFilter{filter: filter, err: fmt.Errorf("%s", errs.ToDisplayString())}
+	}
+
+	parsedExpr, err := ast.ToProto(parsed)
+	if err != nil {
+		return nil, filter, ErrInvalidFilter{filter: filter, err: err}
+	}
+	return parsedExpr.GetExpr(), filter, nil
 }
