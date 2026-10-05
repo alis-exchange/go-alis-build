@@ -44,6 +44,8 @@ const (
 	// run exercise the same Spanner build.
 	emulatorImage = "gcr.io/cloud-spanner-emulator/emulator:1.5.56"
 
+	// The emulator tests run only when one of these is set: an existing
+	// emulator's address, or any value to start one in Docker.
 	emulatorHostEnv = "SPANNER_EMULATOR_HOST"
 	conformanceEnv  = "PROTODB_SPANNER_CONFORMANCE"
 

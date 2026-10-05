@@ -102,6 +102,8 @@ func (p *Predicate) eval(e *expr.Expr, resolve func(string) (any, error)) (any, 
 	}
 }
 
+// evalCall evaluates operators (logic, comparison, IN) and hands named
+// functions to evalFunction.
 func (p *Predicate) evalCall(call *expr.Expr_Call, resolve func(string) (any, error)) (any, error) {
 	switch call.GetFunction() {
 	case "_&&_", "_||_":
@@ -324,6 +326,8 @@ func (p *Predicate) evalArgs(name string, args []*expr.Expr, resolve func(string
 	return values, nil
 }
 
+// stringArg returns v as a string, or InvalidArgument naming function when
+// a string function receives another type.
 func stringArg(function string, v any) (string, error) {
 	s, ok := v.(string)
 	if !ok {
@@ -689,6 +693,9 @@ func selectPath(e *expr.Expr) (string, error) {
 	}
 }
 
+// unimplemented reports a filter construct the in-memory evaluator cannot
+// reproduce exactly, so callers get Unimplemented rather than a result that
+// could differ from Spanner.
 func unimplemented(construct string) error {
 	return status.Errorf(codes.Unimplemented, "filtering: %s is not supported by in-memory evaluation", construct)
 }

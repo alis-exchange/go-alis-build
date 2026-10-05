@@ -66,8 +66,10 @@ type Order struct {
 
 // ColumnOrder is one column of an order-by expression, in input order.
 type ColumnOrder struct {
+	// Column is the column name exactly as written in the expression.
 	Column string
-	Desc   bool
+	// Desc is true for a descending column (`desc`), false for ascending.
+	Desc bool
 }
 
 // NewOrder creates a new Order from an order-by expression string.

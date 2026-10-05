@@ -56,12 +56,16 @@ func Rows() []Row {
 // FilterCase is one List (or Stream) call over Rows and the keys it must
 // return. With PageSize set, WantPages lists the keys of each page in turn.
 type FilterCase struct {
-	Name      string
-	Filter    string
-	Params    map[string]any
+	Name   string
+	Filter string
+	// Params binds param('name') in Filter.
+	Params map[string]any
+	// PageSize pages through List; zero lists everything in one page.
 	PageSize  int32
 	WantPages [][]string
-	Stream    bool
+	// Stream runs the case through Stream instead of List; WantPages then
+	// holds a single page with every key.
+	Stream bool
 }
 
 // FilterCases returns the shared filter cases.
@@ -169,10 +173,13 @@ func OrderRows() []Row {
 
 // OrderCase is one paged List over OrderRows.
 type OrderCase struct {
-	Name      string
-	OrderBy   string
-	PageSize  int32
-	Tail      bool
+	Name     string
+	OrderBy  string
+	PageSize int32
+	// Tail lists from the end of the order, each page still in order.
+	Tail bool
+	// Stream runs the case through Stream instead of List; WantPages then
+	// holds a single page with every key.
 	Stream    bool
 	WantPages [][]string
 }

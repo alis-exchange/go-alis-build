@@ -33,6 +33,8 @@ func SpannerTxFromContext(ctx context.Context) *spanner.ReadWriteTransaction {
 // at service init with the shared *spanner.Client; pass the same runner to any
 // table operations that should participate in transactions.
 type SpannerTransactionRunner struct {
+	// Client starts new transactions. It must be non-nil; RunTransaction
+	// returns InvalidArgument otherwise, even for a call that would join.
 	Client *spanner.Client
 }
 

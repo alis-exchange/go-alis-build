@@ -96,7 +96,10 @@ func (s *stringKeySpec) Encode(key protodb.Key) (string, error) { return encodeK
 // KeySpecOption configures KeySpecFor.
 type KeySpecOption func(*keySpecOpts)
 
+// keySpecOpts collects the KeySpecFor options.
 type keySpecOpts struct {
+	// parentCols is the number of leading key columns ParentFilter
+	// matches; see WithParentColumns for the values accepted.
 	parentCols int
 }
 
@@ -123,6 +126,8 @@ const (
 	kindTime
 )
 
+// The reflect.Types fieldKindOf matches exactly: a named type built on one
+// of these (type ID string) is not accepted.
 var (
 	stringType  = reflect.TypeOf("")
 	int64Type   = reflect.TypeOf(int64(0))
@@ -131,6 +136,8 @@ var (
 	timeType    = reflect.TypeOf(time.Time{})
 )
 
+// fieldKindOf maps a key struct field's type to its fieldKind, or returns an
+// error naming the type when it is not one of the supported scalars.
 func fieldKindOf(t reflect.Type) (fieldKind, error) {
 	switch t {
 	case stringType:
