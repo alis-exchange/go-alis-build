@@ -1,0 +1,8 @@
+Task: order memadapter List/Stream by Config.Columns.
+
+Changes: orderCol carries a Columns func; effectiveOrder resolves KeyColumns then Columns; tupleFor computes column values per row; orderValue widens by reflect kind; checkColumnTypes rejects mixed types; compareValue sorts nil first; querytest OrderRows/OrderCases (asc/desc, NULL placement, ties, PageSize 1 nil cursor, Tail, Stream) and RunOrder; memadapter tests for bad types, widening, enums/uint64, mixed types.
+
+Files: protodb/v2/memadapter/{memadapter.go,memadapter_test.go,query_test.go}, protodb/v2/internal/querytest/querytest.go
+
+Why: lets the resources block order revisions by create_time in memadapter tests, as spanneradapter does with generated columns.
+Verification: verifier round 1 found widening/mixed-type gaps, fixed with red tests; round 2 approved.
