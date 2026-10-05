@@ -1,0 +1,7 @@
+Task: reject <, <=, >, >= against null in the protodb/v2 filter parser.
+
+Changes: parser.go guards the four ordering operators with isNullConst and returns an error that Parse wraps as ErrInvalidFilter; filter_test.go adds TestNullInOrderingComparisonIsInvalid (null on either side).
+
+Files: protodb/v2/filtering/parser.go, protodb/v2/filtering/filter_test.go
+
+Why: an ordering comparison with NULL is never true in Spanner, so silently emitting SQL hid a caller mistake.
