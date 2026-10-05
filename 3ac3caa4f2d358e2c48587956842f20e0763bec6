@@ -1,0 +1,8 @@
+Task: filter memadapter List/Stream rows before paging.
+
+Changes: Config.ResourceColumn, FilterIdentifiers, Columns (non-generic); Table builds a filtering.Parser; compileFilter; orderedSnapshot copies entries under lock, evaluates the predicate outside it, then sorts; filter.go resolver (KeyColumns, key fallback, resource paths via protoreflect, Columns) with NULL for nil resources, unset messages and presence fields, uint64 as int64; internal/querytest shared cases; memadapter tests for paths, presence, unsigned, nil resource, Tail, unsupported constructs.
+
+Files: protodb/v2/memadapter/{memadapter.go,filter.go,memadapter_test.go,query_test.go}, protodb/v2/internal/querytest/querytest.go
+
+Why: the resources block runs generated tests on memadapter and needs filters (and delete_time = NULL push-down) to work there.
+Verification: verifier round 1 found 3 bugs (key column order, uint64, nil resource), fixed with red tests; round 2 approved.
