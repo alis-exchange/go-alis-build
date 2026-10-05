@@ -731,28 +731,71 @@ func (s *ParserSuite) TestFilterWithSelectExprAndFunctions() {
 // NULL Handling Tests
 // =============================================================================
 
+// assertStatementWith is assertStatement against a parser built from
+// identifiers, for cases that must not alter the shared suite parser.
+func (s *ParserSuite) assertStatementWith(identifiers []Identifier, filter, expectedSQL string, expectedParams map[string]any) {
+	p, err := NewParser(identifiers...)
+	s.Require().NoError(err)
+	stmt, err := p.Parse(filter)
+	s.Require().NoError(err, filter)
+	s.Equal(expectedSQL, stmt.SQL, filter)
+	s.Equal(expectedParams, stmt.Params, filter)
+}
+
 func (s *ParserSuite) TestNullEquality() {
-	s.assertStatement(
-		"name == null",
-		"name = @p0",
-		map[string]any{"p0": "NULL"},
-	)
+	s.assertStatement("name == null", "name IS NULL", map[string]any{})
 }
 
 func (s *ParserSuite) TestNullInequality() {
-	s.assertStatement(
-		"name != null",
-		"name != @p0",
-		map[string]any{"p0": "NULL"},
-	)
+	s.assertStatement("name != null", "name IS NOT NULL", map[string]any{})
 }
 
 func (s *ParserSuite) TestNullKeyword() {
-	s.assertStatement(
-		"name == NULL",
-		"name = @p0",
-		map[string]any{"p0": "NULL"},
+	s.assertStatement("name == NULL", "name IS NULL", map[string]any{})
+	s.assertStatement("name = NULL", "name IS NULL", map[string]any{})
+	s.assertStatement("name = null", "name IS NULL", map[string]any{})
+}
+
+func (s *ParserSuite) TestNullOnLeft() {
+	s.assertStatement("null == name", "name IS NULL", map[string]any{})
+	s.assertStatement("NULL != name", "name IS NOT NULL", map[string]any{})
+}
+
+func (s *ParserSuite) TestNullBothSides() {
+	s.assertStatement("null == null", "NULL IS NULL", map[string]any{})
+	s.assertStatement("null != null", "NULL IS NOT NULL", map[string]any{})
+}
+
+// A constant compared with null is still bound, never spliced into SQL.
+func (s *ParserSuite) TestNullAgainstConstantStaysBound() {
+	s.assertStatement("null == 'x OR TRUE'", "@p0 IS NULL", map[string]any{"p0": "x OR TRUE"})
+	s.assertStatement("1 != null", "@p0 IS NOT NULL", map[string]any{"p0": int64(1)})
+}
+
+func (s *ParserSuite) TestNullOnTimestampIdentifier() {
+	s.assertStatementWith(
+		[]Identifier{Timestamp("Proto.delete_time")},
+		"Proto.delete_time = NULL",
+		"TIMESTAMP_ADD(TIMESTAMP_SECONDS(Proto.delete_time.seconds),INTERVAL CAST(FLOOR(IFNULL(Proto.delete_time.nanos,0) / 1000) AS INT64) MICROSECOND) IS NULL",
+		map[string]any{},
 	)
+}
+
+func (s *ParserSuite) TestNullCombinedWithEnum() {
+	s.assertStatementWith(
+		[]Identifier{Timestamp("Proto.delete_time"), EnumString("Proto.state", "test.State")},
+		"Proto.state = 'ACTIVE' AND Proto.delete_time = NULL",
+		"(CAST(Proto.state AS STRING) = @p0 AND TIMESTAMP_ADD(TIMESTAMP_SECONDS(Proto.delete_time.seconds),INTERVAL CAST(FLOOR(IFNULL(Proto.delete_time.nanos,0) / 1000) AS INT64) MICROSECOND) IS NULL)",
+		map[string]any{"p0": "ACTIVE"},
+	)
+}
+
+func (s *ParserSuite) TestNullStringLiteralStillBinds() {
+	s.assertStatement("name = 'NULL'", "name = @p0", map[string]any{"p0": "NULL"})
+}
+
+func (s *ParserSuite) TestNullInsideIfnullUnchanged() {
+	s.assertStatement("IFNULL(nickname, 'N/A') = 'x'", "IFNULL(nickname, @p0) = @p1", map[string]any{"p0": "N/A", "p1": "x"})
 }
 
 // =============================================================================

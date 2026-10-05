@@ -184,6 +184,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s <= @%s", leftSQL, paramName), params, false, nil
 		case "_==_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return f.parseNullTest(call, false, state)
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
@@ -207,6 +210,9 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 			params[paramName] = rightSQL
 			return fmt.Sprintf("%s = @%s", leftSQL, paramName), params, false, nil
 		case "_!=_":
+			if isNullConst(call.Args[0]) || isNullConst(call.Args[1]) {
+				return f.parseNullTest(call, true, state)
+			}
 			leftSQL, _, _, err := f.parseExpr(call.Args[0], state)
 			if err != nil {
 				return "", nil, false, err
@@ -228,7 +234,6 @@ func (f *Parser) parseExpr(expression *expr.Expr, state *parseState) (any, map[s
 
 			paramName := fmt.Sprintf("p%d", len(params))
 			params[paramName] = rightSQL
-			// TODO: Handle comparison of different types e.g NULL, FALSE
 			return fmt.Sprintf("%s != @%s", leftSQL, paramName), params, false, nil
 		case "timestamp", "TIMESTAMP":
 			paramName := fmt.Sprintf("p%d", len(params))
@@ -517,7 +522,8 @@ func (f *Parser) parseMultiArgFunction(fnName string, args []*expr.Expr, state *
 //   - Int64Value: Returns int64
 //   - BytesValue: Returns base64-encoded string
 //   - DoubleValue: Returns float64
-//   - NullValue: Returns the string "NULL"
+//   - NullValue: Returns the string "NULL". Comparisons with == and != never
+//     reach here for null: parseNullTest renders them as IS NULL / IS NOT NULL.
 //
 // Unsupported constant types (return error):
 //   - DurationValue: Use duration() function instead
@@ -598,4 +604,54 @@ func (f *Parser) parseIdentifier(sql string) string {
 	}
 
 	return sql
+}
+
+// isNullConst reports whether e is the CEL null literal. The string literal
+// 'NULL' is not null and must keep binding as a parameter, so the check is on
+// the AST node, never on rendered text.
+func isNullConst(e *expr.Expr) bool {
+	_, ok := e.GetConstExpr().GetConstantKind().(*expr.Constant_NullValue)
+	return ok
+}
+
+// parseNullTest renders `<operand> IS NULL` (or IS NOT NULL when not is set)
+// for an == or != comparison where at least one side is the null literal.
+// Spanner never makes `x = NULL` true, so this is the only way to test for an
+// unset value.
+func (f *Parser) parseNullTest(call *expr.Expr_Call, not bool, state *parseState) (any, map[string]any, bool, error) {
+	operand := call.Args[0]
+	if isNullConst(operand) {
+		operand = call.Args[1]
+	}
+
+	sql := "NULL"
+	switch {
+	case isNullConst(operand):
+	case operand.GetConstExpr() != nil:
+		// A constant must stay a bound parameter: splicing it would let
+		// `null == 'x OR TRUE'` inject SQL.
+		value, err := f.parseConstant(operand.GetConstExpr())
+		if err != nil {
+			return "", nil, false, err
+		}
+		paramName := fmt.Sprintf("p%d", len(state.params))
+		state.params[paramName] = value
+		sql = "@" + paramName
+	default:
+		rendered, _, _, err := f.parseExpr(operand, state)
+		if err != nil {
+			return "", nil, false, err
+		}
+		// Identifiers, selects and functions all render to SQL strings.
+		renderedSQL, ok := rendered.(string)
+		if !ok {
+			return "", nil, false, fmt.Errorf("cannot compare %v with null", rendered)
+		}
+		sql = f.parseIdentifier(renderedSQL)
+	}
+
+	if not {
+		return sql + " IS NOT NULL", state.params, false, nil
+	}
+	return sql + " IS NULL", state.params, false, nil
 }
