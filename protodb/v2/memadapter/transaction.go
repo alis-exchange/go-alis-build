@@ -128,14 +128,16 @@ func NewTransactionRunner() protodb.TransactionRunner {
 // them back by restoring every live table's pre-fn snapshot when fn
 // returns a non-nil error — see NewTransactionRunner.
 //
-// Nested calls are unsupported and WILL DEADLOCK: fn must not call
-// RunTransaction again (on this or any other memadapter runner) with the
-// ctx it was given, or with a derivative of it — mu is already held for
-// the outer call, sync.Mutex is not reentrant, and the inner RunTransaction
-// would block forever trying to lock it. Table operations are fine to
-// nest (that's the whole point of the ctx marker); RunTransaction itself
-// is not.
+// A nested call — RunTransaction on any memadapter runner with the ctx fn
+// was given, or one derived from it — joins the outer transaction: it runs
+// its fn directly, taking no lock and no snapshot, because the outer call
+// already holds mu and owns the snapshot. The inner fn's writes commit or
+// roll back with the outer transaction. An inner error the outer fn
+// swallows does not undo the inner writes; return it to roll back.
 func (transactionRunner) RunTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	if ctx.Value(transactionMarkerKey{}) != nil {
+		return fn(ctx)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 

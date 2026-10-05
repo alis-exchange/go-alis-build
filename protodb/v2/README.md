@@ -585,8 +585,9 @@ func TestBookService_Create(t *testing.T) {
 - **Filters and non-key ordering are opt-in.** Without `Config.ResourceColumn`, a non-empty
   `Filter` returns `Unimplemented`; without `Config.Columns`, ordering by a non-key column does
   too. See below.
-- **Isolation, not rollback.** `memadapter.NewTransactionRunner()` provides atomicity by holding
-  one package-global mutex for `fn`'s entire execution — not a real rollback mechanism. `fn`
+- **One transaction at a time, no retries.** `memadapter.NewTransactionRunner()` holds one
+  package-global mutex for `fn`'s entire execution and restores every table's snapshot if `fn`
+  returns an error. A nested `RunTransaction` joins the outer one, as with `spanneradapter`. `fn`
   runs exactly once (no abort/retry simulation), which is a valid degenerate case of
   `ReadModifyWrite`'s "may run more than once" contract, but means memadapter cannot exercise
   retry-related bugs.

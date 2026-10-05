@@ -830,3 +830,71 @@ func TestMemOrderByOtherMessageColumnIsFailedPrecondition(t *testing.T) {
 		t.Fatalf("got %v, want FailedPrecondition", err)
 	}
 }
+
+// runNested runs outer (which calls RunTransaction again inside) and fails
+// the test if it does not return within 5 seconds, which is how a deadlock
+// on the package-global lock shows up.
+func runNested(t *testing.T, outer func(ctx context.Context) error) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- outer(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		t.Fatal("nested RunTransaction deadlocked")
+		return nil
+	}
+}
+
+func TestMemNestedTransactionJoins(t *testing.T) {
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
+	runner := memadapter.NewTransactionRunner()
+	err := runNested(t, func(ctx context.Context) error {
+		return runner.RunTransaction(ctx, func(ctx context.Context) error {
+			if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("outer"), Resource: "1"}); err != nil {
+				return err
+			}
+			return runner.RunTransaction(ctx, func(ctx context.Context) error {
+				return tbl.Create(ctx, &protodb.Row[string]{Key: strKey("inner"), Resource: "2"})
+			})
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"outer", "inner"} {
+		if _, err := tbl.Read(context.Background(), strKey(k)); err != nil {
+			t.Errorf("%s not committed: %v", k, err)
+		}
+	}
+}
+
+func TestMemNestedTransactionErrorRollsBackBoth(t *testing.T) {
+	tbl := memadapter.New[string](memadapter.Config{KeyColumns: []string{"key"}})
+	runner := memadapter.NewTransactionRunner()
+	wantErr := errors.New("inner failed")
+	err := runNested(t, func(ctx context.Context) error {
+		return runner.RunTransaction(ctx, func(ctx context.Context) error {
+			if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("outer"), Resource: "1"}); err != nil {
+				return err
+			}
+			return runner.RunTransaction(ctx, func(ctx context.Context) error {
+				if err := tbl.Create(ctx, &protodb.Row[string]{Key: strKey("inner"), Resource: "2"}); err != nil {
+					return err
+				}
+				return wantErr
+			})
+		})
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("got %v, want %v", err, wantErr)
+	}
+	for _, k := range []string{"outer", "inner"} {
+		if _, err := tbl.Read(context.Background(), strKey(k)); !protodb.IsNotFound(err) {
+			t.Errorf("%s survived the rolled-back transaction: %v", k, err)
+		}
+	}
+}
