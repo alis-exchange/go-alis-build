@@ -687,3 +687,106 @@ func TestMemFilterWithTail(t *testing.T) {
 		t.Fatalf("got %v, want the last two matches [c e]", got)
 	}
 }
+
+// orderedNames lists every row of tbl in orderBy order and returns their keys.
+func orderedNames(t *testing.T, tbl *memadapter.Table[string], orderBy string) ([]string, error) {
+	t.Helper()
+	rows, _, err := tbl.List(context.Background(), protodb.ListOptions{OrderBy: orderBy})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Key.KeyValues()[0].(string)
+	}
+	return out, nil
+}
+
+func TestMemOrderByColumnBadTypeIsFailedPrecondition(t *testing.T) {
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns:    map[string]func(protodb.Key, any) any{"bad": func(protodb.Key, any) any { return struct{}{} }},
+	})
+	if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey("a"), Resource: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orderedNames(t, tbl, "bad"); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("got %v, want FailedPrecondition", err)
+	}
+}
+
+// TestMemOrderByColumnWidensNumbers checks that int32 and float32 column
+// values order numerically after widening to int64 and float64.
+func TestMemOrderByColumnWidensNumbers(t *testing.T) {
+	ints := map[string]int32{"a": 3, "b": 1, "c": 2}
+	floats := map[string]float32{"a": 3.5, "b": 1.5, "c": 2.5}
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns: map[string]func(protodb.Key, any) any{
+			"i": func(k protodb.Key, _ any) any { return ints[k.KeyValues()[0].(string)] },
+			"f": func(k protodb.Key, _ any) any { return floats[k.KeyValues()[0].(string)] },
+		},
+	})
+	for _, k := range []string{"a", "b", "c"} {
+		if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey(k), Resource: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, col := range []string{"i", "f"} {
+		got, err := orderedNames(t, tbl, col)
+		if err != nil || !reflect.DeepEqual(got, []string{"b", "c", "a"}) {
+			t.Errorf("OrderBy %s: got %v, %v; want [b c a]", col, got, err)
+		}
+	}
+}
+
+// TestMemOrderByColumnWidensIntegerKinds covers named integer types such as
+// proto enums, and unsigned integers.
+func TestMemOrderByColumnWidensIntegerKinds(t *testing.T) {
+	states := map[string]databasepb.Backup_State{
+		"a": databasepb.Backup_READY,
+		"b": databasepb.Backup_STATE_UNSPECIFIED,
+		"c": databasepb.Backup_CREATING,
+	}
+	sizes := map[string]uint64{"a": 30, "b": 10, "c": 20}
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns: map[string]func(protodb.Key, any) any{
+			"state": func(k protodb.Key, _ any) any { return states[k.KeyValues()[0].(string)] },
+			"size":  func(k protodb.Key, _ any) any { return sizes[k.KeyValues()[0].(string)] },
+		},
+	})
+	for _, k := range []string{"a", "b", "c"} {
+		if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey(k), Resource: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, col := range []string{"state", "size"} {
+		got, err := orderedNames(t, tbl, col)
+		if err != nil || !reflect.DeepEqual(got, []string{"b", "c", "a"}) {
+			t.Errorf("OrderBy %s: got %v, %v; want [b c a]", col, got, err)
+		}
+	}
+}
+
+func TestMemOrderByColumnMixedTypesIsFailedPrecondition(t *testing.T) {
+	tbl := memadapter.New[string](memadapter.Config{
+		KeyColumns: []string{"key"},
+		Columns: map[string]func(protodb.Key, any) any{
+			"mixed": func(k protodb.Key, _ any) any {
+				if k.KeyValues()[0] == "a" {
+					return "x"
+				}
+				return int64(1)
+			},
+		},
+	})
+	for _, k := range []string{"a", "b"} {
+		if err := tbl.Create(context.Background(), &protodb.Row[string]{Key: strKey(k), Resource: k}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := orderedNames(t, tbl, "mixed"); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("got %v, want FailedPrecondition", err)
+	}
+}

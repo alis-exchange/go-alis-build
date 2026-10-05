@@ -49,6 +49,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"iter"
+	"math"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -451,10 +453,13 @@ func (t *Table[R]) Stream(ctx context.Context, opts protodb.StreamOptions) iter.
 var errFilterUnimplemented = status.Error(codes.Unimplemented,
 	"memadapter: List/Stream Filter needs Config.ResourceColumn; only Filter == \"\" is supported without it")
 
-// orderCol is one column of a resolved effective order: an index into a
-// key's KeyValues() (per Config.KeyColumns) plus a sort direction.
+// orderCol is one column of a resolved effective order: either an index
+// into a key's KeyValues() (per Config.KeyColumns) or a Config.Columns
+// function, plus a sort direction.
 type orderCol struct {
 	idx  int
+	name string
+	col  func(key protodb.Key, resource any) any // nil for a key column
 	desc bool
 }
 
@@ -462,12 +467,10 @@ type orderCol struct {
 // served by inverting the order and paging forward — see List), and
 // appends every key column it doesn't already mention as a tiebreaker
 // (following the inversion, so the whole clause reads in one direction).
-// This mirrors spanneradapter.StatementBuilder.effectiveOrder, with one
-// difference forced by memadapter having no schema beyond the key: every
-// column named in orderBy MUST be a key column (resolved via
-// Config.KeyColumns), or effectiveOrder fails loudly with Unimplemented —
-// memadapter cannot order by a column it doesn't know how to read a value
-// for.
+// This mirrors spanneradapter.StatementBuilder.effectiveOrder. Each column
+// named in orderBy must be a key column (Config.KeyColumns) or a computed
+// column (Config.Columns); any other column fails loudly with Unimplemented,
+// since memadapter has no other way to read a value for it.
 func (t *Table[R]) effectiveOrder(orderBy string, tail bool) ([]orderCol, error) {
 	parsed, err := ordering.NewOrder(orderBy)
 	if err != nil {
@@ -483,17 +486,23 @@ func (t *Table[R]) effectiveOrder(orderBy string, tail bool) ([]orderCol, error)
 	seen := make(map[string]bool, len(cols))
 	for _, c := range cols {
 		idx := slices.Index(t.cfg.KeyColumns, c.Column)
-		if idx < 0 {
+		if idx >= 0 {
+			order = append(order, orderCol{idx: idx, name: c.Column, desc: c.Desc})
+			seen[c.Column] = true
+			continue
+		}
+		fn, ok := t.cfg.Columns[c.Column]
+		if !ok {
 			return nil, status.Errorf(codes.Unimplemented,
-				"memadapter: OrderBy column %q is not a key column; memadapter can only order by key columns %v (ordering by non-key columns is not implemented)",
+				"memadapter: OrderBy column %q is neither a key column %v nor a Config.Columns column",
 				c.Column, t.cfg.KeyColumns)
 		}
-		order = append(order, orderCol{idx: idx, desc: c.Desc})
+		order = append(order, orderCol{name: c.Column, col: fn, desc: c.Desc})
 		seen[c.Column] = true
 	}
 	for i, kc := range t.cfg.KeyColumns {
 		if !seen[kc] {
-			order = append(order, orderCol{idx: i, desc: tail})
+			order = append(order, orderCol{idx: i, name: kc, desc: tail})
 		}
 	}
 	return order, nil
@@ -537,22 +546,101 @@ func (t *Table[R]) orderedSnapshot(
 				continue
 			}
 		}
-		rows = append(rows, snapshotRow[R]{e: e, tuple: tupleFor(order, e.key.KeyValues())})
+		tuple, err := tupleFor(order, e)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, snapshotRow[R]{e: e, tuple: tuple})
 	}
 
+	if err := checkColumnTypes(order, rows); err != nil {
+		return nil, err
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		return orderCompare(order, rows[i].tuple, rows[j].tuple) < 0
 	})
 	return rows, nil
 }
 
-// tupleFor projects keyValues down to order's columns, in order.
-func tupleFor(order []orderCol, keyValues []any) []any {
+// tupleFor computes e's value for each of order's columns, in order: a key
+// value, or a Config.Columns value normalised by orderValue.
+func tupleFor[R any](order []orderCol, e *entry[R]) ([]any, error) {
+	keyValues := e.key.KeyValues()
 	out := make([]any, len(order))
 	for i, c := range order {
-		out[i] = keyValues[c.idx]
+		if c.col == nil {
+			out[i] = keyValues[c.idx]
+			continue
+		}
+		v, err := orderValue(c.name, c.col(e.key, e.resource))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
 	}
-	return out
+	return out, nil
+}
+
+// orderValue normalises a Config.Columns value for sorting and page tokens:
+// nil and time.Time are kept, and any value whose kind is a string, bool,
+// integer or float (including named types such as proto enums) becomes a
+// string, bool, int64 or float64. Anything else, or an unsigned value too
+// large for int64, is FailedPrecondition.
+func orderValue(column string, v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	if t, ok := v.(time.Time); ok {
+		return t, nil
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Bool:
+		return rv.Bool(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int(), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		u := rv.Uint()
+		if u > math.MaxInt64 {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"memadapter: Config.Columns[%q] returned %d, which does not fit in an int64", column, u)
+		}
+		return int64(u), nil
+	case reflect.Float32, reflect.Float64:
+		return rv.Float(), nil
+	default:
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"memadapter: Config.Columns[%q] returned %T; ordering needs nil, a string, a number, a bool or a time.Time", column, v)
+	}
+}
+
+// checkColumnTypes rejects a computed order column whose non-NULL values do
+// not all share one type: compareValue cannot order mixed types meaningfully,
+// and Spanner columns are typed, so this is a Config.Columns bug.
+func checkColumnTypes[R any](order []orderCol, rows []snapshotRow[R]) error {
+	for i, c := range order {
+		if c.col == nil {
+			continue
+		}
+		var first reflect.Type
+		for _, r := range rows {
+			if r.tuple[i] == nil {
+				continue
+			}
+			t := reflect.TypeOf(r.tuple[i])
+			if first == nil {
+				first = t
+				continue
+			}
+			if t != first {
+				return status.Errorf(codes.FailedPrecondition,
+					"memadapter: Config.Columns[%q] returned both %s and %s; a column must return one type", c.name, first, t)
+			}
+		}
+	}
+	return nil
 }
 
 // orderCompare compares two tuples produced by tupleFor for the same
@@ -575,13 +663,24 @@ func orderCompare(order []orderCol, a, b []any) int {
 	return 0
 }
 
-// compareValue compares two key values of the same column. Supported
-// types are the five protodb key field types (mirroring
+// compareValue compares two values of the same order column: key values or
+// Config.Columns values (see orderValue). Supported types are nil (NULL,
+// sorting first) and the five protodb key field types (mirroring
 // spanneradapter.KeySpecFor): string, int64, bool, float64, and
 // time.Time. Any other type falls back to comparing fmt.Sprint(a) against
 // fmt.Sprint(b) — deterministic but not a meaningful ordering — so a
 // stray unsupported type degrades sort quality rather than panicking.
 func compareValue(a, b any) int {
+	// NULL sorts before every value, as in Spanner: first ascending, and
+	// last once orderCompare flips the result for a descending column.
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	}
 	switch av := a.(type) {
 	case string:
 		bv, _ := b.(string)

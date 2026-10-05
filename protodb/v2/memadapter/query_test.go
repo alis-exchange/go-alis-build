@@ -21,13 +21,34 @@ func backupConfig() memadapter.Config {
 	for p, enum := range querytest.EnumPaths {
 		ids = append(ids, filtering.EnumString(p, enum))
 	}
-	return memadapter.Config{KeyColumns: []string{"key"}, ResourceColumn: "Backup", FilterIdentifiers: ids}
+	return memadapter.Config{
+		KeyColumns:        []string{"key"},
+		ResourceColumn:    "Backup",
+		FilterIdentifiers: ids,
+		Columns:           map[string]func(protodb.Key, any) any{"create_time": createTime},
+	}
+}
+
+// createTime is the "create_time" column: Backup.create_time, or NULL.
+func createTime(_ protodb.Key, r any) any {
+	b, _ := r.(*databasepb.Backup)
+	if b.GetCreateTime() == nil {
+		return nil
+	}
+	return b.GetCreateTime().AsTime()
 }
 
 // TestQueryCases runs the filter cases the Spanner emulator also runs, so
 // both adapters must return the same rows.
 func TestQueryCases(t *testing.T) {
 	querytest.Run(t, func(t *testing.T) protodb.ResourceTable[*databasepb.Backup] {
+		return memadapter.New[*databasepb.Backup](backupConfig())
+	}, func(k string) protodb.Key { return strKey(k) })
+}
+
+// TestOrderCases runs the ordering cases the Spanner emulator also runs.
+func TestOrderCases(t *testing.T) {
+	querytest.RunOrder(t, func(t *testing.T) protodb.ResourceTable[*databasepb.Backup] {
 		return memadapter.New[*databasepb.Backup](backupConfig())
 	}, func(k string) protodb.Key { return strKey(k) })
 }
