@@ -10,6 +10,10 @@ import (
 	expr "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Predicate is a compiled filter that evaluates rows in memory, with the same
@@ -473,9 +477,16 @@ func (p *Predicate) evalIn(left, list *expr.Expr, resolve func(string) (any, err
 	return false, nil
 }
 
-// normalize converts a resolved value into the evaluator's value model.
-func (p *Predicate) normalize(_ string, raw any) (any, error) {
+// normalize converts a resolved value into the evaluator's value model, the
+// way the SQL path renders the same column: Timestamps become time.Time,
+// Durations float seconds, google.type.Date a UTC-midnight time.Time, and
+// enums their name or number when path is registered with EnumString or
+// EnumInteger. Other messages stay as they are: they can be tested for
+// NULL but not compared.
+func (p *Predicate) normalize(path string, raw any) (any, error) {
 	switch v := raw.(type) {
+	case nil:
+		return nil, nil
 	case int:
 		return int64(v), nil
 	case int8:
@@ -492,9 +503,45 @@ func (p *Predicate) normalize(_ string, raw any) (any, error) {
 		return int64(v), nil
 	case float32:
 		return float64(v), nil
+	case protoreflect.EnumNumber:
+		return int64(v), nil
+	case protoreflect.EnumValueDescriptor:
+		switch p.parser.identifiers[path].(type) {
+		case enumStringIdentifier:
+			return string(v.Name()), nil
+		case enumIntegerIdentifier:
+			return int64(v.Number()), nil
+		default:
+			return v, nil
+		}
+	case proto.Message:
+		return normalizeMessage(v)
 	default:
 		return raw, nil
 	}
+}
+
+// normalizeMessage converts the well-known value messages; an unset (nil or
+// invalid) message is NULL.
+func normalizeMessage(m proto.Message) (any, error) {
+	r := m.ProtoReflect()
+	if !r.IsValid() {
+		return nil, nil
+	}
+	switch v := m.(type) {
+	case *timestamppb.Timestamp:
+		return v.AsTime(), nil
+	case *durationpb.Duration:
+		return v.AsDuration().Seconds(), nil
+	}
+	if r.Descriptor().FullName() == "google.type.Date" {
+		fields := r.Descriptor().Fields()
+		year := r.Get(fields.ByName("year")).Int()
+		month := r.Get(fields.ByName("month")).Int()
+		day := r.Get(fields.ByName("day")).Int()
+		return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), nil
+	}
+	return m, nil
 }
 
 // and applies SQL's three-valued AND to true, false and nil (unknown).
@@ -522,6 +569,9 @@ func or(a, b any) any {
 // compare orders two non-NULL values of compatible types. int64 and float64
 // compare numerically with each other, as Spanner coerces them.
 func compare(a, b any) (int, error) {
+	if m, ok := b.(proto.Message); ok {
+		return 0, unimplemented(fmt.Sprintf("comparing message %s", m.ProtoReflect().Descriptor().FullName()))
+	}
 	switch av := a.(type) {
 	case string:
 		if bv, ok := b.(string); ok {
@@ -560,6 +610,17 @@ func compare(a, b any) (int, error) {
 		if bv, ok := b.([]byte); ok {
 			return bytes.Compare(av, bv), nil
 		}
+	case protoreflect.EnumValueDescriptor:
+		// An enum not registered as EnumString/EnumInteger compares by name
+		// against a string and by number against an integer.
+		switch bv := b.(type) {
+		case string:
+			return strings.Compare(string(av.Name()), bv), nil
+		case int64:
+			return cmpOrdered(int64(av.Number()), bv), nil
+		}
+	case proto.Message:
+		return 0, unimplemented(fmt.Sprintf("comparing message %s", av.ProtoReflect().Descriptor().FullName()))
 	}
 	return 0, status.Errorf(codes.InvalidArgument, "filtering: cannot compare %T with %T", a, b)
 }
