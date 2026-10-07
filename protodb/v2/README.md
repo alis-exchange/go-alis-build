@@ -662,31 +662,85 @@ adapter. Run it against `memadapter` unconditionally (fast, no external dependen
 against a Spanner-backed table gated behind an environment variable (emulator or a CI-provisioned
 database, at the consumer's discretion) since it needs a live backend.
 
+### `protobundle` and `spannertest`: testing your tables on the emulator
+
+Two packages turn the Spanner-emulator setup every consumer used to hand-write into one call.
+
+- **`protobundle`** builds the proto bundle a database needs before a table can declare PROTO
+  or ENUM columns. `protobundle.New(roots...)` follows every message- and enum-typed field from
+  the root messages, nested enums included and map entries skipped, and gives you the
+  `CREATE PROTO BUNDLE` statement (`CreateStatement`) and the `FileDescriptorSet` bytes
+  (`Descriptors`). It reads the registry linked into your binary, so no `.proto` files or
+  `protoc` are needed, and it has no test or Docker dependencies, so migration code can use it
+  too.
+- **`spannertest`** finds or starts an emulator and gives each test a fresh database.
+  `spannertest.NewDatabase(t, bundle, ddl...)` returns a `*spanner.Client` and drops the
+  database when the test ends.
+
+```go
+func TestShelves(t *testing.T) {
+	bundle, err := protobundle.New(&librarypb.Shelf{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := spannertest.NewDatabase(t, bundle,
+		"CREATE TABLE Shelves (`key` STRING(MAX) NOT NULL, Shelf `alis.library.v1.Shelf`, "+
+			"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Shelf.create_time.seconds)) STORED) PRIMARY KEY (`key`)")
+	// Build the table under test on client.
+}
+```
+
+`librarypb.Shelf` stands in for your own resource message.
+
+The emulator tests are opt-in, so a plain `go test` needs no Docker:
+
+| Variable | Behaviour |
+|---|---|
+| `SPANNER_EMULATOR_HOST` set | Use that emulator; no container is started. |
+| else `SPANNERTEST_EMULATOR` non-empty | Start one emulator for the whole test binary with [testcontainers-go](https://golang.testcontainers.org) (Docker required). A container that cannot start fails the test. |
+| `SPANNERTEST_EMULATOR_IMAGE` | Override the pinned image, `spannertest.DefaultImage`. |
+| neither | `t.Skip`. |
+
+The testcontainers reaper removes the container when the test binary exits. With
+`TESTCONTAINERS_RYUK_DISABLED=true` it stays running and has to be removed by hand.
+
+**Code that builds its own Spanner client.** `spannertest` never sets `SPANNER_EMULATOR_HOST`:
+the client it returns connects through explicit options, so tests may call `t.Parallel()`. Most
+services create their own client from the environment instead. For those, set the variable in
+the test (which then must not be parallel) and hand over the database name:
+
+```go
+client := spannertest.NewDatabase(t, bundle, ddl...)
+t.Setenv("SPANNER_EMULATOR_HOST", spannertest.Host(t))
+svc := newService(ctx, client.DatabaseName())
+```
+
+**The emulator cannot read 32-bit integer proto fields** (int32, uint32, sint32, fixed32,
+sfixed32), such as `google.protobuf.Timestamp.nanos`. A STORED generated column that reads one
+makes every write fail with an opaque `Unexpected error in RPC handling`, so `NewDatabase`
+rejects such a column, or a CHECK constraint reading one, before creating anything, and names
+the table, column and path. Read `.seconds` instead, as above. Queries that read such a field
+fail with `Type not found: INT32` or `UINT32`; wrap errors with `spannertest.Explain(err)` to
+get the same hint.
+
 ### Running the Spanner conformance test
 
 This repository does exactly that for itself: `spanneradapter`'s own test package builds a
 reference `ResourceTable[string]` out of the building blocks above (the "shape of a consumer
 table" sketch, materialized) and runs the `protodbtest` suite against a real Spanner, plus a
-multi-column tied-order pagination check that executes the null-safe keyset cursor for real. It
-is skipped by default — it needs a live backend — and honours two gates, in this order:
-
-| Gate | Behaviour |
-|---|---|
-| `SPANNER_EMULATOR_HOST` set | Use that emulator; no container is started. |
-| else `PROTODB_SPANNER_CONFORMANCE` non-empty | Start the Cloud Spanner emulator with [testcontainers-go](https://golang.testcontainers.org) (Docker required) and point the clients at it. |
-| else | `t.Skip`. |
+multi-column tied-order pagination check that executes the null-safe keyset cursor for real.
+Its databases come from `spannertest`, with a bundle built by
+`protobundle.New(&iampb.Policy{}, &databasepb.Backup{})`, so it is skipped unless one of the
+variables above is set. `PROTODB_SPANNER_CONFORMANCE`, which this repository used before
+`spannertest`, still starts an emulator.
 
 ```sh
-# Start a throwaway emulator per test via Docker:
-PROTODB_SPANNER_CONFORMANCE=1 go test ./spanneradapter/ -run TestSpanner -v
+# Start one emulator for the run via Docker:
+SPANNERTEST_EMULATOR=1 go test ./spanneradapter/ ./spannertest/ -v
 
 # Or reuse an emulator you are already running:
-SPANNER_EMULATOR_HOST=localhost:9010 go test ./spanneradapter/ -run TestSpanner -v
+SPANNER_EMULATOR_HOST=localhost:9010 go test ./spanneradapter/ ./spannertest/ -v
 ```
-
-The test creates its instance and a fresh database per run, with a `CREATE PROTO BUNDLE`
-carrying `google.iam.v1.Policy` — the `FileDescriptorSet` is built at runtime from the
-compiled-in registry, so no `.proto` files or `protoc` are needed.
 
 ## Migrating from v2.0.x
 
