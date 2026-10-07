@@ -9,7 +9,7 @@
 //		}
 //		client := spannertest.NewDatabase(t, bundle,
 //			"CREATE TABLE Shelves (`key` STRING(MAX) NOT NULL, Policy `google.iam.v1.Policy`) PRIMARY KEY (`key`)")
-//		// use client
+//		runShelfTests(t, client) // your tests against the table
 //	}
 //
 // # Choosing the emulator

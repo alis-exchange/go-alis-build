@@ -686,7 +686,7 @@ func TestShelves(t *testing.T) {
 	client := spannertest.NewDatabase(t, bundle,
 		"CREATE TABLE Shelves (`key` STRING(MAX) NOT NULL, Shelf `alis.library.v1.Shelf`, "+
 			"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Shelf.create_time.seconds)) STORED) PRIMARY KEY (`key`)")
-	// Build the table under test on client.
+	runShelfTests(t, client) // your tests against the table
 }
 ```
 
@@ -717,9 +717,12 @@ svc := newService(ctx, client.DatabaseName())
 
 **The emulator cannot read 32-bit integer proto fields** (int32, uint32, sint32, fixed32,
 sfixed32), such as `google.protobuf.Timestamp.nanos`. A STORED generated column that reads one
-makes every write fail with an opaque `Unexpected error in RPC handling`, so `NewDatabase`
-rejects such a column, or a CHECK constraint reading one, before creating anything, and names
-the table, column and path. Read `.seconds` instead, as above. Queries that read such a field
+makes every write fail with an opaque `Unexpected error in RPC handling`, and a CHECK constraint
+reading one may do the same, so `NewDatabase` rejects both before creating anything and names
+the table, column and path. Read `.seconds` instead, as above. The check reads generated
+columns and CHECK constraints in `CREATE TABLE` statements whose paths start at one of the
+table's proto columns; it does not read `ALTER TABLE` statements, `ARRAY<proto>` columns or
+table-qualified paths. Queries that read such a field
 fail with `Type not found: INT32` or `UINT32`; wrap errors with `spannertest.Explain(err)` to
 get the same hint.
 
@@ -730,12 +733,12 @@ reference `ResourceTable[string]` out of the building blocks above (the "shape o
 table" sketch, materialized) and runs the `protodbtest` suite against a real Spanner, plus a
 multi-column tied-order pagination check that executes the null-safe keyset cursor for real.
 Its databases come from `spannertest`, with a bundle built by
-`protobundle.New(&iampb.Policy{}, &databasepb.Backup{})`, so it is skipped unless one of the
-variables above is set. `PROTODB_SPANNER_CONFORMANCE`, which this repository used before
+`protobundle.New(&iampb.Policy{}, &databasepb.Backup{})`, so it is skipped unless `SPANNER_EMULATOR_HOST` or
+`SPANNERTEST_EMULATOR` is set. `PROTODB_SPANNER_CONFORMANCE`, which this repository used before
 `spannertest`, still starts an emulator.
 
 ```sh
-# Start one emulator for the run via Docker:
+# Start one emulator per package (each is its own test binary) via Docker:
 SPANNERTEST_EMULATOR=1 go test ./spanneradapter/ ./spannertest/ -v
 
 # Or reuse an emulator you are already running:
