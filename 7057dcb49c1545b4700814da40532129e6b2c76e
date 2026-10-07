@@ -1,0 +1,8 @@
+Phase 4 'Code review fixes' verification (protodb_spannertest_20261007)
+
+Trigger: user ran /code-review xhigh before tagging (15 findings); chose to fix all with the guard rebuilt on spansql.
+Commits: 797dee2 d112795 fff4b70 03e230d f534330 c85dca1, verifier fixes b3186f2 d1ef6ee 7057dcb.
+Tests: go test -race ./... ok; SPANNERTEST_EMULATOR=1 spannertest+spanneradapter ok (~3s, was ~36s before DisableNativeMetrics); PROTODB_SPANNER_CONFORMANCE=1 alias ok.
+Gate: go mod tidy clean; vet clean; golangci-lint --new-from-rev=protodb/v2/v2.2.1: 0 issues; gorelease -base=v2.2.1 -version=v2.3.0 valid minor (2 packages added); doc inventory empty.
+Independent verifier: rejected round 1 (ALTER-added proto columns unreported; metrics fix untested; failed instance cached; docs overstated); fixed; approved round 2 with mutation checks killing each fix.
+Hand check: none needed (library).
