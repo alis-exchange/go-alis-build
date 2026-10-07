@@ -58,9 +58,11 @@ const instanceTimeout = 30 * time.Second
 //
 // NewDatabase skips t when no emulator is configured (see Host), and fails
 // t before creating anything when a generated column or CHECK constraint
-// in one of ddl's CREATE TABLE statements reads a 32-bit integer proto
-// field the emulator cannot handle. Tests calling it may run in parallel: each
-// gets its own database, and SPANNER_EMULATOR_HOST is never set.
+// in ddl reads a 32-bit integer proto field the emulator cannot handle.
+// Statements the check cannot parse, and reads it cannot resolve because
+// of them, are logged with t.Logf rather than failed. Tests calling it may
+// run in parallel: each gets its own database, and SPANNER_EMULATOR_HOST
+// is never set.
 func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spanner.Client {
 	t.Helper()
 	host := Host(t)

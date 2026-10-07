@@ -47,13 +47,16 @@
 // the same, so NewDatabase rejects both before creating anything and names
 // the table, the column or constraint, and the path; read .seconds instead.
 //
-// The check parses each statement with spansql and covers generated
+// The check parses each statement with spansql and covers STORED generated
 // columns and CHECK constraints in CREATE TABLE and in ALTER TABLE ADD
 // COLUMN / ADD CONSTRAINT, for paths that start at one of the table's
 // proto columns (quoted or not, matched case-insensitively). A statement
-// spansql cannot parse, such as one with an ARRAY<proto> column, a
-// schema-qualified table name or a backticked path head, is not checked:
-// NewDatabase logs it and carries on.
+// spansql cannot parse is not checked: NewDatabase logs it and carries on.
+// spansql v1.88 cannot parse ARRAY<proto> columns, ALTER TABLE ADD COLUMN
+// with a proto type, VIRTUAL generated columns, schema-qualified table
+// names or a backticked path head. A later read on such a table that the
+// check cannot resolve is logged the same way, never passed silently.
+// CREATE VIEW queries are not inspected.
 //
 // Queries that read such a field fail with "Type not found: INT32" or
 // "UINT32"; wrap errors with Explain to get a hint. Explain also hints on

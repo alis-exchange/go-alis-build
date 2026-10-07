@@ -41,10 +41,14 @@ var (
 // case-insensitively, as in GoogleSQL, and proto types resolve against the
 // bundle's own descriptors.
 //
-// Statements spansql cannot parse (in v1.88.0: ARRAY<proto> columns,
-// schema-qualified table names, a backticked path head, parenthesised
-// paths) are returned in unchecked rather than treated as safe. A nil
-// bundle checks nothing.
+// Statements spansql cannot parse are returned in unchecked rather than
+// treated as safe. In v1.88.0 those include ARRAY<proto> columns, ALTER
+// TABLE ADD COLUMN with a proto type, VIRTUAL (non-STORED) generated
+// columns, schema-qualified table names, a backticked path head and
+// parenthesised paths. Because such a statement may declare proto columns,
+// a later path on the same table that resolves to no known proto column is
+// reported in unchecked too. CREATE VIEW and other statements are not
+// inspected. A nil bundle checks nothing.
 func checkDDL(ddl []string, bundle *protobundle.Bundle) (unchecked []string, err error) {
 	if bundle == nil {
 		return nil, nil
