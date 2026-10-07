@@ -183,3 +183,26 @@ func TestNewDatabaseGuardFailsBeforeCreating(t *testing.T) {
 		t.Errorf("CreateDatabase calls went from %d to %d, want none", before, after)
 	}
 }
+
+// TestNewDatabaseAcceptsSchemedHost pins that an emulator address with an
+// http:// prefix, which the official client accepts, works here too: Host
+// returns it bare and NewDatabase connects. Needs an emulator.
+func TestNewDatabaseAcceptsSchemedHost(t *testing.T) {
+	host := Host(t)
+	t.Setenv("SPANNER_EMULATOR_HOST", "http://"+host)
+	if got := Host(t); got != host {
+		t.Errorf("Host() = %q, want %q", got, host)
+	}
+	NewDatabase(t, nil, keyOnlyDDL)
+}
+
+// TestInstanceCreatedOncePerHost pins that however many databases a binary
+// creates, the shared instance is created once per emulator host. Needs an
+// emulator.
+func TestInstanceCreatedOncePerHost(t *testing.T) {
+	NewDatabase(t, nil, keyOnlyDDL)
+	NewDatabase(t, nil, keyOnlyDDL)
+	if c := instanceCreates.Load(); c != 1 {
+		t.Errorf("instance created %d times, want 1", c)
+	}
+}

@@ -98,3 +98,19 @@ func TestHostSkipsWithoutEmulator(t *testing.T) {
 		t.Errorf("Host skip message %q must name both variables", msg)
 	}
 }
+
+// TestNormalizeHost pins the prefixes stripped from an emulator address,
+// the same ones the official Spanner client strips from
+// SPANNER_EMULATOR_HOST.
+func TestNormalizeHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"localhost:9010":                "localhost:9010",
+		"http://localhost:9010":         "localhost:9010",
+		"https://localhost:9010":        "localhost:9010",
+		"passthrough:///localhost:9010": "localhost:9010",
+	} {
+		if got := normalizeHost(in); got != want {
+			t.Errorf("normalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,8 +39,9 @@ var (
 	startCount atomic.Int32
 )
 
-// Host returns the address of the emulator to test against:
-// SPANNER_EMULATOR_HOST when it is set, else a container started once per
+// Host returns the address of the emulator to test against, as host:port:
+// SPANNER_EMULATOR_HOST when it is set (any http://, https:// or
+// passthrough:/// prefix removed), else a container started once per
 // test binary when SPANNERTEST_EMULATOR is set. With neither set it skips
 // t. It fails t when the container cannot start, since the run opted in.
 func Host(t testing.TB) string {
@@ -47,7 +49,7 @@ func Host(t testing.TB) string {
 	host, start, skip := resolve(os.Getenv)
 	switch {
 	case host != "":
-		return host
+		return normalizeHost(host)
 	case !start:
 		t.Skip(skip)
 	}
@@ -61,6 +63,18 @@ func Host(t testing.TB) string {
 		t.Fatalf("spannertest: %v (is Docker running?)", startErr)
 	}
 	return startedHost
+}
+
+// normalizeHost strips the prefixes the official Spanner client accepts on
+// SPANNER_EMULATOR_HOST (http://, https://, passthrough:///), leaving
+// host:port.
+func normalizeHost(host string) string {
+	for _, prefix := range []string{"http://", "https://", "passthrough:///"} {
+		if rest, ok := strings.CutPrefix(host, prefix); ok {
+			return rest
+		}
+	}
+	return host
 }
 
 // resolve applies the start rules to getenv and returns the host to reuse,

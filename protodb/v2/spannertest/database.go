@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -30,9 +31,19 @@ const (
 	instancePath = "projects/" + projectID + "/instances/" + instanceID
 )
 
-// createCalls counts CreateDatabase requests; the guard test asserts a
-// rejected schema sends none.
-var createCalls atomic.Int32
+var (
+	// createCalls counts CreateDatabase requests; the guard test asserts a
+	// rejected schema sends none.
+	createCalls atomic.Int32
+	// instanceCreates counts CreateInstance requests; tests assert one per
+	// emulator host.
+	instanceCreates atomic.Int32
+	// instancesMu guards instances.
+	instancesMu sync.Mutex
+	// instances holds, per emulator host, a func that creates the shared
+	// instance on first call and returns that first result after.
+	instances = map[string]func() error{}
+)
 
 // NewDatabase creates a fresh database on the emulator from Host and
 // returns a client for it. The database holds bundle's CREATE PROTO BUNDLE
@@ -56,7 +67,7 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 	}
 	ctx := context.Background()
 	opts := clientOptions(host)
-	if err := ensureInstance(ctx, opts); err != nil {
+	if err := instanceFor(host, opts)(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +116,10 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 		}
 	})
 
-	client, err := spanner.NewClient(ctx, name, opts...)
+	// Explicit options take the client off its emulator path, which would
+	// leave built-in metrics on: every Close would try to export to Cloud
+	// Monitoring.
+	client, err := spanner.NewClientWithConfig(ctx, name, spanner.ClientConfig{DisableNativeMetrics: true}, opts...)
 	if err != nil {
 		t.Fatalf("spannertest: client: %v", err)
 	}
@@ -113,14 +127,29 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 	return client
 }
 
+// instanceFor returns the func that creates host's shared instance once
+// per test binary and reports that first result to every later caller.
+func instanceFor(host string, opts []option.ClientOption) func() error {
+	instancesMu.Lock()
+	defer instancesMu.Unlock()
+	ensure, ok := instances[host]
+	if !ok {
+		ensure = sync.OnceValue(func() error { return ensureInstance(context.Background(), opts) })
+		instances[host] = ensure
+	}
+	return ensure
+}
+
 // ensureInstance creates the shared instance, tolerating one that already
-// exists from an earlier test against the same emulator.
+// exists from an earlier test binary against the same emulator.
+// NewDatabase calls it once per emulator host.
 func ensureInstance(ctx context.Context, opts []option.ClientOption) error {
 	admin, err := instadmin.NewInstanceAdminClient(ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("spannertest: instance admin client: %w", err)
 	}
 	defer admin.Close()
+	instanceCreates.Add(1)
 	op, err := admin.CreateInstance(ctx, &instancepb.CreateInstanceRequest{
 		Parent:     "projects/" + projectID,
 		InstanceId: instanceID,
@@ -146,12 +175,15 @@ func newDatabaseID() string {
 	return "t" + strings.ToLower(rand.Text()[:20])
 }
 
-// clientOptions connects a Spanner client to the emulator at host without
+// clientOptions connects a Spanner client to the emulator at host (as
+// host:port, see normalizeHost) without
 // credentials and without touching the process environment, so tests that
 // use them may run in parallel.
 func clientOptions(host string) []option.ClientOption {
 	return []option.ClientOption{
-		option.WithEndpoint(host),
+		// passthrough:/// skips gRPC name resolution, as the official
+		// client does for SPANNER_EMULATOR_HOST.
+		option.WithEndpoint("passthrough:///" + host),
 		option.WithoutAuthentication(),
 		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
 	}
