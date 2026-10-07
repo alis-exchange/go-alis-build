@@ -3,6 +3,7 @@ package spannertest
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -50,7 +51,12 @@ func Host(t testing.TB) string {
 	case !start:
 		t.Skip(skip)
 	}
-	startOnce.Do(func() { startedHost, startErr = startContainer(context.Background()) })
+	startOnce.Do(func() {
+		// Preset so a panic inside startContainer leaves a failure behind
+		// for every later caller, not an empty host and a nil error.
+		startErr = errors.New("starting the Spanner emulator did not complete")
+		startedHost, startErr = startContainer(context.Background())
+	})
 	if startErr != nil {
 		t.Fatalf("spannertest: %v (is Docker running?)", startErr)
 	}

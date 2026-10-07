@@ -3,6 +3,7 @@ package spannertest
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -106,8 +107,14 @@ func TestNewDatabaseParallelShareOneEmulator(t *testing.T) {
 	if len(got) != 2 || got[0] == got[1] {
 		t.Errorf("databases = %q, want two distinct names", got)
 	}
-	if c := startCount.Load(); c > 1 {
-		t.Errorf("started %d containers, want at most 1", c)
+	// Reusing SPANNER_EMULATOR_HOST starts nothing; otherwise exactly one
+	// container serves the whole binary.
+	want := int32(1)
+	if os.Getenv("SPANNER_EMULATOR_HOST") != "" {
+		want = 0
+	}
+	if c := startCount.Load(); c != want {
+		t.Errorf("started %d containers, want %d", c, want)
 	}
 }
 
