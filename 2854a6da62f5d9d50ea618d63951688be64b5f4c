@@ -1,0 +1,7 @@
+Phase 3 'Migration, docs and release' verification (protodb_spannertest_20261007)
+
+Migration: spanneradapter emulator tests now use protobundle + spannertest (64e4d6d); old helpers deleted; CREATE TABLE DDL unchanged.
+Runs: no env -> TestSpanner* skip; PROTODB_SPANNER_CONFORMANCE=1 -> all 5 pass; SPANNERTEST_EMULATOR=1 -> spanneradapter + spannertest pass; SPANNER_EMULATOR_HOST reuse (docker run 1.5.57) -> both pass, no container started.
+Release gate: go mod tidy clean (after 9ff445a marked testcontainers-go indirect); go vet clean; go test -race ./... ok; golangci-lint --new-from-rev=protodb/v2/v2.2.1: 0 issues; gorelease -base=v2.2.1 -version=v2.3.0: only "package added" (protobundle, spannertest), valid minor. AST doc inventory: new packages complete.
+Final whole-track verifier: approved, AC1-AC11 met; README/doc nits fixed in 2854a6d.
+Hand check: none needed (library). Tag protodb/v2/v2.3.0 pending user approval.
