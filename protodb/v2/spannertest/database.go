@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 	dbadmin "cloud.google.com/go/spanner/admin/database/apiv1"
@@ -38,12 +39,17 @@ var (
 	// instanceCreates counts CreateInstance requests; tests assert one per
 	// emulator host.
 	instanceCreates atomic.Int32
-	// instancesMu guards instances.
+	// instancesMu guards instancesReady and serialises instance creation.
 	instancesMu sync.Mutex
-	// instances holds, per emulator host, a func that creates the shared
-	// instance on first call and returns that first result after.
-	instances = map[string]func() error{}
+	// instancesReady records the emulator hosts whose shared instance
+	// exists. Only success is recorded, so a failed attempt is retried.
+	instancesReady = map[string]bool{}
+	// createInstance creates the shared instance; tests replace it.
+	createInstance = ensureInstance
 )
+
+// instanceTimeout bounds one attempt to create the shared instance.
+const instanceTimeout = 30 * time.Second
 
 // NewDatabase creates a fresh database on the emulator from Host and
 // returns a client for it. The database holds bundle's CREATE PROTO BUNDLE
@@ -67,7 +73,7 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 	}
 	ctx := context.Background()
 	opts := clientOptions(host)
-	if err := instanceFor(host, opts)(); err != nil {
+	if err := instanceFor(host, opts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,10 +122,7 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 		}
 	})
 
-	// Explicit options take the client off its emulator path, which would
-	// leave built-in metrics on: every Close would try to export to Cloud
-	// Monitoring.
-	client, err := spanner.NewClientWithConfig(ctx, name, spanner.ClientConfig{DisableNativeMetrics: true}, opts...)
+	client, err := spanner.NewClientWithConfig(ctx, name, clientConfig(), opts...)
 	if err != nil {
 		t.Fatalf("spannertest: client: %v", err)
 	}
@@ -127,22 +130,27 @@ func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spann
 	return client
 }
 
-// instanceFor returns the func that creates host's shared instance once
-// per test binary and reports that first result to every later caller.
-func instanceFor(host string, opts []option.ClientOption) func() error {
+// instanceFor makes sure host's shared instance exists, creating it on
+// the first call that succeeds. Callers wait for an attempt in progress;
+// after a failure the next call tries again.
+func instanceFor(host string, opts []option.ClientOption) error {
 	instancesMu.Lock()
 	defer instancesMu.Unlock()
-	ensure, ok := instances[host]
-	if !ok {
-		ensure = sync.OnceValue(func() error { return ensureInstance(context.Background(), opts) })
-		instances[host] = ensure
+	if instancesReady[host] {
+		return nil
 	}
-	return ensure
+	ctx, cancel := context.WithTimeout(context.Background(), instanceTimeout)
+	defer cancel()
+	if err := createInstance(ctx, opts); err != nil {
+		return err
+	}
+	instancesReady[host] = true
+	return nil
 }
 
 // ensureInstance creates the shared instance, tolerating one that already
 // exists from an earlier test binary against the same emulator.
-// NewDatabase calls it once per emulator host.
+// NewDatabase reaches it through instanceFor.
 func ensureInstance(ctx context.Context, opts []option.ClientOption) error {
 	admin, err := instadmin.NewInstanceAdminClient(ctx, opts...)
 	if err != nil {
@@ -173,6 +181,13 @@ func ensureInstance(ctx context.Context, opts []option.ClientOption) error {
 // characters in all. It uses crypto/rand.Text.
 func newDatabaseID() string {
 	return "t" + strings.ToLower(rand.Text()[:20])
+}
+
+// clientConfig turns off built-in metrics. Explicit options take the
+// client off its SPANNER_EMULATOR_HOST path, which would leave them on, and
+// every Close would then try to export to Cloud Monitoring.
+func clientConfig() spanner.ClientConfig {
+	return spanner.ClientConfig{DisableNativeMetrics: true}
 }
 
 // clientOptions connects a Spanner client to the emulator at host (as

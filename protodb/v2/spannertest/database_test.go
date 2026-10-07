@@ -2,6 +2,7 @@ package spannertest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"cloud.google.com/go/spanner"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2/protobundle"
+	"google.golang.org/api/option"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -204,5 +206,42 @@ func TestInstanceCreatedOncePerHost(t *testing.T) {
 	NewDatabase(t, nil, keyOnlyDDL)
 	if c := instanceCreates.Load(); c != 1 {
 		t.Errorf("instance created %d times, want 1", c)
+	}
+}
+
+// TestClientConfigDisablesNativeMetrics pins that clients skip built-in
+// metrics: with explicit options instead of SPANNER_EMULATOR_HOST they
+// would otherwise try to export to Cloud Monitoring on every Close.
+func TestClientConfigDisablesNativeMetrics(t *testing.T) {
+	if !clientConfig().DisableNativeMetrics {
+		t.Error("clientConfig().DisableNativeMetrics = false, want true")
+	}
+}
+
+// TestInstanceForRetriesAfterFailure pins that a failed instance creation
+// is not cached: the next call tries again, and once it succeeds later
+// calls make no request. Runs without Docker.
+func TestInstanceForRetriesAfterFailure(t *testing.T) {
+	calls := 0
+	orig := createInstance
+	t.Cleanup(func() { createInstance = orig })
+	createInstance = func(context.Context, []option.ClientOption) error {
+		calls++
+		if calls == 1 {
+			return errors.New("emulator hiccup")
+		}
+		return nil
+	}
+	const host = "retry.invalid:1"
+	if err := instanceFor(host, nil); err == nil {
+		t.Fatal("first call: nil error, want the hiccup")
+	}
+	for range 2 {
+		if err := instanceFor(host, nil); err != nil {
+			t.Fatalf("retry: %v, want success", err)
+		}
+	}
+	if calls != 2 {
+		t.Errorf("createInstance called %d times, want 2 (fail, then succeed once)", calls)
 	}
 }
