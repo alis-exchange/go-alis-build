@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -153,5 +154,61 @@ func TestCreateStatement(t *testing.T) {
 		"`google.protobuf.Struct`, `google.protobuf.Value`)"
 	if got := b.CreateStatement(); got != want {
 		t.Errorf("CreateStatement() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// siblingEnumRoot builds message p.A { p.M.State s = 1; p.M m = 2; }, where
+// the field s reaches the nested enum M.State before the walk visits M.
+func siblingEnumRoot(t *testing.T) proto.Message {
+	t.Helper()
+	f := &descriptorpb.FileDescriptorProto{
+		Name:    proto.String("p/sibling.proto"),
+		Package: proto.String("p"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{
+			{
+				Name: proto.String("A"),
+				Field: []*descriptorpb.FieldDescriptorProto{
+					{
+						Name: proto.String("s"), Number: proto.Int32(1), JsonName: proto.String("s"),
+						Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+						Type:     descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum(),
+						TypeName: proto.String(".p.M.State"),
+					},
+					{
+						Name: proto.String("m"), Number: proto.Int32(2), JsonName: proto.String("m"),
+						Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+						Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
+						TypeName: proto.String(".p.M"),
+					},
+				},
+			},
+			{
+				Name: proto.String("M"),
+				EnumType: []*descriptorpb.EnumDescriptorProto{{
+					Name:  proto.String("State"),
+					Value: []*descriptorpb.EnumValueDescriptorProto{{Name: proto.String("STATE_UNSPECIFIED"), Number: proto.Int32(0)}},
+				}},
+			},
+		},
+	}
+	fd, err := protodesc.NewFile(f, nil)
+	if err != nil {
+		t.Fatalf("building the sibling-enum file: %v", err)
+	}
+	return dynamicpb.NewMessage(fd.Messages().ByName("A"))
+}
+
+// TestTypesListsSiblingNestedEnumOnce pins that a nested enum reached by a
+// field before its parent message is listed once, not again when the
+// parent's nested enums are added.
+func TestTypesListsSiblingNestedEnumOnce(t *testing.T) {
+	b, err := protobundle.New(siblingEnumRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"p.A", "p.M", "p.M.State"}
+	if got := b.Types(); !slices.Equal(got, want) {
+		t.Errorf("Types() = %q, want %q", got, want)
 	}
 }

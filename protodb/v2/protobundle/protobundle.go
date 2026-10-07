@@ -96,15 +96,18 @@ func (c *collector) message(md protoreflect.MessageDescriptor) {
 		case f.Message() != nil:
 			c.message(f.Message())
 		case f.Enum() != nil:
-			if !c.seenTypes[f.Enum().FullName()] {
-				c.add(f.Enum())
-			}
+			c.add(f.Enum())
 		}
 	}
 }
 
-// add records one type and its file.
+// add records one type and its file, once. A nested enum can be reached by
+// a field before its parent message is visited, so every path goes through
+// this check.
 func (c *collector) add(d protoreflect.Descriptor) {
+	if c.seenTypes[d.FullName()] {
+		return
+	}
 	c.seenTypes[d.FullName()] = true
 	c.types = append(c.types, string(d.FullName()))
 	c.file(d.ParentFile())
