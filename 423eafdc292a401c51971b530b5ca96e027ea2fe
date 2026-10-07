@@ -1,0 +1,7 @@
+Phase 1 'Probes and protobundle' verification (protodb_spannertest_20261007)
+
+Tests: cd protodb/v2 && go test -race -cover ./protobundle/ -> ok, 100.0% coverage; go vet clean; golangci-lint --new-from-rev=HEAD: 0 issues.
+Probe (emulator 1.5.57): protodb TestSpanner* suite passes; all five 32-bit proto kinds crash STORED generated-column writes ("Unexpected error in RPC handling") and fail selects ("Type not found: INT32/UINT32"); int64 fine; explicit-endpoint clients work without SPANNER_EMULATOR_HOST, no credential or metrics errors.
+Independent verifier: rejected round 1 (nested enum listed twice when a field reaches it before its parent; typed-nil undocumented); fixed in f989451, 423eafd; approved round 2.
+gorelease -base=v2.2.1: compatible, package added, suggests v2.3.0.
+Hand check: none needed (library, no user-visible surface).
