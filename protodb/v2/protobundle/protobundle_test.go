@@ -9,6 +9,7 @@ import (
 	"go.alis.build/protodb/v2/protobundle"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -279,5 +280,55 @@ func TestTypesListsParentsOfNestedTypes(t *testing.T) {
 	want := []string{"p.A", "p.M", "p.M.N", "p.M.State"}
 	if got := b.Types(); !slices.Equal(got, want) {
 		t.Errorf("Types() = %q, want %q", got, want)
+	}
+}
+
+// TestNewFromDescriptorsAcceptsEnumRoot pins that a top-level enum, which
+// an ENUM column can use without any message referencing it, can be a
+// root on its own.
+func TestNewFromDescriptorsAcceptsEnumRoot(t *testing.T) {
+	b, err := protobundle.NewFromDescriptors(databasepb.DatabaseDialect(0).Descriptor())
+	if err != nil {
+		t.Fatalf("NewFromDescriptors: %v", err)
+	}
+	want := []string{"google.spanner.admin.database.v1.DatabaseDialect"}
+	if got := b.Types(); !slices.Equal(got, want) {
+		t.Errorf("Types() = %q, want %q", got, want)
+	}
+}
+
+// TestNewFromDescriptorsRejectsOtherKinds pins the error cases: no roots,
+// a nil root, and a descriptor that is neither a message nor an enum.
+func TestNewFromDescriptorsRejectsOtherKinds(t *testing.T) {
+	field := (&iampb.Policy{}).ProtoReflect().Descriptor().Fields().Get(0)
+	for name, roots := range map[string][]protoreflect.Descriptor{
+		"none":  nil,
+		"nil":   {nil},
+		"field": {field},
+	} {
+		if _, err := protobundle.NewFromDescriptors(roots...); err == nil {
+			t.Errorf("%s: NewFromDescriptors returned nil error, want one", name)
+		}
+	}
+}
+
+// TestLookup pins that Lookup returns the bundled descriptor for a listed
+// type, nested enums included, and nil for a type outside the bundle.
+func TestLookup(t *testing.T) {
+	b, err := protobundle.New(&databasepb.Backup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"google.spanner.admin.database.v1.Backup",
+		"google.spanner.admin.database.v1.Backup.State",
+	} {
+		d := b.Lookup(name)
+		if d == nil || string(d.FullName()) != name {
+			t.Errorf("Lookup(%q) = %v, want its descriptor", name, d)
+		}
+	}
+	if d := b.Lookup("google.iam.v1.Policy"); d != nil {
+		t.Errorf("Lookup(Policy) = %v, want nil for a type outside the bundle", d)
 	}
 }
