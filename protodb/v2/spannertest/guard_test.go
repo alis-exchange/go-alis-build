@@ -71,6 +71,13 @@ func TestCheckDDL(t *testing.T) {
 			wantPath:   "Backup.expire_time.nanos",
 		},
 		{
+			name:       "nanos in unnamed CHECK",
+			ddl:        table("CHECK (Backup.expire_time.nanos >= 0)"),
+			wantTable:  "Backups",
+			wantColumn: "CHECK",
+			wantPath:   "Backup.expire_time.nanos",
+		},
+		{
 			name: "backticked column",
 			ddl: "CREATE TABLE Sets (`key` STRING(MAX) NOT NULL, `Set` `google.spanner.admin.database.v1.Backup`, " +
 				"t INT64 AS (`Set`.create_time.nanos) STORED) PRIMARY KEY (`key`)",
