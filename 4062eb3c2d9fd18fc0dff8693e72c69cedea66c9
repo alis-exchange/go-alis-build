@@ -1,0 +1,8 @@
+Phase 2 'spannertest' verification (protodb_spannertest_20261007)
+
+Tests: cd protodb/v2 && go test -race ./... (no emulator vars) -> all ok, emulator tests skip.
+Emulator: env -u SPANNER_EMULATOR_HOST SPANNERTEST_EMULATOR=1 go test -count=1 -race ./spannertest/ -> 14 tests pass (91% coverage), one container started, Ryuk removed it after the run.
+go vet clean; golangci-lint --new-from-rev=HEAD: 0 issues; go.mod/go.sum unchanged by go mod tidy.
+Independent verifier: approved round 1 with follow-ups (guard error names column; panic-safe start; exact start count; docs scoped to CREATE TABLE); fixed in 49cc8c9, 881c150, e5421e7, 4062eb3; approved round 2. Verifier also probed 16 concurrent CreateInstance calls x4 on a fresh 1.5.57 emulator: 1 OK + 15 AlreadyExists each time.
+gorelease -base=v2.2.1: package added (protobundle, spannertest), suggests v2.3.0.
+Hand check: none needed (library).
