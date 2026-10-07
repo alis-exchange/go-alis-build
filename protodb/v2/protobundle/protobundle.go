@@ -23,7 +23,8 @@ type Bundle struct {
 // message- and enum-typed fields, plus the enums declared in each reached
 // message. Map-entry messages are skipped; their key and value types are
 // still followed. Duplicate roots are merged. New returns an error when
-// roots is empty or holds a nil message.
+// roots is empty or holds a nil interface; a typed nil pointer such as
+// (*iampb.Policy)(nil) is accepted, since only its descriptor is read.
 func New(roots ...proto.Message) (*Bundle, error) {
 	if len(roots) == 0 {
 		return nil, errors.New("protobundle: no root messages")

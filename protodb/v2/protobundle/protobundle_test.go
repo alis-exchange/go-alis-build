@@ -92,14 +92,29 @@ func TestTypesReturnsCopy(t *testing.T) {
 	}
 }
 
-// TestNewRejectsMissingRoots pins the two error cases: no roots, and a nil
-// root.
+// TestNewRejectsMissingRoots pins the error cases: no roots, a lone nil
+// root, and a nil root after a valid one.
 func TestNewRejectsMissingRoots(t *testing.T) {
 	if _, err := protobundle.New(); err == nil {
 		t.Error("New() returned nil error, want one")
 	}
+	if _, err := protobundle.New(nil); err == nil {
+		t.Error("New(nil) returned nil error, want one")
+	}
 	if _, err := protobundle.New(&timestamppb.Timestamp{}, nil); err == nil {
 		t.Error("New(ts, nil) returned nil error, want one")
+	}
+}
+
+// TestNewAcceptsTypedNilRoot pins that a typed nil pointer is a valid
+// root: only its descriptor is read.
+func TestNewAcceptsTypedNilRoot(t *testing.T) {
+	b, err := protobundle.New((*timestamppb.Timestamp)(nil))
+	if err != nil {
+		t.Fatalf("New(typed nil): %v", err)
+	}
+	if got, want := b.Types(), []string{"google.protobuf.Timestamp"}; !slices.Equal(got, want) {
+		t.Errorf("Types() = %q, want %q", got, want)
 	}
 }
 
