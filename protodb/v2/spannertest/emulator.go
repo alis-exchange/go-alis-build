@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/testcontainers/testcontainers-go"
 	tcspanner "github.com/testcontainers/testcontainers-go/modules/gcloud/spanner"
 )
 
@@ -98,6 +99,11 @@ func startContainer(ctx context.Context) (string, error) {
 	img := cmp.Or(os.Getenv(imageEnv), DefaultImage)
 	ctr, err := tcspanner.Run(ctx, img)
 	if err != nil {
+		// Run can return a started container whose readiness wait failed;
+		// stop it rather than leave it for the reaper, which may be off.
+		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
+			err = errors.Join(err, fmt.Errorf("terminating it: %w", termErr))
+		}
 		return "", fmt.Errorf("starting the Spanner emulator (%s): %w", img, err)
 	}
 	return ctr.URI(), nil

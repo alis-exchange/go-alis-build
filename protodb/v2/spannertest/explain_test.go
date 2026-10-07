@@ -35,8 +35,12 @@ func TestExplain(t *testing.T) {
 		if status.Code(got) != codes.Unknown {
 			t.Errorf("status.Code(Explain(%q)) = %v, want Unknown", msg, status.Code(got))
 		}
-		if !strings.Contains(got.Error(), ".seconds") {
-			t.Errorf("Explain(%q) = %q, want the .seconds hint", msg, got)
+		// "Unexpected error in RPC handling" is the emulator's catch-all,
+		// so the hint must not claim certainty.
+		for _, want := range []string{"may come from", ".seconds"} {
+			if !strings.Contains(got.Error(), want) {
+				t.Errorf("Explain(%q) = %q, want it to contain %q", msg, got, want)
+			}
 		}
 	}
 }

@@ -15,7 +15,9 @@ const emulatorHint = "spannertest: the Spanner emulator cannot read 32-bit integ
 // raises for reading a 32-bit integer proto field: "Type not found: INT32"
 // or "Type not found: UINT32" from a query, or the opaque "Unexpected error
 // in RPC handling" from a write to a table whose generated column reads
-// one. Any other err, including nil, is returned unchanged. The result
+// one. That last message is also the emulator's catch-all for other
+// internal errors, so the hint says the error may, not does, come from
+// such a read. Any other err, including nil, is returned unchanged. The result
 // wraps err, so errors.Is and status.Code see through it.
 func Explain(err error) error {
 	if err == nil {
@@ -25,7 +27,7 @@ func Explain(err error) error {
 	if strings.Contains(msg, "Type not found: INT32") ||
 		strings.Contains(msg, "Type not found: UINT32") ||
 		strings.Contains(msg, "Unexpected error in RPC handling") {
-		return fmt.Errorf("%w (%s)", err, emulatorHint)
+		return fmt.Errorf("%w (this may come from a 32-bit proto field read. %s)", err, emulatorHint)
 	}
 	return err
 }
