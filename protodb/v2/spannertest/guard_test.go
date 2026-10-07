@@ -42,43 +42,57 @@ func TestCheckDDL(t *testing.T) {
 			"Backup `google.spanner.admin.database.v1.Backup`, " + cols + ") PRIMARY KEY (`key`)"
 	}
 	tests := []struct {
-		name     string
-		ddl      string
-		wantPath string // empty: no error
+		name       string
+		ddl        string
+		wantTable  string // empty: no error
+		wantColumn string // the generated column or constraint
+		wantPath   string
 	}{
 		{
-			name:     "nanos in generated column",
-			ddl:      table("t INT64 AS (Backup.create_time.nanos) STORED"),
-			wantPath: "Backup.create_time.nanos",
+			name:       "nanos in generated column",
+			ddl:        table("t INT64 AS (Backup.create_time.nanos) STORED"),
+			wantTable:  "Backups",
+			wantColumn: "t",
+			wantPath:   "Backup.create_time.nanos",
 		},
 		{
 			name: "nanos inside a function",
 			ddl: table("t TIMESTAMP AS (TIMESTAMP_ADD(TIMESTAMP_SECONDS(Backup.create_time.seconds), " +
 				"INTERVAL Backup.create_time.nanos NANOSECOND)) STORED"),
-			wantPath: "Backup.create_time.nanos",
+			wantTable:  "Backups",
+			wantColumn: "t",
+			wantPath:   "Backup.create_time.nanos",
 		},
 		{
-			name:     "nanos in CHECK",
-			ddl:      table("CONSTRAINT c CHECK (Backup.expire_time.nanos >= 0)"),
-			wantPath: "Backup.expire_time.nanos",
+			name:       "nanos in CHECK",
+			ddl:        table("CONSTRAINT c CHECK (Backup.expire_time.nanos >= 0)"),
+			wantTable:  "Backups",
+			wantColumn: "c",
+			wantPath:   "Backup.expire_time.nanos",
 		},
 		{
 			name: "backticked column",
 			ddl: "CREATE TABLE Sets (`key` STRING(MAX) NOT NULL, `Set` `google.spanner.admin.database.v1.Backup`, " +
 				"t INT64 AS (`Set`.create_time.nanos) STORED) PRIMARY KEY (`key`)",
-			wantPath: "`Set`.create_time.nanos",
+			wantTable:  "Sets",
+			wantColumn: "t",
+			wantPath:   "`Set`.create_time.nanos",
 		},
 		{
 			name: "uint32 leaf",
 			ddl: "CREATE TABLE W (`key` STRING(MAX) NOT NULL, W `google.protobuf.UInt32Value`, " +
 				"t INT64 AS (W.value) STORED) PRIMARY KEY (`key`)",
-			wantPath: "W.value",
+			wantTable:  "W",
+			wantColumn: "t",
+			wantPath:   "W.value",
 		},
 		{
 			name: "if not exists",
 			ddl: "CREATE TABLE IF NOT EXISTS Backups (`key` STRING(MAX) NOT NULL, " +
 				"Backup `google.spanner.admin.database.v1.Backup`, t INT64 AS (Backup.create_time.nanos) STORED) PRIMARY KEY (`key`)",
-			wantPath: "Backup.create_time.nanos",
+			wantTable:  "Backups",
+			wantColumn: "t",
+			wantPath:   "Backup.create_time.nanos",
 		},
 		{
 			name: "seconds is fine",
@@ -108,7 +122,7 @@ func TestCheckDDL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := checkDDL([]string{tt.ddl}, bundle)
-			if tt.wantPath == "" {
+			if tt.wantTable == "" {
 				if err != nil {
 					t.Fatalf("checkDDL: %v, want nil", err)
 				}
@@ -117,7 +131,10 @@ func TestCheckDDL(t *testing.T) {
 			if err == nil {
 				t.Fatalf("checkDDL: nil, want an error naming %s", tt.wantPath)
 			}
-			for _, want := range []string{tt.wantPath, ".seconds"} {
+			for _, want := range []string{
+				"table " + tt.wantTable + ", column " + tt.wantColumn + ": " + tt.wantPath,
+				".seconds",
+			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q lacks %q", err, want)
 				}

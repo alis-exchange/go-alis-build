@@ -35,7 +35,8 @@ var (
 
 // checkDDL reports every generated-column or CHECK expression in a CREATE
 // TABLE statement that reads a 32-bit integer field through one of the
-// table's proto columns, naming table, path and field. A proto column is
+// table's proto columns, naming the table, the generated column or
+// constraint, the path and the field. A proto column is
 // one whose type is a backticked type from bundle. Paths it cannot resolve
 // are ignored, and a nil bundle checks nothing.
 func checkDDL(ddl []string, bundle *protobundle.Bundle) error {
@@ -66,8 +67,8 @@ func checkDDL(ddl []string, bundle *protobundle.Bundle) error {
 						continue
 					}
 					if f := leaf(md, strings.Split(p[2][1:], ".")); f != nil && int32Kinds[f.Kind()] {
-						problems = append(problems,
-							fmt.Sprintf("table %s: %s reads %s field %s", table, p[0], f.Kind(), f.FullName()))
+						problems = append(problems, fmt.Sprintf("table %s, column %s: %s reads %s field %s",
+							table, definitionName(def), p[0], f.Kind(), f.FullName()))
 					}
 				}
 			}
@@ -94,6 +95,22 @@ func protoColumns(defs []string, messages map[string]protoreflect.MessageDescrip
 		}
 	}
 	return cols
+}
+
+// definitionName returns the name a column or constraint definition
+// declares: the column name, the name after CONSTRAINT, or CHECK for an
+// unnamed check constraint.
+func definitionName(def string) string {
+	fields := strings.Fields(def)
+	switch {
+	case len(fields) == 0:
+		return ""
+	case strings.EqualFold(fields[0], "CONSTRAINT") && len(fields) > 1:
+		return strings.Trim(fields[1], "`")
+	case strings.HasPrefix(strings.ToUpper(fields[0]), "CHECK"):
+		return "CHECK"
+	}
+	return strings.Trim(fields[0], "`")
 }
 
 // leaf walks names through md's fields and returns the last field, or nil
