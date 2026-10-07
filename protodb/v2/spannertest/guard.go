@@ -2,13 +2,12 @@ package spannertest
 
 import (
 	"fmt"
-	"regexp"
-	"slices"
+	"reflect"
 	"strings"
 
+	"cloud.google.com/go/spanner/spansql"
 	"go.alis.build/protodb/v2/protobundle"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 // int32Kinds are the proto field kinds the emulator cannot read in DDL
@@ -23,106 +22,153 @@ var int32Kinds = map[protoreflect.Kind]bool{
 	protoreflect.Sfixed32Kind: true,
 }
 
-var (
-	// createTableRE captures a CREATE TABLE's name and its column list.
-	createTableRE = regexp.MustCompile("(?is)^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?" +
-		"(`[^`]+`|\\w+)\\s*\\((.*)\\)\\s*PRIMARY\\s+KEY")
-	// pathRE matches a dotted field path whose head may be backticked.
-	pathRE = regexp.MustCompile("(`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)((?:\\.[A-Za-z_][A-Za-z0-9_]*)+)")
-	// exprRE finds the opening of a generated-column or CHECK expression.
-	exprRE = regexp.MustCompile(`(?i)\b(AS|CHECK)\s*\(`)
-)
+// pathExpType is the type of a dotted field path in a spansql expression.
+var pathExpType = reflect.TypeFor[spansql.PathExp]()
 
-// checkDDL reports every generated-column or CHECK expression in a CREATE
-// TABLE statement that reads a 32-bit integer field through one of the
-// table's proto columns, naming the table, the generated column or
-// constraint, the path and the field. A proto column is
-// one whose type is a backticked type from bundle. Paths it cannot resolve
-// are ignored, and a nil bundle checks nothing.
-func checkDDL(ddl []string, bundle *protobundle.Bundle) error {
+// checkDDL parses each statement with spansql and reports every generated
+// column or CHECK constraint, in CREATE TABLE or ALTER TABLE ADD COLUMN /
+// ADD CONSTRAINT, that reads a 32-bit integer field through one of the
+// table's proto columns. The error names the table, the column or
+// constraint, the path and the field. Column and field names match
+// case-insensitively, as in GoogleSQL, and proto types resolve against the
+// bundle's own descriptors.
+//
+// Statements spansql cannot parse (in v1.88.0: ARRAY<proto> columns,
+// schema-qualified table names, a backticked path head, parenthesised
+// paths) are returned in unchecked rather than treated as safe. A nil
+// bundle checks nothing.
+func checkDDL(ddl []string, bundle *protobundle.Bundle) (unchecked []string, err error) {
 	if bundle == nil {
-		return nil
+		return nil, nil
 	}
-	messages := map[string]protoreflect.MessageDescriptor{}
-	for _, name := range bundle.Types() {
-		d, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(name))
-		if md, ok := d.(protoreflect.MessageDescriptor); err == nil && ok {
-			messages[name] = md
+	// Proto columns per table, both lower-cased, kept across statements so
+	// ALTER TABLE sees the columns an earlier CREATE TABLE declared.
+	tables := map[string]map[string]protoreflect.MessageDescriptor{}
+	var problems []string
+	check := func(table, def string, expr spansql.Expr) {
+		cols := tables[strings.ToLower(table)]
+		for _, path := range exprPaths(expr) {
+			md, ok := cols[strings.ToLower(path[0])]
+			if !ok {
+				continue
+			}
+			if f := leaf(md, path[1:]); f != nil && int32Kinds[f.Kind()] {
+				problems = append(problems, fmt.Sprintf("table %s, %s: %s reads %s field %s",
+					table, def, strings.Join(path, "."), f.Kind(), f.FullName()))
+			}
 		}
 	}
-	var problems []string
+	checkConstraint := func(table string, tc spansql.TableConstraint) {
+		c, ok := tc.Constraint.(spansql.Check)
+		if !ok {
+			return
+		}
+		name := string(tc.Name)
+		if name == "" {
+			name = "CHECK"
+		}
+		check(table, "constraint "+name, c.Expr)
+	}
 	for _, stmt := range ddl {
-		m := createTableRE.FindStringSubmatch(stmt)
-		if m == nil {
+		parsed, perr := spansql.ParseDDLStmt(stmt)
+		if perr != nil {
+			unchecked = append(unchecked, fmt.Sprintf("%q: %v", stmt, perr))
 			continue
 		}
-		table := strings.Trim(m[1], "`")
-		defs := splitTopLevel(m[2])
-		cols := protoColumns(defs, messages)
-		for _, def := range defs {
-			for _, expr := range expressions(def) {
-				for _, p := range pathRE.FindAllStringSubmatch(blankLiterals(expr), -1) {
-					md, ok := cols[strings.Trim(p[1], "`")]
-					if !ok {
-						continue
-					}
-					if f := leaf(md, strings.Split(p[2][1:], ".")); f != nil && int32Kinds[f.Kind()] {
-						problems = append(problems, fmt.Sprintf("table %s, column %s: %s reads %s field %s",
-							table, definitionName(def), p[0], f.Kind(), f.FullName()))
-					}
+		switch s := parsed.(type) {
+		case *spansql.CreateTable:
+			table := string(s.Name)
+			cols := map[string]protoreflect.MessageDescriptor{}
+			for _, c := range s.Columns {
+				addProtoColumn(cols, bundle, c)
+			}
+			tables[strings.ToLower(table)] = cols
+			for _, c := range s.Columns {
+				check(table, "column "+string(c.Name), c.Generated)
+			}
+			for _, tc := range s.Constraints {
+				checkConstraint(table, tc)
+			}
+		case *spansql.AlterTable:
+			table := string(s.Name)
+			switch a := s.Alteration.(type) {
+			case spansql.AddColumn:
+				cols := tables[strings.ToLower(table)]
+				if cols == nil {
+					cols = map[string]protoreflect.MessageDescriptor{}
+					tables[strings.ToLower(table)] = cols
 				}
+				addProtoColumn(cols, bundle, a.Def)
+				check(table, "column "+string(a.Def.Name), a.Def.Generated)
+			case spansql.AddConstraint:
+				checkConstraint(table, a.Constraint)
 			}
 		}
 	}
 	if len(problems) == 0 {
-		return nil
+		return unchecked, nil
 	}
-	return fmt.Errorf("%s; writes to these tables would fail with \"Unexpected error in RPC handling\":\n  %s",
+	return unchecked, fmt.Errorf("%s; writes to these tables would fail with \"Unexpected error in RPC handling\":\n  %s",
 		emulatorHint, strings.Join(problems, "\n  "))
 }
 
-// protoColumns maps each column whose type is a backticked bundle message
-// to that message's descriptor.
-func protoColumns(defs []string, messages map[string]protoreflect.MessageDescriptor) map[string]protoreflect.MessageDescriptor {
-	cols := map[string]protoreflect.MessageDescriptor{}
-	for _, def := range defs {
-		fields := strings.Fields(def)
-		if len(fields) < 2 || !strings.HasPrefix(fields[1], "`") {
-			continue
-		}
-		if md, ok := messages[strings.Trim(fields[1], "`,")]; ok {
-			cols[strings.Trim(fields[0], "`")] = md
-		}
+// addProtoColumn records c in cols when it is a single (non-ARRAY) column
+// whose type is a message in bundle.
+func addProtoColumn(cols map[string]protoreflect.MessageDescriptor, bundle *protobundle.Bundle, c spansql.ColumnDef) {
+	if c.Type.ProtoRef == "" || c.Type.Array {
+		return
 	}
-	return cols
+	if md, ok := bundle.Lookup(c.Type.ProtoRef).(protoreflect.MessageDescriptor); ok {
+		cols[strings.ToLower(string(c.Name))] = md
+	}
 }
 
-// definitionName returns the name a column or constraint definition
-// declares: the column name, the name after CONSTRAINT, or CHECK for an
-// unnamed check constraint.
-func definitionName(def string) string {
-	fields := strings.Fields(def)
-	switch {
-	case len(fields) == 0:
-		return ""
-	case strings.EqualFold(fields[0], "CONSTRAINT") && len(fields) > 1:
-		return strings.Trim(fields[1], "`")
-	case strings.HasPrefix(strings.ToUpper(fields[0]), "CHECK"):
-		return "CHECK"
+// exprPaths returns every dotted field path in expr, each as its
+// segments. spansql has no expression walker, so this walks the tree with
+// reflect: any struct, slice or interface may hold a PathExp.
+func exprPaths(expr spansql.Expr) [][]string {
+	var out [][]string
+	var walk func(v reflect.Value)
+	walk = func(v reflect.Value) {
+		if v.Type() == pathExpType {
+			path := make([]string, v.Len())
+			for i := range v.Len() {
+				path[i] = v.Index(i).String()
+			}
+			out = append(out, path)
+			return
+		}
+		switch v.Kind() {
+		case reflect.Interface, reflect.Pointer:
+			if !v.IsNil() {
+				walk(v.Elem())
+			}
+		case reflect.Struct:
+			for i := range v.NumField() {
+				walk(v.Field(i))
+			}
+		case reflect.Slice, reflect.Array:
+			for i := range v.Len() {
+				walk(v.Index(i))
+			}
+		}
 	}
-	return strings.Trim(fields[0], "`")
+	if expr != nil {
+		walk(reflect.ValueOf(expr))
+	}
+	return out
 }
 
-// leaf walks names through md's fields and returns the last field, or nil
-// when a name does not resolve or a non-message field has children.
+// leaf walks names through md's fields, matching case-insensitively, and
+// returns the last field, or nil when a name does not resolve or a
+// non-message field has children.
 func leaf(md protoreflect.MessageDescriptor, names []string) protoreflect.FieldDescriptor {
 	var f protoreflect.FieldDescriptor
 	for i, n := range names {
 		if md == nil {
 			return nil
 		}
-		f = md.Fields().ByName(protoreflect.Name(n))
-		if f == nil {
+		if f = fieldByNameFold(md, n); f == nil {
 			return nil
 		}
 		if i < len(names)-1 {
@@ -132,90 +178,16 @@ func leaf(md protoreflect.MessageDescriptor, names []string) protoreflect.FieldD
 	return f
 }
 
-// expressions returns the parenthesised bodies after each AS ( or CHECK (
-// in one column or constraint definition.
-func expressions(def string) []string {
-	var out []string
-	for _, loc := range exprRE.FindAllStringIndex(def, -1) {
-		open := loc[1] - 1
-		if end := matchParen(def, open); end > open {
-			out = append(out, def[open+1:end])
+// fieldByNameFold returns md's field named name, ignoring case, or nil.
+func fieldByNameFold(md protoreflect.MessageDescriptor, name string) protoreflect.FieldDescriptor {
+	if f := md.Fields().ByName(protoreflect.Name(name)); f != nil {
+		return f
+	}
+	fields := md.Fields()
+	for i := range fields.Len() {
+		if strings.EqualFold(string(fields.Get(i).Name()), name) {
+			return fields.Get(i)
 		}
 	}
-	return out
-}
-
-// matchParen returns the index of the parenthesis closing s[open], skipping
-// quoted and backticked text, or -1 when it is never closed.
-func matchParen(s string, open int) int {
-	depth := 0
-	var quote byte
-	for i := open; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case c == '\'' || c == '"' || c == '`':
-			quote = c
-		case c == '(':
-			depth++
-		case c == ')':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-// blankLiterals replaces the contents of single- and double-quoted string
-// literals with spaces, so dotted text inside a literal is never read as a
-// field path. Backticked identifiers are kept.
-func blankLiterals(s string) string {
-	b := []byte(s)
-	var quote byte
-	for i, c := range b {
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else {
-				b[i] = ' '
-			}
-		case c == '\'' || c == '"':
-			quote = c
-		}
-	}
-	return string(b)
-}
-
-// splitTopLevel splits a CREATE TABLE column list at commas outside
-// parentheses, quotes and backticks, dropping empty entries.
-func splitTopLevel(s string) []string {
-	var out []string
-	depth, start := 0, 0
-	var quote byte
-	for i := range len(s) {
-		c := s[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case c == '\'' || c == '"' || c == '`':
-			quote = c
-		case c == '(':
-			depth++
-		case c == ')':
-			depth--
-		case c == ',' && depth == 0:
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, s[start:])
-	return slices.DeleteFunc(out, func(d string) bool { return strings.TrimSpace(d) == "" })
+	return nil
 }

@@ -47,7 +47,11 @@ var createCalls atomic.Int32
 func NewDatabase(t testing.TB, bundle *protobundle.Bundle, ddl ...string) *spanner.Client {
 	t.Helper()
 	host := Host(t)
-	if err := checkDDL(ddl, bundle); err != nil {
+	unchecked, err := checkDDL(ddl, bundle)
+	for _, u := range unchecked {
+		t.Logf("spannertest: could not parse %s, so it was not checked for 32-bit proto field reads", u)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
