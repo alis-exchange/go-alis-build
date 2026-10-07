@@ -142,3 +142,16 @@ func TestDescriptors(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateStatement pins the exact DDL: backticked names in Types order.
+func TestCreateStatement(t *testing.T) {
+	b, err := protobundle.New(&structpb.Struct{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "CREATE PROTO BUNDLE (`google.protobuf.ListValue`, `google.protobuf.NullValue`, " +
+		"`google.protobuf.Struct`, `google.protobuf.Value`)"
+	if got := b.CreateStatement(); got != want {
+		t.Errorf("CreateStatement() =\n%s\nwant\n%s", got, want)
+	}
+}

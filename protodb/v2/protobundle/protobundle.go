@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -57,6 +58,16 @@ func (b *Bundle) Descriptors() ([]byte, error) {
 		set.File = append(set.File, protodesc.ToFileDescriptorProto(fd))
 	}
 	return proto.Marshal(set)
+}
+
+// CreateStatement returns the CREATE PROTO BUNDLE statement naming every
+// type in the bundle, in Types order.
+func (b *Bundle) CreateStatement() string {
+	quoted := make([]string, len(b.types))
+	for i, t := range b.types {
+		quoted[i] = "`" + t + "`"
+	}
+	return "CREATE PROTO BUNDLE (" + strings.Join(quoted, ", ") + ")"
 }
 
 // collector accumulates types and files during New's walk.
