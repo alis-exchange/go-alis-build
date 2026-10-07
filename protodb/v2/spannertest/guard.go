@@ -3,6 +3,7 @@ package spannertest
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"cloud.google.com/go/spanner/spansql"
@@ -22,8 +23,15 @@ var int32Kinds = map[protoreflect.Kind]bool{
 	protoreflect.Sfixed32Kind: true,
 }
 
-// pathExpType is the type of a dotted field path in a spansql expression.
-var pathExpType = reflect.TypeFor[spansql.PathExp]()
+var (
+	// pathExpType is the type of a dotted field path in a spansql
+	// expression.
+	pathExpType = reflect.TypeFor[spansql.PathExp]()
+	// tableHeadRE reads the table name from a CREATE or ALTER TABLE
+	// statement spansql could not parse, skipping leading line comments.
+	tableHeadRE = regexp.MustCompile("(?is)^\\s*(?:--[^\\n]*\\n\\s*)*(?:CREATE|ALTER)\\s+TABLE\\s+" +
+		"(?:IF\\s+NOT\\s+EXISTS\\s+)?(`[^`]+`|[\\w.]+)")
+)
 
 // checkDDL parses each statement with spansql and reports every generated
 // column or CHECK constraint, in CREATE TABLE or ALTER TABLE ADD COLUMN /
@@ -44,12 +52,23 @@ func checkDDL(ddl []string, bundle *protobundle.Bundle) (unchecked []string, err
 	// Proto columns per table, both lower-cased, kept across statements so
 	// ALTER TABLE sees the columns an earlier CREATE TABLE declared.
 	tables := map[string]map[string]protoreflect.MessageDescriptor{}
+	// Tables named by a CREATE or ALTER TABLE spansql could not parse: their
+	// proto columns may be unknown, so a path the guard cannot resolve on
+	// one is reported as unchecked rather than passed.
+	partial := map[string]bool{}
 	var problems []string
+	var stmt string
 	check := func(table, def string, expr spansql.Expr) {
 		cols := tables[strings.ToLower(table)]
 		for _, path := range exprPaths(expr) {
 			md, ok := cols[strings.ToLower(path[0])]
 			if !ok {
+				if partial[strings.ToLower(table)] {
+					unchecked = append(unchecked, fmt.Sprintf(
+						"%q: %s reads %s, but an earlier statement on table %s could not be parsed",
+						stmt, def, strings.Join(path, "."), table,
+					))
+				}
 				continue
 			}
 			if f := leaf(md, path[1:]); f != nil && int32Kinds[f.Kind()] {
@@ -69,10 +88,13 @@ func checkDDL(ddl []string, bundle *protobundle.Bundle) (unchecked []string, err
 		}
 		check(table, "constraint "+name, c.Expr)
 	}
-	for _, stmt := range ddl {
+	for _, stmt = range ddl {
 		parsed, perr := spansql.ParseDDLStmt(stmt)
 		if perr != nil {
 			unchecked = append(unchecked, fmt.Sprintf("%q: %v", stmt, perr))
+			if m := tableHeadRE.FindStringSubmatch(stmt); m != nil {
+				partial[strings.ToLower(strings.Trim(m[1], "`"))] = true
+			}
 			continue
 		}
 		switch s := parsed.(type) {

@@ -232,6 +232,49 @@ func TestCheckDDLReportsUnparsedStatements(t *testing.T) {
 	}
 }
 
+// TestCheckDDLReportsReadsOnUnparsedTables pins that a table whose
+// columns spansql could not read is never silently passed: spansql v1.88
+// cannot parse ALTER TABLE ADD COLUMN with a proto type, so a later read
+// of that column, which the guard cannot resolve, is reported unchecked.
+func TestCheckDDLReportsReadsOnUnparsedTables(t *testing.T) {
+	bundle, err := protobundle.New(&databasepb.Backup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, ddl := range map[string][]string{
+		"proto column added by ALTER": {
+			"CREATE TABLE B (k STRING(MAX) NOT NULL) PRIMARY KEY (k)",
+			"ALTER TABLE B ADD COLUMN Backup `google.spanner.admin.database.v1.Backup`",
+			"ALTER TABLE B ADD COLUMN t INT64 AS (Backup.create_time.nanos) STORED",
+		},
+		"unparsed CREATE then ALTER": {
+			"CREATE TABLE B (" + backupCol + ", Bs ARRAY<google.spanner.admin.database.v1.Backup>) PRIMARY KEY (k)",
+			"ALTER TABLE B ADD COLUMN t INT64 AS (Backup.create_time.nanos) STORED",
+		},
+	} {
+		unchecked, err := checkDDL(ddl, bundle)
+		if err != nil {
+			t.Errorf("%s: checkDDL error %v, want none (the read cannot be resolved)", name, err)
+		}
+		last := ddl[len(ddl)-1]
+		found := false
+		for _, u := range unchecked {
+			found = found || strings.Contains(u, "Backup.create_time.nanos")
+		}
+		if !found {
+			t.Errorf("%s: unchecked = %q, want the read in %q reported", name, unchecked, last)
+		}
+	}
+	// A table spansql parsed fully stays quiet about non-proto paths.
+	ok := []string{
+		"CREATE TABLE B (k STRING(MAX) NOT NULL, Backup `google.spanner.admin.database.v1.Backup`) PRIMARY KEY (k)",
+		"ALTER TABLE B ADD COLUMN t INT64 AS (Backup.create_time.seconds) STORED",
+	}
+	if unchecked, err := checkDDL(ok, bundle); err != nil || len(unchecked) != 0 {
+		t.Errorf("parsed table: checkDDL = (%q, %v), want nothing", unchecked, err)
+	}
+}
+
 // TestCheckDDLUsesBundleDescriptors pins that the guard reads the bundle's
 // own descriptors: a type built at run time, absent from the global
 // registry, is still checked.
