@@ -42,9 +42,13 @@
 //
 // The emulator cannot read 32-bit integer proto fields (int32, uint32,
 // sint32, fixed32, sfixed32), such as google.protobuf.Timestamp.nanos.
-// A generated column or CHECK constraint that reads one makes every write
-// fail with an opaque "Unexpected error in RPC handling", so NewDatabase
-// rejects such DDL before creating anything; read .seconds instead.
-// Queries that read one fail with "Type not found: INT32" or "UINT32";
-// wrap errors with Explain to get the same hint.
+// A STORED generated column that reads one makes every write fail with an
+// opaque "Unexpected error in RPC handling", and a CHECK constraint may do
+// the same, so NewDatabase rejects both before creating anything; read
+// .seconds instead. The check covers generated columns and CHECK
+// constraints in CREATE TABLE statements whose paths start at one of the
+// table's proto columns; it does not read ALTER TABLE statements,
+// ARRAY<proto> columns or table-qualified paths. Queries that read such a
+// field fail with "Type not found: INT32" or "UINT32"; wrap errors with
+// Explain to get the same hint.
 package spannertest
