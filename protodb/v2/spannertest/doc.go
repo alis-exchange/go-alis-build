@@ -44,11 +44,20 @@
 // sint32, fixed32, sfixed32), such as google.protobuf.Timestamp.nanos.
 // A STORED generated column that reads one makes every write fail with an
 // opaque "Unexpected error in RPC handling", and a CHECK constraint may do
-// the same, so NewDatabase rejects both before creating anything; read
-// .seconds instead. The check covers generated columns and CHECK
-// constraints in CREATE TABLE statements whose paths start at one of the
-// table's proto columns; it does not read ALTER TABLE statements,
-// ARRAY<proto> columns or table-qualified paths. Queries that read such a
-// field fail with "Type not found: INT32" or "UINT32"; wrap errors with
-// Explain to get the same hint.
+// the same, so NewDatabase rejects both before creating anything and names
+// the table, the column or constraint, and the path; read .seconds instead.
+//
+// The check parses each statement with spansql and covers generated
+// columns and CHECK constraints in CREATE TABLE and in ALTER TABLE ADD
+// COLUMN / ADD CONSTRAINT, for paths that start at one of the table's
+// proto columns (quoted or not, matched case-insensitively). A statement
+// spansql cannot parse, such as one with an ARRAY<proto> column, a
+// schema-qualified table name or a backticked path head, is not checked:
+// NewDatabase logs it and carries on.
+//
+// Queries that read such a field fail with "Type not found: INT32" or
+// "UINT32"; wrap errors with Explain to get a hint. Explain also hints on
+// "Unexpected error in RPC handling", which the emulator raises for other
+// internal errors too, so its hint says the error may come from such a
+// read.
 package spannertest

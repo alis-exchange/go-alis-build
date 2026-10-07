@@ -668,9 +668,10 @@ Two packages turn the Spanner-emulator setup every consumer used to hand-write i
 
 - **`protobundle`** builds the proto bundle a database needs before a table can declare PROTO
   or ENUM columns. `protobundle.New(roots...)` follows every message- and enum-typed field from
-  the root messages, nested enums included and map entries skipped, and gives you the
-  `CREATE PROTO BUNDLE` statement (`CreateStatement`) and the `FileDescriptorSet` bytes
-  (`Descriptors`). It reads the registry linked into your binary, so no `.proto` files or
+  the root messages, nested enums and the messages containing them included and map entries
+  skipped, and gives you the `CREATE PROTO BUNDLE` statement (`CreateStatement`) and the
+  `FileDescriptorSet` bytes (`Descriptors`). For a top-level enum that only an ENUM column uses,
+  pass its descriptor to `protobundle.NewFromDescriptors(librarypb.Genre(0).Descriptor())`. It reads the registry linked into your binary, so no `.proto` files or
   `protoc` are needed, and it has no test or Docker dependencies, so migration code can use it
   too.
 - **`spannertest`** finds or starts an emulator and gives each test a fresh database.
@@ -719,12 +720,20 @@ svc := newService(ctx, client.DatabaseName())
 sfixed32), such as `google.protobuf.Timestamp.nanos`. A STORED generated column that reads one
 makes every write fail with an opaque `Unexpected error in RPC handling`, and a CHECK constraint
 reading one may do the same, so `NewDatabase` rejects both before creating anything and names
-the table, column and path. Read `.seconds` instead, as above. The check reads generated
-columns and CHECK constraints in `CREATE TABLE` statements whose paths start at one of the
-table's proto columns; it does not read `ALTER TABLE` statements, `ARRAY<proto>` columns or
-table-qualified paths. Queries that read such a field
-fail with `Type not found: INT32` or `UINT32`; wrap errors with `spannertest.Explain(err)` to
-get the same hint.
+the table, the column or constraint, and the path. Read `.seconds` instead, as above.
+
+The check parses each statement with
+[`spansql`](https://pkg.go.dev/cloud.google.com/go/spanner/spansql) and covers generated columns
+and CHECK constraints in `CREATE TABLE` and in `ALTER TABLE ... ADD COLUMN` / `ADD CONSTRAINT`,
+for paths that start at one of the table's proto columns (quoted or not, matched
+case-insensitively). A statement `spansql` cannot parse, such as one with an `ARRAY<proto>`
+column, a schema-qualified table name or a backticked path head, is not checked: `NewDatabase`
+logs it and carries on.
+
+Queries that read such a field fail with `Type not found: INT32` or `UINT32`; wrap errors with
+`spannertest.Explain(err)` to get a hint. `Explain` also hints on
+`Unexpected error in RPC handling`, which the emulator raises for other internal errors too, so
+its hint says the error may come from such a read.
 
 ### Running the Spanner conformance test
 
