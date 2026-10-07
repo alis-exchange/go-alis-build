@@ -227,3 +227,57 @@ func TestTypesListsSiblingNestedEnumOnce(t *testing.T) {
 		t.Errorf("Types() = %q, want %q", got, want)
 	}
 }
+
+// nestedOnlyRoot builds message p.A { p.M.State s = 1; p.M.N n = 2; }, where
+// the parent p.M is never itself the type of a field.
+func nestedOnlyRoot(t *testing.T) proto.Message {
+	t.Helper()
+	field := func(name string, num int32, typ descriptorpb.FieldDescriptorProto_Type, ref string) *descriptorpb.FieldDescriptorProto {
+		return &descriptorpb.FieldDescriptorProto{
+			Name: proto.String(name), Number: proto.Int32(num), JsonName: proto.String(name),
+			Label: descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+			Type:  typ.Enum(), TypeName: proto.String(ref),
+		}
+	}
+	f := &descriptorpb.FileDescriptorProto{
+		Name:    proto.String("p/nested.proto"),
+		Package: proto.String("p"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{
+			{
+				Name: proto.String("A"),
+				Field: []*descriptorpb.FieldDescriptorProto{
+					field("s", 1, descriptorpb.FieldDescriptorProto_TYPE_ENUM, ".p.M.State"),
+					field("n", 2, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, ".p.M.N"),
+				},
+			},
+			{
+				Name:       proto.String("M"),
+				NestedType: []*descriptorpb.DescriptorProto{{Name: proto.String("N")}},
+				EnumType: []*descriptorpb.EnumDescriptorProto{{
+					Name:  proto.String("State"),
+					Value: []*descriptorpb.EnumValueDescriptorProto{{Name: proto.String("STATE_UNSPECIFIED"), Number: proto.Int32(0)}},
+				}},
+			},
+		},
+	}
+	fd, err := protodesc.NewFile(f, nil)
+	if err != nil {
+		t.Fatalf("building the nested-only file: %v", err)
+	}
+	return dynamicpb.NewMessage(fd.Messages().ByName("A"))
+}
+
+// TestTypesListsParentsOfNestedTypes pins Spanner's rule that a bundle
+// naming a nested type also names every message containing it: p.M is
+// listed although no field has type p.M.
+func TestTypesListsParentsOfNestedTypes(t *testing.T) {
+	b, err := protobundle.New(nestedOnlyRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"p.A", "p.M", "p.M.N", "p.M.State"}
+	if got := b.Types(); !slices.Equal(got, want) {
+		t.Errorf("Types() = %q, want %q", got, want)
+	}
+}

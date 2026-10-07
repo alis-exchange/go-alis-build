@@ -21,7 +21,7 @@ type Bundle struct {
 
 // New collects every message and enum reachable from roots by following
 // message- and enum-typed fields, plus the enums declared in each reached
-// message. Map-entry messages are skipped; their key and value types are
+// message and every message containing a reached nested type. Map-entry messages are skipped; their key and value types are
 // still followed. Duplicate roots are merged. New returns an error when
 // roots is empty or holds a nil interface; a typed nil pointer such as
 // (*iampb.Policy)(nil) is accepted, since only its descriptor is read.
@@ -102,9 +102,9 @@ func (c *collector) message(md protoreflect.MessageDescriptor) {
 	}
 }
 
-// add records one type and its file, once. A nested enum can be reached by
-// a field before its parent message is visited, so every path goes through
-// this check.
+// add records one type, its file and every message containing it, once. A
+// nested enum can be reached by a field before its parent message is
+// visited, so every path goes through this check.
 func (c *collector) add(d protoreflect.Descriptor) {
 	if c.seenTypes[d.FullName()] {
 		return
@@ -112,6 +112,11 @@ func (c *collector) add(d protoreflect.Descriptor) {
 	c.seenTypes[d.FullName()] = true
 	c.types = append(c.types, string(d.FullName()))
 	c.file(d.ParentFile())
+	// Spanner rejects a bundle that names a nested type without the
+	// message containing it, so walk up to the top-level message.
+	if parent, ok := d.Parent().(protoreflect.MessageDescriptor); ok {
+		c.message(parent)
+	}
 }
 
 // file appends fd after all of its imports, once.
