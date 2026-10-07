@@ -8,6 +8,8 @@ import (
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2/protobundle"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -97,5 +99,46 @@ func TestNewRejectsMissingRoots(t *testing.T) {
 	}
 	if _, err := protobundle.New(&timestamppb.Timestamp{}, nil); err == nil {
 		t.Error("New(ts, nil) returned nil error, want one")
+	}
+}
+
+// TestDescriptors pins that the bytes are a FileDescriptorSet protodesc can
+// load, so every import is present, that each file follows its imports,
+// and that the roots' own files are included.
+func TestDescriptors(t *testing.T) {
+	b, err := protobundle.New(&iampb.Policy{}, &databasepb.Backup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := b.Descriptors()
+	if err != nil {
+		t.Fatalf("Descriptors: %v", err)
+	}
+	set := &descriptorpb.FileDescriptorSet{}
+	if err := proto.Unmarshal(raw, set); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, err := protodesc.NewFiles(set); err != nil {
+		t.Fatalf("protodesc.NewFiles: %v", err)
+	}
+	pos := map[string]int{}
+	for i, f := range set.GetFile() {
+		pos[f.GetName()] = i
+	}
+	for i, f := range set.GetFile() {
+		for _, dep := range f.GetDependency() {
+			if p, ok := pos[dep]; !ok || p >= i {
+				t.Errorf("%s (index %d) imports %s at index %d (present=%v); want it earlier", f.GetName(), i, dep, p, ok)
+			}
+		}
+	}
+	for _, name := range []string{
+		"google/iam/v1/policy.proto",
+		"google/spanner/admin/database/v1/backup.proto",
+		"google/protobuf/timestamp.proto",
+	} {
+		if _, ok := pos[name]; !ok {
+			t.Errorf("descriptor set lacks %s", name)
+		}
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"slices"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // Bundle is the proto schema a Spanner database needs for its PROTO
@@ -42,6 +44,20 @@ func New(roots ...proto.Message) (*Bundle, error) {
 // Types returns the sorted full names of every type in the bundle. The
 // slice is a copy.
 func (b *Bundle) Types() []string { return slices.Clone(b.types) }
+
+// Descriptors returns the marshalled FileDescriptorSet for the bundle's
+// files, each listed after the files it imports, ready for the
+// ProtoDescriptors field of CreateDatabaseRequest or
+// UpdateDatabaseDdlRequest.
+func (b *Bundle) Descriptors() ([]byte, error) {
+	set := &descriptorpb.FileDescriptorSet{
+		File: make([]*descriptorpb.FileDescriptorProto, 0, len(b.files)),
+	}
+	for _, fd := range b.files {
+		set.File = append(set.File, protodesc.ToFileDescriptorProto(fd))
+	}
+	return proto.Marshal(set)
+}
 
 // collector accumulates types and files during New's walk.
 type collector struct {
