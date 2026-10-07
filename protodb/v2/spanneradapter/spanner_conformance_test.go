@@ -2,13 +2,14 @@ package spanneradapter_test
 
 // Env-gated conformance test that runs the protodbtest suite — plus a
 // multi-column tied-order pagination check — against a real Spanner, using
-// the reference table in spanner_reftable_test.go.
+// the reference table in spanner_reftable_test.go. The emulator and the
+// per-test databases come from spannertest.
 //
 // Gating (see the README's "Running the Spanner conformance test"):
 //
-//   - SPANNER_EMULATOR_HOST set  → use that emulator, start no container.
-//   - PROTODB_SPANNER_CONFORMANCE non-empty → start the Cloud Spanner
-//     emulator with testcontainers and point the clients at it.
+//   - SPANNER_EMULATOR_HOST set → use that emulator, start no container.
+//   - SPANNERTEST_EMULATOR, or this repo's older PROTODB_SPANNER_CONFORMANCE,
+//     non-empty → start one Cloud Spanner emulator for the test binary.
 //   - neither → skip.
 
 import (
@@ -16,44 +17,22 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
-
-	dbadmin "cloud.google.com/go/spanner/admin/database/apiv1"
-	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
-	instadmin "cloud.google.com/go/spanner/admin/instance/apiv1"
-	"cloud.google.com/go/spanner/admin/instance/apiv1/instancepb"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
 	"cloud.google.com/go/spanner"
-	"github.com/testcontainers/testcontainers-go"
-	tcspanner "github.com/testcontainers/testcontainers-go/modules/gcloud/spanner"
+	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"go.alis.build/protodb/v2"
 	"go.alis.build/protodb/v2/filtering"
+	"go.alis.build/protodb/v2/protobundle"
 	"go.alis.build/protodb/v2/protodbtest"
 	"go.alis.build/protodb/v2/spanneradapter"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protodesc"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/descriptorpb"
+	"go.alis.build/protodb/v2/spannertest"
 )
 
 const (
-	// emulatorImage is pinned rather than :latest so a CI run and a local
-	// run exercise the same Spanner build.
-	emulatorImage = "gcr.io/cloud-spanner-emulator/emulator:1.5.56"
-
-	// emulatorHostEnv names a running emulator to use; the emulator tests
-	// run when it or conformanceEnv is set.
-	emulatorHostEnv = "SPANNER_EMULATOR_HOST"
-	// conformanceEnv, set to any value, starts an emulator in Docker.
+	// conformanceEnv, set to any value, starts an emulator in Docker. It
+	// predates spannertest and maps onto SPANNERTEST_EMULATOR.
 	conformanceEnv = "PROTODB_SPANNER_CONFORMANCE"
-
-	// testProjectID is the emulator project every test database lives in.
-	testProjectID = "protodb-test"
-	// testInstanceID is the emulator instance every test database lives in.
-	testInstanceID = "protodb-test"
 
 	// booksTable has a single string key.
 	booksTable = "Books"
@@ -66,184 +45,47 @@ const (
 	setsTable = "Sets"
 )
 
-// resolveEmulator implements the two gates. It either finds an emulator
-// already named by SPANNER_EMULATOR_HOST, starts one in a container, or
-// skips the test.
-func resolveEmulator(t *testing.T) {
-	t.Helper()
-	if host := os.Getenv(emulatorHostEnv); host != "" {
-		t.Logf("using the Spanner emulator already at %s=%s", emulatorHostEnv, host)
-		return
-	}
-	if os.Getenv(conformanceEnv) == "" {
-		t.Skip("set SPANNER_EMULATOR_HOST or PROTODB_SPANNER_CONFORMANCE=1 to run the Spanner conformance test")
-	}
-
-	ctx := context.Background()
-	ctr, err := tcspanner.Run(ctx, emulatorImage)
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(ctr); err != nil {
-			t.Logf("terminating the Spanner emulator container: %v", err)
-		}
-	})
-	if err != nil {
-		t.Fatalf("starting the Spanner emulator container (%s): %v", emulatorImage, err)
-	}
-
-	// The Spanner Go client and both admin clients read this variable and
-	// switch to a plaintext, credential-free connection when it is set.
-	t.Setenv(emulatorHostEnv, ctr.URI())
-	t.Logf("started the Spanner emulator at %s", ctr.URI())
-}
-
-// newSpannerDatabase resolves the emulator, creates the instance (once per
-// emulator) and a fresh database carrying the PROTO BUNDLE and the two test
-// tables, and returns a client bound to it.
+// newSpannerDatabase creates a fresh emulator database carrying the four
+// test tables and the proto bundle for Policy and Backup, and returns a
+// client bound to it. The database is dropped when t ends.
 func newSpannerDatabase(t *testing.T) *spanner.Client {
 	t.Helper()
-	resolveEmulator(t)
-
-	ctx := context.Background()
-	createInstance(ctx, t)
-
-	descriptors, err := protoBundleDescriptors()
+	if os.Getenv(conformanceEnv) != "" && os.Getenv("SPANNERTEST_EMULATOR") == "" {
+		t.Setenv("SPANNERTEST_EMULATOR", "1")
+	}
+	bundle, err := protobundle.New(&iampb.Policy{}, &databasepb.Backup{})
 	if err != nil {
-		t.Fatalf("building the proto descriptor set: %v", err)
+		t.Fatalf("building the proto bundle: %v", err)
 	}
-
-	databaseID := fmt.Sprintf("d%d", time.Now().UnixNano())
-	adminClient, err := dbadmin.NewDatabaseAdminClient(ctx)
-	if err != nil {
-		t.Fatalf("database admin client: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := adminClient.Close(); err != nil {
-			t.Logf("closing the database admin client: %v", err)
-		}
-	})
-
-	op, err := adminClient.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
-		Parent:          fmt.Sprintf("projects/%s/instances/%s", testProjectID, testInstanceID),
-		CreateStatement: fmt.Sprintf("CREATE DATABASE `%s`", databaseID),
-		ExtraStatements: []string{
-			// The bundle has to name every proto type the schema below
-			// mentions; the descriptors travel out-of-band as bytes.
-			"CREATE PROTO BUNDLE (`google.iam.v1.Policy`, `google.spanner.admin.database.v1.Backup`, " +
-				"`google.spanner.admin.database.v1.Backup.State`, `google.protobuf.Timestamp`)",
-			"CREATE TABLE " + booksTable + " (" +
-				"`key` STRING(MAX) NOT NULL," +
-				"Res STRING(MAX)," +
-				"Policy `google.iam.v1.Policy`," +
-				") PRIMARY KEY (`key`)",
-			"CREATE TABLE " + shelvesTable + " (" +
-				"a STRING(MAX) NOT NULL," +
-				"b STRING(MAX) NOT NULL," +
-				"Res STRING(MAX)," +
-				"Policy `google.iam.v1.Policy`," +
-				") PRIMARY KEY (a, b)",
-			// The shared query cases (internal/querytest) run against
-			// Backup rows; create_time mirrors the generated timestamp
-			// columns real tables order by.
-			"CREATE TABLE " + backupsTable + " (" +
-				"`key` STRING(MAX) NOT NULL," +
-				"Backup `google.spanner.admin.database.v1.Backup`," +
-				"Policy `google.iam.v1.Policy`," +
-				// Seconds only: the emulator cannot read the INT32 nanos field
-				// (and the fixtures have no sub-second times).
-				"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Backup.create_time.seconds)) STORED," +
-				") PRIMARY KEY (`key`)",
-			"CREATE TABLE " + setsTable + " (" +
-				"`key` STRING(MAX) NOT NULL," +
-				"`Set` `google.spanner.admin.database.v1.Backup`," +
-				"Policy `google.iam.v1.Policy`," +
-				") PRIMARY KEY (`key`)",
-		},
-		ProtoDescriptors: descriptors,
-	})
-	if err != nil {
-		t.Fatalf("CreateDatabase: %v", err)
-	}
-	if _, err := op.Wait(ctx); err != nil {
-		t.Fatalf("waiting for CreateDatabase (DDL rejected?): %v", err)
-	}
-
-	databaseName := fmt.Sprintf("projects/%s/instances/%s/databases/%s", testProjectID, testInstanceID, databaseID)
-	// Drop the database the run created. On the container path this is
-	// redundant (the emulator dies with the container), but under the
-	// SPANNER_EMULATOR_HOST reuse gate the emulator outlives the test, and
-	// without this every run would leave an orphaned database behind.
-	// Registered after creation succeeded, so it never fires for a database
-	// that does not exist; LIFO cleanup ordering puts it after the Spanner
-	// client's Close and before the container is terminated.
-	t.Cleanup(func() {
-		if err := adminClient.DropDatabase(ctx, &databasepb.DropDatabaseRequest{Database: databaseName}); err != nil {
-			t.Errorf("dropping test database %s: %v", databaseName, err)
-		}
-	})
-
-	client, err := spanner.NewClient(ctx, databaseName)
-	if err != nil {
-		t.Fatalf("spanner client: %v", err)
-	}
-	t.Cleanup(client.Close)
-	return client
-}
-
-// createInstance creates the shared emulator instance, tolerating one that
-// already exists from an earlier test against the same emulator.
-func createInstance(ctx context.Context, t *testing.T) {
-	t.Helper()
-	admin, err := instadmin.NewInstanceAdminClient(ctx)
-	if err != nil {
-		t.Fatalf("instance admin client: %v", err)
-	}
-	defer admin.Close()
-
-	op, err := admin.CreateInstance(ctx, &instancepb.CreateInstanceRequest{
-		Parent:     "projects/" + testProjectID,
-		InstanceId: testInstanceID,
-		Instance: &instancepb.Instance{
-			Config:      fmt.Sprintf("projects/%s/instanceConfigs/emulator-config", testProjectID),
-			DisplayName: "protodb conformance",
-			NodeCount:   1,
-		},
-	})
-	if status.Code(err) == codes.AlreadyExists {
-		return
-	}
-	if err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-	if _, err := op.Wait(ctx); err != nil && status.Code(err) != codes.AlreadyExists {
-		t.Fatalf("waiting for CreateInstance: %v", err)
-	}
-}
-
-// protoBundleDescriptors serialises google.iam.v1.Policy's file descriptor
-// and everything it imports, transitively, into the FileDescriptorSet the
-// CREATE PROTO BUNDLE statement needs. It is built from the compiled-in
-// registry, so the bytes always match the iampb the library links against —
-// no .proto files or protoc at test time.
-func protoBundleDescriptors() ([]byte, error) {
-	set := &descriptorpb.FileDescriptorSet{}
-	seen := map[string]bool{}
-	var add func(protoreflect.FileDescriptor)
-	add = func(fd protoreflect.FileDescriptor) {
-		if seen[fd.Path()] {
-			return
-		}
-		seen[fd.Path()] = true
-		// Dependencies first: a FileDescriptorSet must list a file after
-		// every file it imports.
-		imports := fd.Imports()
-		for i := 0; i < imports.Len(); i++ {
-			add(imports.Get(i).FileDescriptor)
-		}
-		set.File = append(set.File, protodesc.ToFileDescriptorProto(fd))
-	}
-	add((&iampb.Policy{}).ProtoReflect().Descriptor().ParentFile())
-	add((&databasepb.Backup{}).ProtoReflect().Descriptor().ParentFile())
-	return proto.Marshal(set)
+	return spannertest.NewDatabase(t, bundle,
+		"CREATE TABLE "+booksTable+" ("+
+			"`key` STRING(MAX) NOT NULL,"+
+			"Res STRING(MAX),"+
+			"Policy `google.iam.v1.Policy`,"+
+			") PRIMARY KEY (`key`)",
+		"CREATE TABLE "+shelvesTable+" ("+
+			"a STRING(MAX) NOT NULL,"+
+			"b STRING(MAX) NOT NULL,"+
+			"Res STRING(MAX),"+
+			"Policy `google.iam.v1.Policy`,"+
+			") PRIMARY KEY (a, b)",
+		// The shared query cases (internal/querytest) run against
+		// Backup rows; create_time mirrors the generated timestamp
+		// columns real tables order by.
+		"CREATE TABLE "+backupsTable+" ("+
+			"`key` STRING(MAX) NOT NULL,"+
+			"Backup `google.spanner.admin.database.v1.Backup`,"+
+			"Policy `google.iam.v1.Policy`,"+
+			// Seconds only: the emulator cannot read the INT32 nanos field
+			// (and the fixtures have no sub-second times).
+			"create_time TIMESTAMP AS (TIMESTAMP_SECONDS(Backup.create_time.seconds)) STORED,"+
+			") PRIMARY KEY (`key`)",
+		"CREATE TABLE "+setsTable+" ("+
+			"`key` STRING(MAX) NOT NULL,"+
+			"`Set` `google.spanner.admin.database.v1.Backup`,"+
+			"Policy `google.iam.v1.Policy`,"+
+			") PRIMARY KEY (`key`)",
+	)
 }
 
 // newBooksTable builds the single-string-key reference table.
