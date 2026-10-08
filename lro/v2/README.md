@@ -74,5 +74,10 @@ if err := op.ResumeViaTasks("create-agent", 0); err != nil {
 return op.OperationPb(), nil
 ```
 
+`ResumeViaTasks` never fails the operation over scheduling: the Cloud Tasks
+call is detached from the caller's context, bounded by its own deadline,
+retried on every error, and falls back to one in-process resume (which
+reschedules via Cloud Tasks) when the task still cannot be created.
+
 See [`example_test.go`](./example_test.go) and
 [`docs.go`](./docs.go) for the end-to-end flow.

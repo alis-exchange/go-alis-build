@@ -11,6 +11,7 @@ import (
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/google/uuid"
 	"github.com/googleapis/gax-go/v2"
+	"go.alis.build/alog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -28,7 +29,19 @@ type queue struct {
 	client              cloudTasksClient
 	taskDeadline        time.Duration
 	retryBackoff        gax.Backoff
+	// createTaskTimeout bounds one CreateTask attempt. Cloud Tasks rejects a
+	// request whose deadline is more than 30s out ("The deadline cannot be more
+	// than 30s in the future"), so every attempt carries its own short deadline
+	// instead of whatever the caller's context happened to hold.
+	createTaskTimeout time.Duration
+	// scheduleBudget bounds the whole set of attempts for one schedule.
+	scheduleBudget time.Duration
 }
+
+const (
+	defaultCreateTaskTimeout = 20 * time.Second
+	defaultScheduleBudget    = 30 * time.Second
+)
 
 var supportedCloudTasksLocations = map[string]struct{}{
 	"northamerica-northeast1": {},
@@ -78,10 +91,19 @@ func newQueue(ctx context.Context, cfg Config) (*queue, error) {
 			Max:        5 * time.Second,
 			Multiplier: 2,
 		},
+		createTaskTimeout: defaultCreateTaskTimeout,
+		scheduleBudget:    defaultScheduleBudget,
 	}, nil
 }
 
 // scheduleCloudTask creates a Cloud Tasks HTTP task for the supplied callback URL.
+//
+// The caller's context is used for attribution only. Scheduling runs detached
+// from it: an RPC caller's deadline or disconnect decides nothing about whether
+// the operation continues, and Cloud Tasks would reject a forwarded deadline
+// longer than 30s anyway. Every attempt gets its own short deadline, every
+// error is retried until the schedule budget runs out, and each failed attempt
+// is logged with the status details Cloud Tasks returned.
 func (q *queue) scheduleCloudTask(ctx context.Context, url string, scheduleTime time.Time) error {
 	// Supplying a task name makes CreateTask idempotent. If Cloud Tasks accepts a
 	// request but its response is lost, the retry receives AlreadyExists instead
@@ -107,22 +129,42 @@ func (q *queue) scheduleCloudTask(ctx context.Context, url string, scheduleTime 
 		},
 	}
 
-	err := gax.Invoke(ctx, func(ctx context.Context, _ gax.CallSettings) error {
-		_, err := q.client.CreateTask(ctx, req)
-		return err
-	}, gax.WithRetry(func() gax.Retryer {
-		return gax.OnCodes([]codes.Code{
-			codes.Aborted,
-			codes.DeadlineExceeded,
-			codes.Internal,
-			codes.ResourceExhausted,
-			codes.Unavailable,
-		}, q.retryBackoff)
-	}))
-	if status.Code(err) == codes.AlreadyExists {
-		return nil
+	ctx = context.WithoutCancel(ctx)
+	budgetCtx, cancel := context.WithTimeout(ctx, q.scheduleBudget)
+	defer cancel()
+
+	backoff := q.retryBackoff
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		attemptCtx, cancelAttempt := context.WithTimeout(budgetCtx, q.createTaskTimeout)
+		_, err := q.client.CreateTask(attemptCtx, req)
+		cancelAttempt()
+		if err == nil || status.Code(err) == codes.AlreadyExists {
+			return nil
+		}
+		alog.Warnf(ctx, "lro: creating cloud task %s (attempt %d) failed: %v%s", taskName, attempt, err, statusDetails(err))
+		// Keep the last answer Cloud Tasks actually gave; a budget expiry
+		// mid-call only says the attempts ran out.
+		if budgetCtx.Err() == nil || lastErr == nil {
+			lastErr = err
+		}
+
+		select {
+		case <-budgetCtx.Done():
+			return fmt.Errorf("after %d attempt(s) over %s: %w", attempt, q.scheduleBudget, lastErr)
+		case <-time.After(backoff.Pause()):
+		}
 	}
-	return err
+}
+
+// statusDetails renders the rich error details of a gRPC status, if any, so a
+// rejection such as a bad field or an over-long deadline is named in the log.
+func statusDetails(err error) string {
+	details := status.Convert(err).Details()
+	if len(details) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" details=%v", details)
 }
 
 // resolveCloudTasksLocation returns a supported Cloud Tasks region for the deployment region.

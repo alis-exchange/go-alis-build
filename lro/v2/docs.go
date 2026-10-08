@@ -281,6 +281,14 @@ Mental model for building an RPC or method that returns an LRO:
     - call `ResumeViaTasks(path, nextDelay)` again to continue later, or
     - call `Complete(...)` / `Fail(...)` to finish the operation.
 
+Scheduling never fails an operation. `ResumeViaTasks` runs the Cloud Tasks call
+detached from the caller's context with its own short deadline (Cloud Tasks
+rejects request deadlines beyond 30s, and a disconnecting RPC caller must not
+cancel the schedule), retries every error for a bounded budget, and when the
+task still cannot be created it resumes the operation once in-process at the
+scheduled time. That resume reschedules via Cloud Tasks as usual. Each failed
+attempt is logged with the status details Cloud Tasks returned.
+
 The important design rule is that the resumable handler must be registered at
 startup. Do not rely on scheduling time to create HTTP routes, because a future
 Cloud Tasks callback may land on a fresh instance that never executed the

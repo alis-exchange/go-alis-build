@@ -334,7 +334,14 @@ func (o *Operation) OperationPb() *longrunningpb.Operation {
 	return o.row.Operation
 }
 
-// ResumeViaTasks saves the operation and schedules the registered resume path to run later via Cloud Tasks.
+// ResumeViaTasks schedules the registered resume path to run later via Cloud Tasks.
+//
+// Scheduling is infrastructure, not the operation's work, so it never fails
+// the operation: the Cloud Tasks call runs detached from the caller's context
+// with its own short deadline and is retried on every error, and when it still
+// cannot be scheduled the operation resumes once in-process at the same time
+// instead. That resume reschedules via Cloud Tasks as usual, so a scheduling
+// outage costs one hop, not the operation. Both paths are logged.
 //
 // RegisterHTTP is only required in processes that actually need to serve the
 // resumable callback route. Local callers can also resume directly without
@@ -346,18 +353,25 @@ func (o *Operation) ResumeViaTasks(path string, waitDuration time.Duration) erro
 	if _, ok := o.client.resumableHandlers.Load(path); !ok {
 		return fmt.Errorf("no resumable handler registered for path %q", path)
 	}
+	opName := o.row.Operation.GetName()
+	scheduleTime := time.Now().Add(waitDuration)
 	if os.Getenv("K_SERVICE") == "" {
-		o.client.scheduleLocalResume(path, o.row.Operation.GetName(), o.row, time.Now().Add(waitDuration))
+		o.client.scheduleLocalResume(path, opName, o.row, scheduleTime)
 		return nil
 	}
 
 	// For example, "/resume-operation/" + "create-agent" becomes "/resume-operation/create-agent".
 	muxPattern := o.client.muxPrefix + path
-	url := o.client.host + muxPattern + "?operation=" + o.row.Operation.GetName()
+	url := o.client.host + muxPattern + "?operation=" + opName
 
-	if err := o.client.taskQueue.scheduleCloudTask(o.Ctx, url, time.Now().Add(waitDuration)); err != nil {
-		_ = o.Fail("scheduling cloudtask: %v", err)
-		return fmt.Errorf("scheduling cloudtask: %w", err)
+	if err := o.client.taskQueue.scheduleCloudTask(o.Ctx, url, scheduleTime); err != nil {
+		// The operation's own work may already be running elsewhere; failing it
+		// here would report a false failure. Resume in-process once instead and
+		// let that resume reschedule via Cloud Tasks.
+		alog.Errorf(context.WithoutCancel(o.Ctx),
+			"lro: operation %s could not be scheduled via cloud tasks, resuming in-process at %s instead: %v",
+			opName, scheduleTime.Format(time.RFC3339), err)
+		o.client.scheduleLocalResume(path, opName, o.row, scheduleTime)
 	}
 	return nil
 }
