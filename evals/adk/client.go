@@ -151,6 +151,7 @@ func NewHTTPClient(baseURL string, opts ...HTTPClientOption) *HTTPClient {
 }
 
 // RunEval POSTs to .../eval_sets/{evalSetId}/run_eval and decodes results.
+// The app name and eval set id are percent-escaped in the path.
 func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]models.RunEvalResult, error) {
 	if c == nil {
 		return nil, ErrNilClient{}
@@ -179,15 +180,15 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 		return nil, ErrEncodeRequest{Err: err}
 	}
 
-	url := fmt.Sprintf(
+	endpoint := fmt.Sprintf(
 		"%s%s/dev/apps/%s/eval_sets/%s/run_eval",
 		strings.TrimSuffix(baseURL, "/"),
 		pathPrefix,
-		params.AppName,
-		params.EvalSetID,
+		url.PathEscape(params.AppName),
+		url.PathEscape(params.EvalSetID),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, ErrBuildRequest{Err: err}
 	}
@@ -218,6 +219,7 @@ func (c *HTTPClient) RunEval(ctx context.Context, params RunEvalParams) ([]model
 }
 
 // ListEvalSets GETs .../eval_sets and decodes eval set ids for an app.
+// The app name is percent-escaped in the path.
 func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string, error) {
 	if c == nil {
 		return nil, ErrNilClient{}
@@ -226,14 +228,14 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 		return nil, ErrMissingAppName{}
 	}
 
-	url := fmt.Sprintf(
+	endpoint := fmt.Sprintf(
 		"%s%s/dev/apps/%s/eval_sets",
 		c.baseURL,
 		c.pathPrefix,
-		appName,
+		url.PathEscape(appName),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, ErrBuildRequest{Err: err}
 	}

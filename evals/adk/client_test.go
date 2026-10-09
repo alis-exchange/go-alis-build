@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"testing"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
@@ -172,5 +174,37 @@ func TestHTTPClient_RunEval_omitsEmptySessionState(t *testing.T) {
 	}
 	if _, ok := gotBody["session_state"]; ok {
 		t.Fatalf("body = %#v, session_state should be omitted", gotBody)
+	}
+}
+
+// TestHTTPClient_escapesExistingPathSegments checks RunEval and ListEvalSets
+// percent-escape the app name so "?" cannot start a query string.
+func TestHTTPClient_escapesExistingPathSegments(t *testing.T) {
+	t.Parallel()
+
+	var paths []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.EscapedPath())
+		mu.Unlock()
+		_, _ = w.Write([]byte("[]"))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := adk.NewHTTPClient(srv.URL)
+	if _, err := client.ListEvalSets(context.Background(), "a?b"); err != nil {
+		t.Fatalf("ListEvalSets() error = %v", err)
+	}
+	if _, err := client.RunEval(context.Background(), adk.RunEvalParams{AppName: "a?b", EvalSetID: "smoke"}); err != nil {
+		t.Fatalf("RunEval() error = %v", err)
+	}
+
+	want := []string{
+		"/api/dev/apps/a%3Fb/eval_sets",
+		"/api/dev/apps/a%3Fb/eval_sets/smoke/run_eval",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("paths = %q, want %q", paths, want)
 	}
 }
