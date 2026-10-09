@@ -2,6 +2,7 @@ package adk
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
@@ -47,12 +48,17 @@ const notEvaluatedReason = "adk: final eval status NOT_EVALUATED"
 // RecordTo records the case into r: the session id when set, one metric per
 // ADK metric result, the judge info when [ProviderCase.Judge] is non-zero,
 // then a failure when ADK's final status is FAILED, or a NOT_EVALUATED mark
-// when it is NOT_EVALUATED. A nil r does nothing.
+// for any final status other than PASSED and FAILED: NOT_EVALUATED, unset
+// (zero), or a value this package does not know.
+//
+// r must be a usable recorder. A nil interface does nothing, but a typed nil
+// pointer such as a nil *evals.AgentEvalResult is not detected and panics.
 //
 // The suite derives case status from what is recorded. ADK FAILED gives a
-// FAILED suite case. ADK NOT_EVALUATED gives a NOT_EVALUATED suite case that
-// keeps its session, metrics and judge, unless a metric FAILED, which wins;
-// it never reports PASSED. ADK PASSED with a FAILED metric gives FAILED.
+// FAILED suite case. Any status other than PASSED and FAILED gives a
+// NOT_EVALUATED suite case that keeps its session, metrics and judge, unless
+// a metric FAILED, which wins; it never reports PASSED. ADK PASSED with a
+// FAILED metric gives FAILED.
 func (c ProviderCase) RecordTo(r CaseRecorder) {
 	if r == nil {
 		return
@@ -66,10 +72,15 @@ func (c ProviderCase) RecordTo(r CaseRecorder) {
 	if j := judgeInfo(c.Judge); j != nil {
 		r.SetJudgeInfo(j)
 	}
-	switch c.Result.FinalEvalStatus {
+	switch status := c.Result.FinalEvalStatus; status {
+	case models.EvalStatusPassed:
 	case models.EvalStatusFailed:
 		r.Fail(errFinalStatusFailed)
 	case models.EvalStatusNotEvaluated:
 		r.SetNotEvaluated(notEvaluatedReason)
+	default:
+		// models.EvalStatus is a plain int without a String method, so the
+		// number is the clearest name for an unset or unknown value.
+		r.SetNotEvaluated(fmt.Sprintf("adk: unknown final eval status %d", int(status)))
 	}
 }

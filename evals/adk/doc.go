@@ -66,10 +66,10 @@
 // returns (the HTTP launcher sorts by id). [SuiteCaseName] replaces "." with
 // "_" because suite case names cannot contain ".".
 //
-// ADK FAILED makes the suite case FAILED. ADK NOT_EVALUATED makes the suite
-// case NOT_EVALUATED with its session, metrics and judge kept, through
-// AgentEvalResult.SetNotEvaluated; it is never PASSED, and a failed metric or
-// validation still makes it FAILED. The run is then NOT_EVALUATED unless
+// ADK FAILED makes the suite case FAILED. ADK NOT_EVALUATED, or an unset or
+// unknown final status, makes the suite case NOT_EVALUATED with its session,
+// metrics and judge kept, through AgentEvalResult.SetNotEvaluated; it is
+// never PASSED, and a failed metric or validation still makes it FAILED. The run is then NOT_EVALUATED unless
 // another case failed. [ProviderCase.RecordTo] documents the rule.
 //
 // Each case declares its own judge. Mixing judge models or model versions

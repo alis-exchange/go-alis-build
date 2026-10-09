@@ -48,7 +48,9 @@ an older `go` directive must copy `id` inside the loop.
 - **Status.** ADK `FAILED` fails the suite case with an `_evals.case`
   validation `adk: final eval status FAILED`. ADK `NOT_EVALUATED` gives a
   `NOT_EVALUATED` suite case that keeps its session, metrics and judge,
-  recorded through `AgentEvalResult.SetNotEvaluated`. It is never `PASSED`,
+  recorded through `AgentEvalResult.SetNotEvaluated`. An unset or unknown
+  final status does the same, with the reason
+  `adk: unknown final eval status <n>`. It is never `PASSED`,
   and a failure (failed metric, failed validation, `Fail`) still wins. The run
   is then `NOT_EVALUATED` unless some case failed.
 - **Judge.** Each case declares its own judge. Mixing judge models or model

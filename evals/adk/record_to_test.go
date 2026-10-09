@@ -143,6 +143,47 @@ func TestProviderCase_RecordTo_notEvaluatedCase(t *testing.T) {
 	}
 }
 
+// TestProviderCase_RecordTo_unknownStatus marks a case NOT_EVALUATED when
+// ADK's final status is unset or not one of PASSED, FAILED or
+// NOT_EVALUATED, so an unrecognised status never reports PASSED.
+func TestProviderCase_RecordTo_unknownStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status models.EvalStatus
+		reason string
+	}{
+		{name: "unset", status: 0, reason: "adk: unknown final eval status 0"},
+		{name: "unknown", status: 99, reason: "adk: unknown final eval status 99"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := adk.ProviderCase{SetID: "smoke", Result: models.RunEvalResult{
+				EvalID:          "case_d",
+				SessionID:       "sess-d",
+				FinalEvalStatus: tc.status,
+				OverallEvalMetricResults: []models.EvalMetricResult{
+					{MetricName: models.MetricResponseMatchScore, Threshold: 0.3, Score: new(1.0), EvalStatus: models.EvalStatusPassed},
+				},
+			}}
+			var r recorder
+			c.RecordTo(&r)
+
+			if want := []string{"session", "metric", "not_evaluated"}; !slices.Equal(r.calls, want) {
+				t.Fatalf("calls = %q, want %q", r.calls, want)
+			}
+			if want := []string{tc.reason}; !slices.Equal(r.reasons, want) {
+				t.Fatalf("reasons = %q, want %q", r.reasons, want)
+			}
+			if len(r.fails) != 0 {
+				t.Fatalf("fails = %v, want none", r.fails)
+			}
+		})
+	}
+}
+
 // TestProviderCase_RecordTo_nilRecorder does not panic.
 func TestProviderCase_RecordTo_nilRecorder(t *testing.T) {
 	t.Parallel()
