@@ -52,7 +52,9 @@ const (
 type sample struct {
 	// sentAt is the pacer tick timestamp used for warmup/window filtering.
 	sentAt time.Time
-	// latency is wall time from tick dispatch through target return.
+	// latency is wall time from the start of the target call through its
+	// return, measured in invokeTarget. Time the tick spent queued before a
+	// worker picked it up is not included.
 	latency time.Duration
 	// result holds transport, check, and optional stream outcome.
 	result TargetResult
