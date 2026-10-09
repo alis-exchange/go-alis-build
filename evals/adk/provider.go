@@ -51,6 +51,12 @@ type ProviderCase struct {
 }
 
 // Run materializes a complete agent-eval run envelope without publishing it.
+//
+// Deprecated: Build an evals.AgentEvalSuite instead: one case per id from
+// [Provider.ListCases], each calling [Provider.RunCase] and
+// [ProviderCase.RecordTo]. The suite measures real per-case durations and
+// applies concurrency, cancellation, and publication. This method keeps its
+// current output.
 func (r ProviderResult) Run() *evalspb.Run {
 	return &evalspb.Run{
 		Name:       "runs/" + uuid.NewString(),
