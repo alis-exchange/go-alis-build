@@ -48,8 +48,27 @@ func TestHTTPClient_ListEvalCases_escapesPathSegments(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := adk.NewHTTPClient(srv.URL).ListEvalCases(context.Background(), "a?b", "smoke"); err != nil {
+	got, err := adk.NewHTTPClient(srv.URL).ListEvalCases(context.Background(), "a?b", "smoke")
+	if err != nil {
 		t.Fatalf("ListEvalCases() error = %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("ListEvalCases() = %#v, want an empty non-nil slice for []", got)
+	}
+}
+
+// TestHTTPClient_ListEvalCases_unreachableAgent checks a transport failure
+// surfaces as ErrAgentUnreachable.
+func TestHTTPClient_ListEvalCases_unreachableAgent(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+
+	_, err := adk.NewHTTPClient(url).ListEvalCases(context.Background(), "app", "smoke")
+	if !errors.Is(err, adk.ErrAgentUnreachable{}) {
+		t.Fatalf("ListEvalCases() error = %v, want ErrAgentUnreachable", err)
 	}
 }
 
