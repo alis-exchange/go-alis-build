@@ -16,13 +16,14 @@
 // Spanner targets are always DEPENDENCY on the wire. Target IDs must be unique
 // across kinds.
 //
-// # Fetch semantics (v1)
+// # Fetch semantics
 //
 // Observation fetches all declared targets concurrently (30s per-target
-// timeout).
-// Per-target failures are recorded on the snapshot (FetchStatus, FetchMessage);
-// they do not fail the parent load or infra-observe case. Partial metric gaps
-// within a target still yield OK with a partial-failure message.
+// timeout). Per-target failures are recorded on the snapshot as
+// FetchStatus and FetchMessage; the observation call itself still
+// succeeds. An infra observation case fails when any added snapshot has
+// FetchStatus UNAVAILABLE, PERMISSION_DENIED or TIMEOUT. Partial metric
+// gaps within a target still yield OK with a partial-failure message.
 //
 // # Client injection
 //

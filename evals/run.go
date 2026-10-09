@@ -506,16 +506,29 @@ func infraObservationOutcome(caseName string, r *InfraObservationResult) execute
 // only; load cases keep snapshots as diagnostics.
 func snapshotsFailed(cloudRun []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) bool {
 	for _, snapshot := range cloudRun {
-		if snapshot.GetFetchStatus() == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+		if fetchFailed(snapshot.GetFetchStatus()) {
 			return true
 		}
 	}
 	for _, snapshot := range spanner {
-		if snapshot.GetFetchStatus() == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+		if fetchFailed(snapshot.GetFetchStatus()) {
 			return true
 		}
 	}
 	return false
+}
+
+// fetchFailed lists the fetch statuses that fail an infra-observation case.
+// UNSPECIFIED and OK pass.
+func fetchFailed(s evalspb.InfraFetchStatus) bool {
+	switch s {
+	case evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
+		evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_PERMISSION_DENIED,
+		evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_TIMEOUT:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *suiteCore) materializeRun(cfg runConfig, cases []executedCase, start, end time.Time) *evalspb.Run {

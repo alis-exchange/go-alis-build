@@ -294,7 +294,7 @@ suite := evals.NewInfraObservationSuite("checkout-runtime").
     })
 ```
 
-Standalone infra observation cases fail when an added Cloud Run or Spanner snapshot has `FetchStatus == INFRA_FETCH_STATUS_UNAVAILABLE`. That preserves the existing result semantics without requiring an extra validation row.
+Infra observation cases fail when an added Cloud Run or Spanner snapshot has `FetchStatus` `INFRA_FETCH_STATUS_UNAVAILABLE`, `INFRA_FETCH_STATUS_PERMISSION_DENIED` or `INFRA_FETCH_STATUS_TIMEOUT`. No extra validation row is added.
 
 ## Result contract
 

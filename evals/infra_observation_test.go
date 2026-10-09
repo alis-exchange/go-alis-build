@@ -141,6 +141,41 @@ func TestInfraObservationResult_unavailableSnapshotFailsCaseWithoutExtraValidati
 	}
 }
 
+func TestInfraObservationResult_failedFetchStatusesFailCase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		status evalspb.InfraFetchStatus
+		want   evalspb.Status
+	}{
+		{"unavailable", evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE, evalspb.Status_FAILED},
+		{"permission denied", evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_PERMISSION_DENIED, evalspb.Status_FAILED},
+		{"timeout", evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_TIMEOUT, evalspb.Status_FAILED},
+		{"ok", evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK, evalspb.Status_PASSED},
+		{"unspecified", evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNSPECIFIED, evalspb.Status_PASSED},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run, err := NewInfraObservationSuite("infra-fetch-status").
+				AddCase("fetch", func(_ context.Context, r *InfraObservationResult) {
+					r.AddSpannerSnapshot(&evalspb.SpannerTargetSnapshot{Id: "orders-db", FetchStatus: tt.status})
+				}).
+				Run(context.Background())
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			c := run.GetInfraObservation().GetCases()[0]
+			if c.GetStatus() != tt.want {
+				t.Fatalf("case status = %v, want %v", c.GetStatus(), tt.want)
+			}
+			if len(c.GetValidations()) != 0 {
+				t.Fatalf("validations = %d, want none", len(c.GetValidations()))
+			}
+		})
+	}
+}
+
 func TestInfraObservationResult_emptyCaseIsNotEvaluated(t *testing.T) {
 	t.Parallel()
 
