@@ -47,7 +47,12 @@ func CaseFromRunEvalResult(suiteName string, r models.RunEvalResult, duration ti
 
 // AgentEvalResultsFromRunEvalResults maps ADK results to a wire AgentEvalResults branch.
 // suiteName qualifies each emitted case ID as "{suite}.{case}".
-func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEvalResult, durations []time.Duration, judge JudgeContext) *evalspb.AgentEvalResults {
+func AgentEvalResultsFromRunEvalResults(
+	suiteName string,
+	results []models.RunEvalResult,
+	durations []time.Duration,
+	judge JudgeContext,
+) *evalspb.AgentEvalResults {
 	cases := make([]*evalspb.AgentEvalResults_Case, len(results))
 	for i, r := range results {
 		d := time.Duration(0)
@@ -57,16 +62,22 @@ func AgentEvalResultsFromRunEvalResults(suiteName string, results []models.RunEv
 		cases[i] = CaseFromRunEvalResult(suiteName, r, d)
 	}
 	out := &evalspb.AgentEvalResults{Cases: cases}
-	if !judge.isZero() {
-		judgeInfo := &evalspb.AgentEvalResults_JudgeInfo{
-			Model:           judge.Model,
-			JudgeCallCount:  judge.CallCount,
-			JudgeErrorCount: judge.ErrorCount,
-		}
-		if judge.ModelVersion != "" {
-			judgeInfo.ModelVersion = new(judge.ModelVersion)
-		}
-		out.Judge = judgeInfo
+	out.Judge = judgeInfo(judge)
+	return out
+}
+
+// judgeInfo converts a JudgeContext to its wire form, or nil when it is zero.
+func judgeInfo(j JudgeContext) *evalspb.AgentEvalResults_JudgeInfo {
+	if j.isZero() {
+		return nil
+	}
+	out := &evalspb.AgentEvalResults_JudgeInfo{
+		Model:           j.Model,
+		JudgeCallCount:  j.CallCount,
+		JudgeErrorCount: j.ErrorCount,
+	}
+	if j.ModelVersion != "" {
+		out.ModelVersion = new(j.ModelVersion)
 	}
 	return out
 }
