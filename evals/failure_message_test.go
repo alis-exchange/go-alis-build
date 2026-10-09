@@ -50,7 +50,7 @@ func TestIntegrationSuite_failedCheckUsesRuleMessage(t *testing.T) {
 	}
 }
 
-func TestValidationsFromValidator_failedValidationUsesRuleMessage(t *testing.T) {
+func TestCaseValidations_failedValidationUsesRuleMessage(t *testing.T) {
 	t.Parallel()
 
 	v := validation.NewValidator()
@@ -58,7 +58,7 @@ func TestValidationsFromValidator_failedValidationUsesRuleMessage(t *testing.T) 
 	v.Custom("errors.none", false)
 	v.Custom("rps.reached", true).WithMessage("unused detail")
 
-	got := validationsFromValidator(v)
+	got := caseValidations(v, nil)
 	gotIDs := []string{}
 	gotMessages := []string{}
 	for _, val := range got {

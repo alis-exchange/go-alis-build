@@ -245,20 +245,11 @@ func runIntegrationCase(ctx context.Context, suiteName string, fc registeredCase
 func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur time.Duration) executedCase {
 	rules := v.Rules()
 	checks := make([]*evalspb.IntegrationTestResults_Case_Check, 0, len(rules))
-	if len(rules) == 0 {
-		return executedCase{
-			name:     caseName,
-			status:   evalspb.Status_NOT_EVALUATED,
-			duration: dur,
-		}
-	}
-	status := evalspb.Status_PASSED
 	for _, r := range rules {
 		checkStatus := evalspb.Status_PASSED
 		var msg string
 		if !r.Satisfied() {
 			checkStatus = evalspb.Status_FAILED
-			status = evalspb.Status_FAILED
 			msg = failureMessage(r)
 		}
 		checks = append(checks, &evalspb.IntegrationTestResults_Case_Check{
@@ -269,7 +260,7 @@ func integrationOutcome(suiteName, caseName string, v *validation.Validator, dur
 	}
 	return executedCase{
 		name:     caseName,
-		status:   status,
+		status:   verdict(len(checks) > 0, anyFailed(checks)),
 		duration: dur,
 		checks:   checks,
 	}
@@ -287,9 +278,13 @@ func failureMessage(r validation.Rule) string {
 	return r.Rule()
 }
 
-func validationsFromValidator(v *validation.Validator) []*evalspb.Validation {
+// caseValidations maps a specialized case's validator rules to validations
+// in declaration order, then appends one _evals.case validation per error
+// the case passed to Fail. Every specialized outcome reports both lists in
+// this order, so they share one mapping.
+func caseValidations(v *validation.Validator, failures []error) []*evalspb.Validation {
 	rules := v.Rules()
-	validations := make([]*evalspb.Validation, 0, len(rules))
+	validations := make([]*evalspb.Validation, 0, len(rules)+len(failures))
 	for _, r := range rules {
 		status := evalspb.Status_PASSED
 		var msg string
@@ -303,7 +298,42 @@ func validationsFromValidator(v *validation.Validator) []*evalspb.Validation {
 			Message: msg,
 		})
 	}
+	for _, err := range failures {
+		validations = append(validations, &evalspb.Validation{
+			Id:      caseValidationID,
+			Status:  evalspb.Status_FAILED,
+			Message: err.Error(),
+		})
+	}
 	return validations
+}
+
+// verdict is the case status rule shared by every branch. A case that
+// recorded no data is NOT_EVALUATED, whatever else is true. A case with data
+// fails when any failure source is set, and passes otherwise. Every failure
+// source is itself recorded data, so "no data" never hides a failure.
+func verdict(hasData bool, failed ...bool) evalspb.Status {
+	if !hasData {
+		return evalspb.Status_NOT_EVALUATED
+	}
+	for _, f := range failed {
+		if f {
+			return evalspb.Status_FAILED
+		}
+	}
+	return evalspb.Status_PASSED
+}
+
+// anyFailed reports whether any metric, check or validation in xs is FAILED.
+// The generated evals result messages all expose GetStatus, so one loop
+// serves them all.
+func anyFailed[T interface{ GetStatus() evalspb.Status }](xs []T) bool {
+	for _, x := range xs {
+		if x.GetStatus() == evalspb.Status_FAILED {
+			return true
+		}
+	}
+	return false
 }
 
 func reconcileAgentJudge(cases []executedCase) {
@@ -377,37 +407,14 @@ func runAgentEvalCase(ctx context.Context, suiteName string, fc registeredCase) 
 }
 
 func agentEvalOutcome(caseName string, r *AgentEvalResult) executedCase {
-	validations := validationsFromValidator(r.Validator())
-	for _, err := range r.failures {
-		validations = append(validations, &evalspb.Validation{
-			Id:      caseValidationID,
-			Status:  evalspb.Status_FAILED,
-			Message: err.Error(),
-		})
-	}
-
-	status := evalspb.Status_NOT_EVALUATED
-	if r.sessionID != "" || len(r.metrics) > 0 || len(validations) > 0 || hasAgentJudgeData(r.judge) {
-		status = evalspb.Status_PASSED
-	}
-	for _, metric := range r.metrics {
-		if metric.GetStatus() == evalspb.Status_FAILED {
-			status = evalspb.Status_FAILED
-			break
-		}
-	}
-	if status != evalspb.Status_FAILED {
-		for _, v := range validations {
-			if v.GetStatus() == evalspb.Status_FAILED {
-				status = evalspb.Status_FAILED
-				break
-			}
-		}
-	}
-
+	validations := caseValidations(r.Validator(), r.failures)
+	hasData := r.sessionID != "" ||
+		len(r.metrics) > 0 ||
+		len(validations) > 0 ||
+		hasAgentJudgeData(r.judge)
 	return executedCase{
 		name:        caseName,
-		status:      status,
+		status:      verdict(hasData, anyFailed(r.metrics), anyFailed(validations)),
 		validations: validations,
 		sessionID:   r.sessionID,
 		metrics:     r.metrics,
@@ -426,51 +433,19 @@ func runLoadCase(ctx context.Context, suiteName string, fc registeredCase) execu
 }
 
 func loadOutcome(caseName string, r *LoadResult) executedCase {
-	validations := validationsFromValidator(r.Validator())
-	for _, err := range r.failures {
-		validations = append(validations, &evalspb.Validation{
-			Id:      caseValidationID,
-			Status:  evalspb.Status_FAILED,
-			Message: err.Error(),
-		})
-	}
-
-	status := evalspb.Status_NOT_EVALUATED
-	if r.summary != nil ||
+	validations := caseValidations(r.Validator(), r.failures)
+	hasData := r.summary != nil ||
 		len(r.checks) > 0 ||
 		len(r.tags) > 0 ||
 		len(r.cloudRun) > 0 ||
 		len(r.spanner) > 0 ||
 		len(r.infraChecks) > 0 ||
-		len(validations) > 0 {
-		status = evalspb.Status_PASSED
-	}
-	for _, check := range r.checks {
-		if check.GetStatus() == evalspb.Status_FAILED {
-			status = evalspb.Status_FAILED
-			break
-		}
-	}
-	if status != evalspb.Status_FAILED {
-		for _, check := range r.infraChecks {
-			if check.GetStatus() == evalspb.Status_FAILED {
-				status = evalspb.Status_FAILED
-				break
-			}
-		}
-	}
-	if status != evalspb.Status_FAILED {
-		for _, v := range validations {
-			if v.GetStatus() == evalspb.Status_FAILED {
-				status = evalspb.Status_FAILED
-				break
-			}
-		}
-	}
-
+		len(validations) > 0
 	return executedCase{
-		name:        caseName,
-		status:      status,
+		name: caseName,
+		// Snapshots are diagnostics only for load cases; see
+		// infraObservationOutcome for why observation cases differ.
+		status:      verdict(hasData, anyFailed(r.checks), anyFailed(r.infraChecks), anyFailed(validations)),
 		validations: validations,
 		summary:     r.summary,
 		loadChecks:  r.checks,
@@ -492,14 +467,7 @@ func runInfraObservationCase(ctx context.Context, suiteName string, fc registere
 }
 
 func infraObservationOutcome(caseName string, r *InfraObservationResult) executedCase {
-	validations := validationsFromValidator(r.Validator())
-	for _, err := range r.failures {
-		validations = append(validations, &evalspb.Validation{
-			Id:      caseValidationID,
-			Status:  evalspb.Status_FAILED,
-			Message: err.Error(),
-		})
-	}
+	validations := caseValidations(r.Validator(), r.failures)
 
 	status := evalspb.Status_NOT_EVALUATED
 	if r.windowSet ||
