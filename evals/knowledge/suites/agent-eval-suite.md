@@ -32,6 +32,9 @@ retaining the first value. Nil metrics/judge values also fail the case.
 An empty builder is `NOT_EVALUATED`. Failed metrics, broken validation rules,
 or `Fail(err)` fail the case while retaining partial data.
 
-The `evals/adk` package returns protobuf-native `AgentEvalResults` values. It
-does not add them to an `AgentEvalSuite`; see
+ADK eval cases can run as cases of this suite. Use `adk.Provider.ListCases`,
+`Provider.RunCase`, and `ProviderCase.RecordTo`, which records into
+`*evals.AgentEvalResult` through `adk.CaseRecorder`. An ADK
+`NOT_EVALUATED` case calls `AgentEvalResult.SetNotEvaluated`, which keeps
+the case `NOT_EVALUATED` with its data unless something failed. See
 [ADK provider operation](../operations/adk.md).

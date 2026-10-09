@@ -187,9 +187,32 @@ suite := evals.NewAgentEvalSuite("assistant-quality").
 
 `Fail(err)` marks the case failed while preserving already-added result data. Builder validation failures are emitted under the additive `validations` field on specialized result branches.
 
-`evals/adk` remains available for ADK-specific helpers. `Provider.Run` returns `[]adk.ProviderResult` containing suite names, measured set-level timestamps, and protobuf-native `*evalspb.AgentEvalResults`. Calling `ProviderResult.Run()` constructs a complete agent-eval envelope with status rollup but does not publish it. The caller owns metadata and reporter invocation.
+`evals/adk` runs ADK eval sets. The recommended path runs each ADK case as an `AgentEvalSuite` case, so durations are measured per case and `WithMaxConcurrency`, cancellation, and `RunAndPublish` apply:
 
-ADK exposes only total eval-set duration, so the provider divides it evenly across returned cases. Treat those case durations as approximations; `ProviderResult.StartTime` and `EndTime` preserve the measured set-level interval.
+```go
+ids, err := provider.ListCases(ctx, set)
+if err != nil {
+    return err
+}
+suite := evals.NewAgentEvalSuite(set)
+for _, id := range ids {
+    suite.AddCase(adk.SuiteCaseName(id), func(ctx context.Context, r *evals.AgentEvalResult) {
+        res, err := provider.RunCase(ctx, set, id)
+        if err != nil {
+            r.Fail(err)
+            return
+        }
+        res.RecordTo(r)
+    })
+}
+run, err := suite.Run(ctx, evals.WithMaxConcurrency(4))
+```
+
+The case closure captures the loop variable `id`, which is safe because Go 1.22 and later give each iteration its own variable (this module declares `go 1.26`). With an older `go` directive, copy `id` inside the loop.
+
+`Provider.ListCases` returns ids in the order the client returns them (the HTTP launcher sorts by id); a custom `adk.Client` that does not implement `adk.CaseLister` makes it return `adk.ErrCaseListingUnsupported`. `SuiteCaseName` replaces `.` with `_` because suite case names cannot contain `.`. A case that ADK marks `FAILED` is `FAILED` in the suite and carries an `_evals.case` validation `adk: final eval status FAILED`. A case that ADK marks `NOT_EVALUATED` is `NOT_EVALUATED` in the suite, never `PASSED`: it keeps its session, metrics and judge and carries an `_evals.case` validation with status `NOT_EVALUATED` and message `adk: final eval status NOT_EVALUATED` (recorded through `AgentEvalResult.SetNotEvaluated`). A failed metric still makes it `FAILED`. The run is then `NOT_EVALUATED` unless some case failed. Each case declares its own judge: mixing judge models or model versions across cases in one suite fails the conflicting cases with an `_evals.judge` validation.
+
+`Provider.Run` and `ProviderResult.Run()` still return one envelope per eval set. `ProviderResult.Run()` is deprecated. That path divides the set's elapsed time evenly across cases, so its case durations are approximations.
 
 ## Load suites
 
