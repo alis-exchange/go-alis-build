@@ -31,7 +31,7 @@ load suites, but parallel load cases combine traffic and can distort
 measurements. Use it only when combined traffic is intentional.
 
 For load-integrated infrastructure diagnostics, wait until Monitoring has
-settled the measurement window, then observe it and add the snapshots:
+settled the measurement window, then observe it and record the snapshots on the case:
 
 ```go
 settle := loadinfra.SpannerSettlePadding // CloudRunSettlePadding if only Cloud Run targets

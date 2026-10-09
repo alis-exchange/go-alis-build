@@ -35,7 +35,8 @@ Added protobuf snapshots and SLO checks are cloned. The observation window is
 a singleton: the first `SetWindow` wins; duplicate window calls and nil
 protobuf values fail the case while retaining existing data. `Fail(nil)` is a
 no-op. `obs.RecordTo(r)` sets the window from obs.Window with lookback
-`End - Start`, so do not also call `SetWindow`.
+`End - Start`, so do not also call `SetWindow`; calling both fails the case with
+"evals: infra observation window already set".
 
 An empty observation result is `NOT_EVALUATED`. Failed infra SLO checks, broken
 validations, failed-fetch snapshots, or `Fail(err)` fail the case while
