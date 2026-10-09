@@ -1,0 +1,6 @@
+Phase P1 verification (loadgen_worker_pool_20261009)
+Commits: 7632346, 7a8d70d, 721abbd
+Tests: go test -race -count=10 ./loadgen/... ok; stress -count=40 on timing tests ok; full evals -race ok
+Lint: --new-from-rev=evals/v0.3.0 ./loadgen/... 0 issues
+Verifier: Approve; FR-9 gap closed by 721abbd (cancel-path pin; cutoff path unreachable under the live-size cap)
+Hand check: none needed (library)
