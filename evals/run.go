@@ -468,33 +468,21 @@ func runInfraObservationCase(ctx context.Context, suiteName string, fc registere
 
 func infraObservationOutcome(caseName string, r *InfraObservationResult) executedCase {
 	validations := caseValidations(r.Validator(), r.failures)
-
-	status := evalspb.Status_NOT_EVALUATED
-	if r.windowSet ||
+	hasData := r.windowSet ||
 		len(r.cloudRun) > 0 ||
 		len(r.spanner) > 0 ||
 		len(r.infraChecks) > 0 ||
-		len(validations) > 0 {
-		status = evalspb.Status_PASSED
-	}
-	for _, check := range r.infraChecks {
-		if check.GetStatus() == evalspb.Status_FAILED {
-			status = evalspb.Status_FAILED
-			break
-		}
-	}
-	if status != evalspb.Status_FAILED && infraSnapshotsUnavailable(r.cloudRun, r.spanner) {
-		status = evalspb.Status_FAILED
-	}
-	if status != evalspb.Status_FAILED {
-		for _, v := range validations {
-			if v.GetStatus() == evalspb.Status_FAILED {
-				status = evalspb.Status_FAILED
-				break
-			}
-		}
-	}
-
+		len(validations) > 0
+	// An observation case exists to collect snapshots, so a snapshot that
+	// could not be fetched means the case did not do its job and fails it.
+	// Load cases attach the same snapshots as diagnostics beside their own
+	// SLOs, and a Monitoring gap must not fail a load test whose traffic
+	// passed, so loadOutcome does not call snapshotsFailed.
+	status := verdict(hasData,
+		anyFailed(r.infraChecks),
+		snapshotsFailed(r.cloudRun, r.spanner),
+		anyFailed(validations),
+	)
 	return executedCase{
 		name:        caseName,
 		status:      status,
@@ -509,7 +497,10 @@ func infraObservationOutcome(caseName string, r *InfraObservationResult) execute
 	}
 }
 
-func infraSnapshotsUnavailable(cloudRun []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) bool {
+// snapshotsFailed reports whether any Cloud Run or Spanner snapshot could not
+// be fetched. It is the snapshot failure rule for infra-observation cases
+// only; load cases keep snapshots as diagnostics.
+func snapshotsFailed(cloudRun []*evalspb.CloudRunTargetSnapshot, spanner []*evalspb.SpannerTargetSnapshot) bool {
 	for _, snapshot := range cloudRun {
 		if snapshot.GetFetchStatus() == evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
 			return true
