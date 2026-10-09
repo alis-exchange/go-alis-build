@@ -49,18 +49,25 @@ func TestWindowLookback_internalMapping(t *testing.T) {
 	}
 }
 
-func TestQueryWindowPadding(t *testing.T) {
+func TestQueryWindow_roundsOutToWholeMinutes(t *testing.T) {
 	t.Parallel()
-	start := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
-	end := start.Add(time.Minute)
-	w := ObservationWindow{Start: start, End: end}
-
-	cr := cloudRunQueryWindowExtended(w)
-	if cr.Start != start || cr.End != end.Add(CloudRunSettlePadding) {
-		t.Fatalf("CloudRunQueryWindow=%+v", cr)
+	at := func(h, m, s int) time.Time { return time.Date(2026, 7, 16, h, m, s, 0, time.UTC) }
+	tests := []struct {
+		name string
+		in   ObservationWindow
+		want ObservationWindow
+	}{
+		{"inside minutes", ObservationWindow{at(10, 0, 20), at(10, 5, 40)}, ObservationWindow{at(10, 0, 0), at(10, 6, 0)}},
+		{"on boundaries", ObservationWindow{at(10, 0, 0), at(10, 5, 0)}, ObservationWindow{at(10, 0, 0), at(10, 5, 0)}},
+		{"empty on boundary", ObservationWindow{at(10, 0, 0), at(10, 0, 0)}, ObservationWindow{at(10, 0, 0), at(10, 1, 0)}},
+		{"empty inside minute", ObservationWindow{at(10, 0, 30), at(10, 0, 30)}, ObservationWindow{at(10, 0, 0), at(10, 1, 0)}},
 	}
-	sp := spannerQueryWindowExtended(w)
-	if sp.Start != start || sp.End != end.Add(SpannerSettlePadding) {
-		t.Fatalf("SpannerQueryWindow=%+v", sp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := queryWindow(tt.in); !got.Start.Equal(tt.want.Start) || !got.End.Equal(tt.want.End) {
+				t.Fatalf("queryWindow(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }

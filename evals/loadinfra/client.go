@@ -9,6 +9,7 @@ import (
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"go.alis.build/alog"
 	"google.golang.org/api/iterator"
+	"google.golang.org/protobuf/proto"
 )
 
 type clientContextKey struct{}
@@ -99,6 +100,8 @@ type FakeMetricClient struct {
 	PeakInFlight int
 	// LastIntervalEnd records the EndTime from the most recent request.
 	LastIntervalEnd time.Time
+	// Requests records a clone of every request, in call order.
+	Requests []*monitoringpb.ListTimeSeriesRequest
 
 	mu       sync.Mutex
 	inFlight int
@@ -133,6 +136,9 @@ func (f *FakeMetricClient) QueryTimeSeries(
 	f.mu.Lock()
 	if req.Interval != nil && req.Interval.EndTime != nil {
 		f.LastIntervalEnd = req.Interval.EndTime.AsTime()
+	}
+	if cloned, ok := proto.Clone(req).(*monitoringpb.ListTimeSeriesRequest); ok {
+		f.Requests = append(f.Requests, cloned)
 	}
 	f.inFlight--
 	handler, errAll, byFilter := f.Handler, f.Err, f.ByFilter

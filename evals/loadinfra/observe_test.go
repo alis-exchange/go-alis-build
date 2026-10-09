@@ -14,7 +14,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func observeForTest(ctx context.Context, client MetricClient, cloud []CloudRunTarget, spanner []SpannerTarget, window ObservationWindow, extend bool, concurrency int) (ObserveResult, error) {
+func observeForTest(
+	ctx context.Context,
+	client MetricClient,
+	cloud []CloudRunTarget,
+	spanner []SpannerTarget,
+	window ObservationWindow,
+	extend bool,
+	concurrency int,
+) (ObserveResult, error) {
 	return Observe(ctx, Request{
 		Client:            client,
 		Targets:           Targets{CloudRun: cloud, Spanner: spanner},
@@ -162,41 +170,96 @@ func TestObserveAllTargetsEmittedOnFailure(t *testing.T) {
 	}
 }
 
-func TestObserveExtendQueryEnd(t *testing.T) {
+func TestObserve_queriesWindowRoundedOutToWholeMinutes(t *testing.T) {
+	t.Parallel()
+	// Deliberately not on whole minutes, so rounding the result or snapshot
+	// window instead of only the query interval is caught.
+	window := ObservationWindow{
+		Start: time.Date(2026, 7, 16, 10, 0, 20, 0, time.UTC),
+		End:   time.Date(2026, 7, 16, 10, 5, 40, 0, time.UTC),
+	}
+	wantStart := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 7, 16, 10, 6, 0, 0, time.UTC)
+	target := CloudRunTarget{ID: "cr", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "s"}
+	for _, extend := range []bool{false, true} {
+		client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+			cloudRunMetricFilter(target, crMetricRequestCount): int64Series(1),
+		}}
+		got, err := Observe(context.Background(), Request{
+			Client: client, Targets: Targets{CloudRun: []CloudRunTarget{target}},
+			Window: window, ExtendQueryEnd: extend,
+			now: fixedClock(time.Date(2026, 7, 16, 11, 0, 0, 0, time.UTC)),
+		})
+		if err != nil {
+			t.Fatalf("Observe(extend=%v) error = %v", extend, err)
+		}
+		if got.Window != window {
+			t.Fatalf("extend=%v result window = %+v, want unrounded measurement window %+v", extend, got.Window, window)
+		}
+		if len(client.Requests) == 0 {
+			t.Fatalf("extend=%v recorded no Monitoring requests", extend)
+		}
+		for _, req := range client.Requests {
+			if s, e := req.GetInterval().
+				GetStartTime().
+				AsTime(),
+				req.GetInterval().
+					GetEndTime().
+					AsTime(); !s.Equal(wantStart) ||
+				!e.Equal(wantEnd) {
+				t.Fatalf("extend=%v %s interval = %v..%v, want %v..%v", extend, req.GetFilter(), s, e, wantStart, wantEnd)
+			}
+		}
+		snap := got.CloudRun[0]
+		if !snap.GetWindowStart().AsTime().Equal(window.Start) || !snap.GetWindowEnd().AsTime().Equal(window.End) {
+			t.Fatalf(
+				"snapshot window = %v..%v, want measurement window %v..%v",
+				snap.GetWindowStart().AsTime(),
+				snap.GetWindowEnd().AsTime(),
+				window.Start,
+				window.End,
+			)
+		}
+	}
+}
+
+func TestObserve_addsSettleAdvisoryBeforeSettleTime(t *testing.T) {
 	t.Parallel()
 	window := ObservationWindow{
-		Start: time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
-		End:   time.Date(2026, 7, 16, 10, 5, 0, 0, time.UTC),
+		Start: time.Date(2026, 7, 16, 10, 0, 20, 0, time.UTC),
+		End:   time.Date(2026, 7, 16, 10, 5, 40, 0, time.UTC),
 	}
-	target := CloudRunTarget{ID: "cr", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "s"}
-	filter := cloudRunMetricFilter(target, crMetricRequestCount)
-
-	t.Run("standalone", func(t *testing.T) {
-		t.Parallel()
-		client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
-			filter: int64Series(1),
-		}}
-		if _, err := observeForTest(context.Background(), client, []CloudRunTarget{target}, nil, window, false, 0); err != nil {
-			t.Fatalf("Observe: %v", err)
-		}
-		if !client.LastIntervalEnd.Equal(window.End) {
-			t.Fatalf("query end=%v, want reported end=%v", client.LastIntervalEnd, window.End)
-		}
-	})
-
-	t.Run("load integrated", func(t *testing.T) {
-		t.Parallel()
-		client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
-			filter: int64Series(1),
-		}}
-		if _, err := observeForTest(context.Background(), client, []CloudRunTarget{target}, nil, window, true, 0); err != nil {
-			t.Fatalf("Observe: %v", err)
-		}
-		wantEnd := window.End.Add(CloudRunSettlePadding)
-		if !client.LastIntervalEnd.Equal(wantEnd) {
-			t.Fatalf("query end=%v, want extended end=%v", client.LastIntervalEnd, wantEnd)
-		}
-	})
+	cloud := CloudRunTarget{ID: "cr", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "s"}
+	spanner := SpannerTarget{ID: "sp", ProjectID: "p", InstanceID: "i", Location: "r", Database: "d"}
+	tests := []struct {
+		name        string
+		now         time.Time
+		wantAdvised bool
+	}{
+		{"right after the window", time.Date(2026, 7, 16, 10, 6, 0, 0, time.UTC), true},
+		{"well after settle", time.Date(2026, 7, 16, 10, 20, 0, 0, time.UTC), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+				cloudRunMetricFilter(cloud, crMetricRequestCount): int64Series(1),
+				spannerMetricFilter(spanner, spMetricQueryCount):  int64Series(1),
+			}}
+			got, err := Observe(context.Background(), Request{
+				Client: client, Targets: Targets{CloudRun: []CloudRunTarget{cloud}, Spanner: []SpannerTarget{spanner}},
+				Window: window, now: fixedClock(tt.now),
+			})
+			if err != nil {
+				t.Fatalf("Observe() error = %v", err)
+			}
+			for _, msg := range []string{got.CloudRun[0].GetFetchMessage(), got.Spanner[0].GetFetchMessage()} {
+				if got := strings.Contains(msg, settleAdvisory); got != tt.wantAdvised {
+					t.Fatalf("FetchMessage = %q, advisory present = %v, want %v", msg, got, tt.wantAdvised)
+				}
+			}
+		})
+	}
 }
 
 func TestObserveShortWindowAdvisory(t *testing.T) {
@@ -252,17 +315,31 @@ func TestObserve_respectsTargetConcurrencyBound(t *testing.T) {
 }
 
 func int64Series(v int64) []*monitoringpb.TimeSeries {
-	return []*monitoringpb.TimeSeries{{
-		Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
-		Metric:   &metric.Metric{Type: "test"},
-		Points:   []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
-	}}
+	return []*monitoringpb.TimeSeries{
+		{
+			Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
+			Metric:   &metric.Metric{Type: "test"},
+			Points: []*monitoringpb.Point{
+				{
+					Value:    &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: v}},
+					Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()},
+				},
+			},
+		},
+	}
 }
 
 func doubleSeries(v float64) []*monitoringpb.TimeSeries {
-	return []*monitoringpb.TimeSeries{{
-		Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
-		Metric:   &metric.Metric{Type: "test"},
-		Points:   []*monitoringpb.Point{{Value: &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_DoubleValue{DoubleValue: v}}, Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()}}},
-	}}
+	return []*monitoringpb.TimeSeries{
+		{
+			Resource: &monitoredres.MonitoredResource{Type: "cloud_run_revision"},
+			Metric:   &metric.Metric{Type: "test"},
+			Points: []*monitoringpb.Point{
+				{
+					Value:    &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_DoubleValue{DoubleValue: v}},
+					Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.Now()},
+				},
+			},
+		},
+	}
 }

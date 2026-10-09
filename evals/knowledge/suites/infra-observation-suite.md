@@ -48,5 +48,5 @@ preserving partial results.
 
 For load-integrated diagnostics, use `ObserveLoad(ctx, client, targets,
 metrics)`. Advanced callers can provide an explicit `loadinfra.Request` to
-`Observe`; its named fields expose custom windows, query-end extension, and
-target concurrency without positional control flags.
+`Observe`; its named fields expose custom windows and target concurrency;
+`ExtendQueryEnd` is deprecated and ignored.

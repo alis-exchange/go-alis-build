@@ -10,7 +10,7 @@ import (
 	"go.alis.build/evals/loadgen"
 )
 
-func TestObserveLoad_derivesAndExtendsMeasurementWindow(t *testing.T) {
+func TestObserveLoad_queriesMeasurementWindowWithoutExtension(t *testing.T) {
 	t.Parallel()
 
 	start := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
@@ -33,8 +33,8 @@ func TestObserveLoad_derivesAndExtendsMeasurementWindow(t *testing.T) {
 	if !snapshot.GetWindowStart().AsTime().Equal(start) || !snapshot.GetWindowEnd().AsTime().Equal(end) {
 		t.Fatalf("reported window = %v..%v, want %v..%v", snapshot.GetWindowStart().AsTime(), snapshot.GetWindowEnd().AsTime(), start, end)
 	}
-	if want := end.Add(CloudRunSettlePadding); !client.LastIntervalEnd.Equal(want) {
-		t.Fatalf("query end = %v, want %v", client.LastIntervalEnd, want)
+	if !client.LastIntervalEnd.Equal(end) {
+		t.Fatalf("query end = %v, want measurement end %v", client.LastIntervalEnd, end)
 	}
 }
 
@@ -201,8 +201,8 @@ func TestObserve_standaloneQueriesUseSettledWindowAsReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("observeForTest() error = %v", err)
 	}
-	if !client.LastIntervalEnd.Equal(window.End) {
-		t.Fatalf("query end = %v, want settled reported end %v", client.LastIntervalEnd, window.End)
+	if want := queryWindow(window).End; !client.LastIntervalEnd.Equal(want) {
+		t.Fatalf("query end = %v, want rounded settled end %v", client.LastIntervalEnd, want)
 	}
 	if !got.CloudRun[0].GetWindowEnd().AsTime().Equal(window.End) {
 		t.Fatalf("snapshot window_end = %v, want %v", got.CloudRun[0].GetWindowEnd().AsTime(), window.End)

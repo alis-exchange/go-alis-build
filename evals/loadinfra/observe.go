@@ -43,8 +43,12 @@ type Request struct {
 	Targets Targets
 	// Window is the interval reported on returned snapshots.
 	Window ObservationWindow
-	// ExtendQueryEnd adds per-kind ingestion padding to Monitoring queries
-	// without changing the reported window.
+	// ExtendQueryEnd used to add settle padding to the query end. Monitoring
+	// stamps late points with their sample end time, so extending the query
+	// only added post-window traffic.
+	//
+	// Deprecated: ignored. Wait until Window.End plus the target kind's
+	// settle padding before calling Observe.
 	ExtendQueryEnd bool
 	// TargetConcurrency bounds simultaneous target observations. Values below
 	// one use DefaultTargetConcurrency.
@@ -70,18 +74,19 @@ func lookbackRequest(client MetricClient, targets Targets, lookback time.Duratio
 }
 
 // ObserveLoad observes the measurement window from a generated load run.
-// Monitoring query ends are extended by each target kind's settle padding,
-// while snapshots retain the original measurement window. Nil metrics return
-// an error without querying Monitoring.
+// Queries cover the window rounded out to whole minutes. ObserveLoad does
+// not wait: call it after metrics.MeasurementEnd plus SpannerSettlePadding
+// (or CloudRunSettlePadding when only Cloud Run targets are declared).
+// Snapshots fetched earlier carry a "data may be incomplete" advisory in
+// FetchMessage. Nil metrics return an error without querying Monitoring.
 func ObserveLoad(ctx context.Context, client MetricClient, targets Targets, metrics *loadgen.Metrics) (ObserveResult, error) {
 	if metrics == nil {
 		return ObserveResult{}, fmt.Errorf("loadinfra: nil load metrics")
 	}
 	return Observe(ctx, Request{
-		Client:         client,
-		Targets:        targets,
-		Window:         windowFromMetrics(metrics),
-		ExtendQueryEnd: true,
+		Client:  client,
+		Targets: targets,
+		Window:  windowFromMetrics(metrics),
 	})
 }
 
@@ -91,9 +96,12 @@ func ObserveLookback(ctx context.Context, client MetricClient, targets Targets, 
 	return Observe(ctx, lookbackRequest(client, targets, lookback, time.Now))
 }
 
-// Observe fetches snapshots for a caller-defined reported window. A positive
-// TargetConcurrency bounds concurrent target fetches; zero or negative uses
-// [DefaultTargetConcurrency].
+// Observe fetches snapshots for a caller-defined reported window. Queries
+// cover Window rounded out to whole minutes. Snapshots report the unrounded
+// Window. A snapshot fetched before Window.End plus its kind's settle padding
+// carries a settle advisory in FetchMessage; Observe does not wait. A
+// positive TargetConcurrency bounds concurrent target fetches; zero or
+// negative uses [DefaultTargetConcurrency].
 func Observe(ctx context.Context, req Request) (ObserveResult, error) {
 	if req.Client == nil {
 		return ObserveResult{}, fmt.Errorf("loadinfra: nil MetricClient")
@@ -102,6 +110,7 @@ func Observe(ctx context.Context, req Request) (ObserveResult, error) {
 		return ObserveResult{Window: req.Window}, nil
 	}
 
+	now := req.clock()
 	limit := targetConcurrencyLimit(req.TargetConcurrency)
 	sem := make(chan struct{}, limit)
 
@@ -117,7 +126,7 @@ func Observe(ctx context.Context, req Request) (ObserveResult, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			snap := observeCloudRun(ctx, req.Client, t, req.Window, req.ExtendQueryEnd)
+			snap := observeCloudRun(ctx, req.Client, t, req.Window, now)
 			mu.Lock()
 			out.CloudRun = append(out.CloudRun, snap)
 			mu.Unlock()
@@ -129,7 +138,7 @@ func Observe(ctx context.Context, req Request) (ObserveResult, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			snap := observeSpanner(ctx, req.Client, t, req.Window, req.ExtendQueryEnd)
+			snap := observeSpanner(ctx, req.Client, t, req.Window, now)
 			mu.Lock()
 			out.Spanner = append(out.Spanner, snap)
 			mu.Unlock()
@@ -160,12 +169,12 @@ func observeCloudRun(
 	client MetricClient,
 	t CloudRunTarget,
 	w ObservationWindow,
-	extendQueryEnd bool,
+	now time.Time,
 ) *evalspb.CloudRunTargetSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, perTargetTimeout)
 	defer cancel()
 
-	qw := cloudRunQueryWindow(w, extendQueryEnd)
+	qw := queryWindow(w)
 	snap := &evalspb.CloudRunTargetSnapshot{
 		Id:          t.ID,
 		Role:        mapTargetRole(t.Role),
@@ -182,7 +191,8 @@ func observeCloudRun(
 	if err == nil {
 		snap.Metrics = metrics
 	}
-	snap.FetchStatus, snap.FetchMessage = finishSnapshot(shortWindowAdvisory(w), partial, err)
+	advisory := joinAdvisories(shortWindowAdvisory(w), settleAdvisoryFor(w, CloudRunSettlePadding, now))
+	snap.FetchStatus, snap.FetchMessage = finishSnapshot(advisory, partial, err)
 	return snap
 }
 
@@ -193,12 +203,12 @@ func observeSpanner(
 	client MetricClient,
 	t SpannerTarget,
 	w ObservationWindow,
-	extendQueryEnd bool,
+	now time.Time,
 ) *evalspb.SpannerTargetSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, perTargetTimeout)
 	defer cancel()
 
-	qw := spannerQueryWindow(w, extendQueryEnd)
+	qw := queryWindow(w)
 	snap := &evalspb.SpannerTargetSnapshot{
 		Id:   t.ID,
 		Role: evalspb.InfraTargetRole_INFRA_TARGET_ROLE_DEPENDENCY,
@@ -217,7 +227,8 @@ func observeSpanner(
 	if err == nil {
 		snap.Metrics = metrics
 	}
-	snap.FetchStatus, snap.FetchMessage = finishSnapshot(shortWindowAdvisory(w), partial, err)
+	advisory := joinAdvisories(shortWindowAdvisory(w), settleAdvisoryFor(w, SpannerSettlePadding, now))
+	snap.FetchStatus, snap.FetchMessage = finishSnapshot(advisory, partial, err)
 	return snap
 }
 
@@ -263,6 +274,46 @@ func shortWindowAdvisory(w ObservationWindow) string {
 		return "coarse_window"
 	}
 	return ""
+}
+
+// settleAdvisory is added to FetchMessage when a snapshot is fetched before
+// Monitoring has had its documented visibility delay to settle the window.
+const settleAdvisory = "data may be incomplete: queried before Monitoring settle time"
+
+// queryWindow rounds w out to whole minutes: Start down, End up. Monitoring
+// samples these metrics every 60s and reads (start, end], so rounding out
+// keeps the samples covering the window's edge minutes. An empty result
+// becomes one minute, Monitoring's minimum alignment period.
+func queryWindow(w ObservationWindow) ObservationWindow {
+	start := w.Start.Truncate(time.Minute)
+	end := w.End.Truncate(time.Minute)
+	if end.Before(w.End) {
+		end = end.Add(time.Minute)
+	}
+	if !end.After(start) {
+		end = start.Add(time.Minute)
+	}
+	return ObservationWindow{Start: start, End: end}
+}
+
+// settleAdvisoryFor returns settleAdvisory when now is before the window end
+// plus padding, and "" otherwise.
+func settleAdvisoryFor(w ObservationWindow, padding time.Duration, now time.Time) string {
+	if now.Before(w.End.Add(padding)) {
+		return settleAdvisory
+	}
+	return ""
+}
+
+// joinAdvisories joins the non-empty advisories with "; ".
+func joinAdvisories(advisories ...string) string {
+	var kept []string
+	for _, a := range advisories {
+		if a != "" {
+			kept = append(kept, a)
+		}
+	}
+	return strings.Join(kept, "; ")
 }
 
 // metricOutcome records one metric fetch attempt for mergeOutcomes.

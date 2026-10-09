@@ -222,10 +222,21 @@ suite := evals.NewLoadSuite("checkout-capacity").
 
 Default concurrency is one active case. `WithMaxConcurrency` can run load cases in parallel, but parallel load cases combine their traffic and can distort measurements. Use it only when the combined traffic is the scenario being evaluated.
 
-For load-integrated infrastructure diagnostics, observe the exact measurement
-window and add the returned snapshots explicitly:
+For load-integrated infrastructure diagnostics, wait until Monitoring has
+settled the measurement window, then observe it and add the snapshots:
 
 ```go
+settle := loadinfra.SpannerSettlePadding // CloudRunSettlePadding if only Cloud Run targets
+if wait := time.Until(metrics.MeasurementEnd.Add(settle)); wait > 0 {
+    timer := time.NewTimer(wait)
+    select {
+    case <-ctx.Done():
+        timer.Stop()
+        r.Fail(ctx.Err())
+        return
+    case <-timer.C:
+    }
+}
 observed, err := loadinfra.ObserveLoad(ctx, metricClient, targets, metrics)
 if err != nil {
     r.Fail(err)
@@ -239,9 +250,12 @@ for _, snapshot := range observed.Spanner {
 }
 ```
 
-`ObserveLoad` requires non-nil metrics. Use `ObserveLookback` for standalone
-settled windows or `Observe` with a named `loadinfra.Request` for a custom
-window and target concurrency.
+`ObserveLoad` requires non-nil metrics and queries the measurement window
+rounded out to whole minutes. It does not wait; a call before the settle
+time returns at once and each snapshot's `FetchMessage` says the data may be
+incomplete. Use `ObserveLookback` for standalone settled windows or
+`Observe` with a named `loadinfra.Request` for a custom window and target
+concurrency.
 
 For client-streaming load targets, copy the timing returned by `evals.CallClientStream` into the load generator's protobuf-independent stream sample:
 

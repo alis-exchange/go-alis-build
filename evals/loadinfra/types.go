@@ -59,7 +59,7 @@ type Targets struct {
 
 const (
 	// CloudRunSettlePadding is the visibility delay applied when settling
-	// standalone windows or extending load-integrated query intervals.
+	// standalone windows and flagging snapshots fetched before settle time.
 	CloudRunSettlePadding = 90 * time.Second
 	// SpannerSettlePadding is the equivalent Spanner visibility delay.
 	SpannerSettlePadding = 180 * time.Second
@@ -67,6 +67,8 @@ const (
 
 // ObservationWindow is the reported inclusive-start, exclusive-end interval
 // attached to infrastructure snapshots.
+// Monitoring reads (start, end]; queries round the window out to whole
+// minutes so the edge samples are included.
 type ObservationWindow struct {
 	// Start is the inclusive start of the observation window.
 	Start time.Time
@@ -95,26 +97,4 @@ func settleDuration(targets Targets) time.Duration {
 func lookbackWindow(lookback time.Duration, now time.Time, targets Targets) ObservationWindow {
 	end := now.Add(-settleDuration(targets))
 	return ObservationWindow{Start: end.Add(-lookback), End: end}
-}
-
-func cloudRunQueryWindowExtended(w ObservationWindow) ObservationWindow {
-	return ObservationWindow{Start: w.Start, End: w.End.Add(CloudRunSettlePadding)}
-}
-
-func spannerQueryWindowExtended(w ObservationWindow) ObservationWindow {
-	return ObservationWindow{Start: w.Start, End: w.End.Add(SpannerSettlePadding)}
-}
-
-func cloudRunQueryWindow(w ObservationWindow, extend bool) ObservationWindow {
-	if extend {
-		return cloudRunQueryWindowExtended(w)
-	}
-	return w
-}
-
-func spannerQueryWindow(w ObservationWindow, extend bool) ObservationWindow {
-	if extend {
-		return spannerQueryWindowExtended(w)
-	}
-	return w
 }

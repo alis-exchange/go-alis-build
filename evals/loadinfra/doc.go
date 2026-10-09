@@ -3,11 +3,13 @@
 //
 // # Observation modes
 //
-// [ObserveLoad] observes the measurement timestamps in loadgen metrics and
-// extends Monitoring queries for ingestion delay. [ObserveLookback] resolves a
-// settled standalone window from a duration. Advanced callers use [Observe]
-// with a named [Request] for a custom window. An [ObservationWindow] is
-// inclusive-start, exclusive-end (UTC).
+// [ObserveLoad] observes the measurement timestamps in loadgen metrics.
+// It does not wait or extend the query: call it once
+// metrics.MeasurementEnd plus the settle padding has passed.
+// [ObserveLookback] resolves a settled standalone window from a duration.
+// Advanced callers use [Observe] with a named [Request] for a custom window.
+// Queries cover the window rounded out to whole minutes; snapshots report
+// the unrounded [ObservationWindow] (UTC).
 //
 // # Targets
 //
