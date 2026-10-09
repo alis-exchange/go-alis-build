@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	evalspb "go.alis.build/common/alis/evals"
+	"go.alis.build/evals/internal/rollup"
 	"go.alis.build/validation"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -539,7 +540,7 @@ func (s *suiteCore) materializeRun(cfg runConfig, cases []executedCase, start, e
 	run := &evalspb.Run{
 		Name:            "runs/" + runID,
 		Type:            s.runType(),
-		Status:          rollupExecutedCases(cases),
+		Status:          rollup.Status(cases, func(c executedCase) evalspb.Status { return c.status }),
 		StartTime:       timestamppb.New(start),
 		EndTime:         timestamppb.New(end),
 		CreateTime:      timestamppb.Now(),
@@ -551,22 +552,6 @@ func (s *suiteCore) materializeRun(cfg runConfig, cases []executedCase, start, e
 	}
 	s.attachBranchData(run, cases)
 	return run
-}
-
-func rollupExecutedCases(cases []executedCase) evalspb.Status {
-	if len(cases) == 0 {
-		return evalspb.Status_PASSED
-	}
-	status := evalspb.Status_PASSED
-	for _, c := range cases {
-		switch c.status {
-		case evalspb.Status_FAILED:
-			return evalspb.Status_FAILED
-		case evalspb.Status_NOT_EVALUATED:
-			status = evalspb.Status_NOT_EVALUATED
-		}
-	}
-	return status
 }
 
 func (s *suiteCore) attachBranchData(run *evalspb.Run, cases []executedCase) {
