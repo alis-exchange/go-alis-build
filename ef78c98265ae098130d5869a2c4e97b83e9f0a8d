@@ -1,0 +1,8 @@
+Track verification (load_recipe_bridges_20261009, final; programme evals_deepening_20261009 complete)
+Commits: 56598a3 037144d e5624c0 + docs nits
+Tests: go test -race ./... ok
+Lint: --new-from-rev=evals/v0.3.0 0 issues
+gorelease v0.3.0->v0.4.0: incompatible only CloudRunSettlePadding/SpannerSettlePadding values (approved); compatible additions as listed in track reports
+loadinfra does not import root evals
+Verifier: Approve, incl. programme-wide docs consistency pass
+Hand check: none (library)
