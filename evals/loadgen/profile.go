@@ -114,7 +114,11 @@ func (p Profile) validate() error {
 		return ErrInvalidProfile{Field: "FailureBackoff", Got: p.FailureBackoff.String(), Want: ">= 0"}
 	}
 	if p.FailureBackoff > 0 && !p.ClosedLoop {
-		return ErrInvalidProfile{Field: "FailureBackoff", Got: p.FailureBackoff.String(), Want: "0 unless ClosedLoop (paced dispatch is already rate-bounded)"}
+		return ErrInvalidProfile{
+			Field: "FailureBackoff",
+			Got:   p.FailureBackoff.String(),
+			Want:  "0 unless ClosedLoop (paced dispatch is already rate-bounded)",
+		}
 	}
 	total := p.Warmup + p.Duration
 	if p.ClosedLoop {
@@ -127,12 +131,14 @@ func (p Profile) validate() error {
 		if len(p.QPSStages) > 0 {
 			return ErrInvalidProfile{Field: "QPSStages", Got: fmt.Sprintf("%d stages", len(p.QPSStages)), Want: "empty when ClosedLoop"}
 		}
-		// Closed-loop workers are never idle, so scaling the pool down would
-		// always cancel a mid-flight call — there is no way to compose staged
-		// concurrency with the exactly-Concurrency contract without polluting
-		// error counts with generator-induced cancellations.
+		// The closed-loop contract is exactly Concurrency calls in flight for
+		// the whole window, so staged concurrency has no meaning there.
 		if len(p.ConcurrencyStages) > 0 {
-			return ErrInvalidProfile{Field: "ConcurrencyStages", Got: fmt.Sprintf("%d stages", len(p.ConcurrencyStages)), Want: "empty when ClosedLoop"}
+			return ErrInvalidProfile{
+				Field: "ConcurrencyStages",
+				Got:   fmt.Sprintf("%d stages", len(p.ConcurrencyStages)),
+				Want:  "empty when ClosedLoop",
+			}
 		}
 	} else if len(p.QPSStages) == 0 {
 		if err := validateRateTarget("QPS", p.QPS); err != nil {

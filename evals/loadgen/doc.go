@@ -71,12 +71,11 @@
 // saturation/stress shapes, where any open-loop rate derived from an
 // expected iteration time under-drives the service the moment iterations
 // run faster than expected. QPS, QPSStages, and ConcurrencyStages must
-// all be unset — closed-loop workers are never idle, so scaling the pool
-// mid-window would always cancel a mid-flight call and pollute error
-// counts with generator-induced cancellations. In wire summaries built
-// via [Summary], a closed-loop run reports its achieved rate as
-// TargetQps (there is no configured rate) and its intensity through
-// Concurrency.
+// all be unset: the closed-loop contract is exactly Concurrency calls in
+// flight for the whole window, so the pool never resizes. In wire
+// summaries built via [Summary], a closed-loop run reports its achieved
+// rate as TargetQps (there is no configured rate) and its intensity
+// through Concurrency.
 //
 // Closed-loop callers should set [Profile.FailureBackoff]: a rejected
 // call can return in milliseconds, and an unthrottled loop re-dispatches

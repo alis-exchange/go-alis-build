@@ -144,9 +144,7 @@ func TestInProcess_MeasurementWindowWarmup(t *testing.T) {
 func TestInProcess_ErrorAccounting(t *testing.T) {
 	t.Parallel()
 
-	var (
-		counter atomic.Int64
-	)
+	var counter atomic.Int64
 	target := func(context.Context, CallData) TargetResult {
 		n := counter.Add(1)
 		switch n % 3 {
@@ -753,32 +751,120 @@ func TestInProcess_StreamSummaryAggregation(t *testing.T) {
 	}
 }
 
+// TestInProcess_ConcurrencyStepDownCountsDropped pins scale-down semantics.
+// Stepping from 8 workers to 1 stops seven workers, but their in-flight
+// calls must finish normally: a scale-down is a generator decision, never a
+// target error. The one remaining worker cannot keep up with 200 qps of
+// 20ms calls, so the pacer drops slots.
 func TestInProcess_ConcurrencyStepDownCountsDropped(t *testing.T) {
 	t.Parallel()
 
-	target := TransportTarget(func(context.Context) error {
-		time.Sleep(2 * time.Millisecond)
-		return nil
+	target := TransportTarget(func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		case <-time.After(20 * time.Millisecond):
+			return nil
+		}
 	})
-	g := New()
 	p := Profile{
-		QPS:         200,
-		Concurrency: 8,
-		Duration:    500 * time.Millisecond,
+		QPS:              200,
+		Concurrency:      8,
+		Duration:         500 * time.Millisecond,
+		GracefulRampDown: 100 * time.Millisecond,
 		ConcurrencyStages: []Stage{
 			{Duration: 100 * time.Millisecond, Target: 8},
 			{Duration: 400 * time.Millisecond, Target: 1},
 		},
 	}
-	m, err := g.Run(context.Background(), p, target)
+	m, err := New().Run(context.Background(), p, target)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if m.ErrorCount != 0 || len(m.ErrorsByCode) != 0 {
+		t.Fatalf("ErrorCount=%d ErrorsByCode=%v, want 0 and empty: scale-down must not cancel in-flight calls",
+			m.ErrorCount, m.ErrorsByCode)
 	}
 	if m.RequestCount == 0 {
 		t.Fatal("RequestCount=0, want completed samples")
 	}
 	if m.DroppedCount == 0 {
-		t.Fatal("DroppedCount=0, want > 0 when concurrency steps down")
+		t.Fatal("DroppedCount=0, want > 0 once one worker serves 200 qps of 20ms calls")
+	}
+}
+
+// TestInProcess_ShortLastStageAddsNoWorkerAfterDrain is an end-to-end
+// smoke test of the supervisor shutdown order. The last stage is shorter
+// than the 50ms supervisor tick, so the tick that first sees it lands after
+// the window has closed; a supervisor that outlived the drain could then
+// call WaitGroup.Add after Wait. That race window is too narrow to hit
+// reliably from Run, so this test rarely fails without the fix:
+// TestWorkerPool_DrainStopsSupervisorFirst is the deterministic pin. Run it
+// with -race.
+func TestInProcess_ShortLastStageAddsNoWorkerAfterDrain(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	target := func(context.Context, CallData) TargetResult {
+		calls.Add(1)
+		return TargetResult{}
+	}
+	p := Profile{
+		QPS:              100,
+		Concurrency:      1,
+		Duration:         40 * time.Millisecond,
+		GracefulRampDown: 10 * time.Millisecond,
+		ConcurrencyStages: []Stage{
+			{Duration: 30 * time.Millisecond, Target: 1},
+			{Duration: 10 * time.Millisecond, Target: 4},
+		},
+	}
+	m, err := New().Run(context.Background(), p, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.RequestCount == 0 {
+		t.Fatal("RequestCount=0, want samples from the first stage")
+	}
+	after := calls.Load()
+	// Outlive two supervisor ticks so a late Add would happen while this
+	// test is still running.
+	time.Sleep(100 * time.Millisecond)
+	if got := calls.Load(); got != after {
+		t.Fatalf("target called %d times after Run returned, want 0", got-after)
+	}
+}
+
+// TestRunWorker_StopLeavesQueuedTickForLiveWorkers pins that a stopped
+// worker takes no new tick. A queued tick belongs to the live workers; the
+// old worker consumed one and counted it as dropped on its way out.
+func TestRunWorker_StopLeavesQueuedTickForLiveWorkers(t *testing.T) {
+	t.Parallel()
+
+	ticks := make(chan time.Time, 1)
+	ticks <- time.Now()
+	stop := make(chan struct{})
+	close(stop)
+	samples := make(chan sample, 1)
+	var inFlight atomic.Int32
+	inFlight.Store(1)
+	var reqNum atomic.Uint64
+	var dropped atomic.Int64
+
+	runWorker(context.Background(), stop, ticks, samples, zeroLatencyTarget,
+		time.Second, time.Now().Add(time.Second), time.Second, &inFlight, &reqNum, &dropped, 0)
+
+	if got := len(ticks); got != 1 {
+		t.Fatalf("queued ticks=%d, want 1 left for live workers", got)
+	}
+	if got := dropped.Load(); got != 0 {
+		t.Fatalf("dropped=%d, want 0", got)
+	}
+	if got := inFlight.Load(); got != 1 {
+		t.Fatalf("inFlight=%d, want 1 (unchanged)", got)
+	}
+	if got := len(samples); got != 0 {
+		t.Fatalf("samples=%d, want 0", got)
 	}
 }
 
