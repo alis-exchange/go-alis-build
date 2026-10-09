@@ -231,3 +231,77 @@ func TestLoadSuite_godocWarnsAboutParallelLoadCases(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_cancellationDoesNotMarkCaseThatRan(t *testing.T) {
+	t.Parallel()
+
+	t.Run("integration", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		run, err := NewIntegrationSuite("ran-empty-integration").
+			AddCase("records-nothing", func(context.Context, *validation.Validator) {
+				cancel()
+			}).
+			AddCase("never-starts", func(_ context.Context, v *validation.Validator) {
+				v.Custom("unexpected", true)
+			}).
+			Run(ctx, WithMaxConcurrency(1))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+		cases := run.GetIntegrationTest().GetCases()
+		if len(cases) != 2 {
+			t.Fatalf("case count = %d, want 2", len(cases))
+		}
+		if got := cases[0].GetStatus(); got != evalspb.Status_NOT_EVALUATED {
+			t.Fatalf("ran case status = %v, want NOT_EVALUATED", got)
+		}
+		if got := len(cases[0].GetChecks()); got != 0 {
+			t.Fatalf("ran case checks = %d, want 0 (no run cancelled marker)", got)
+		}
+		checks := cases[1].GetChecks()
+		if len(checks) != 1 ||
+			checks[0].GetId() != "_evals.skipped" ||
+			checks[0].GetStatus() != evalspb.Status_NOT_EVALUATED ||
+			checks[0].GetMessage() != "run cancelled" {
+			t.Fatalf("unstarted case checks = %v, want one _evals.skipped NOT_EVALUATED run cancelled", checks)
+		}
+	})
+
+	t.Run("load", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		run, err := NewLoadSuite("ran-empty-load").
+			AddCase("records-nothing", func(context.Context, *LoadResult) {
+				cancel()
+			}).
+			AddCase("never-starts", func(_ context.Context, r *LoadResult) {
+				r.AddTag("unexpected", "true")
+			}).
+			Run(ctx, WithMaxConcurrency(1))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+		cases := run.GetLoadTest().GetCases()
+		if len(cases) != 2 {
+			t.Fatalf("case count = %d, want 2", len(cases))
+		}
+		if got := cases[0].GetStatus(); got != evalspb.Status_NOT_EVALUATED {
+			t.Fatalf("ran case status = %v, want NOT_EVALUATED", got)
+		}
+		if got := len(cases[0].GetValidations()); got != 0 {
+			t.Fatalf("ran case validations = %d, want 0 (no run cancelled marker)", got)
+		}
+		validations := cases[1].GetValidations()
+		if len(validations) != 1 ||
+			validations[0].GetId() != "_evals.skipped" ||
+			validations[0].GetStatus() != evalspb.Status_NOT_EVALUATED ||
+			validations[0].GetMessage() != "run cancelled" {
+			t.Fatalf("unstarted case validations = %v, want one _evals.skipped NOT_EVALUATED run cancelled", validations)
+		}
+	})
+}

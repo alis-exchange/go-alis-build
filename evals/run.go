@@ -64,7 +64,10 @@ func qualifiedCaseID(suiteName, caseName string) string {
 }
 
 type executedCase struct {
-	index       int
+	index int
+	// ran records that the worker handed this case to its case function, so
+	// markCancelledCases never relabels a case that ran but recorded nothing.
+	ran         bool
 	name        string
 	status      evalspb.Status
 	duration    time.Duration
@@ -118,6 +121,7 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 				out.duration = now().Sub(start)
 				out.index = idx
 				out.name = fc.name
+				out.ran = true
 				cases[idx] = out
 			}
 		}()
@@ -144,7 +148,7 @@ func (s *suiteCore) executeCases(ctx context.Context, cfg runConfig, registered 
 
 func (s *suiteCore) markCancelledCases(cases []executedCase) {
 	for i := range cases {
-		if cases[i].status != evalspb.Status_NOT_EVALUATED || hasCaseResultData(cases[i]) {
+		if cases[i].ran || cases[i].status != evalspb.Status_NOT_EVALUATED || hasCaseResultData(cases[i]) {
 			continue
 		}
 		switch s.branch {
