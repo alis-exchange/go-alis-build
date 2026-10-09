@@ -300,8 +300,10 @@ func joinErrors(errs ...error) error {
 }
 
 // mergeOutcomes combines per-metric fetch outcomes. At least one metric must
-// succeed; otherwise the target snapshot is marked unavailable. Partial gaps
-// are listed in the returned slice and appended to FetchMessage.
+// succeed; otherwise it returns every metric error joined, and the caller
+// classifies the snapshot from that chain (PERMISSION_DENIED, TIMEOUT or
+// UNAVAILABLE). Partial gaps are listed in the returned slice and appended to
+// FetchMessage.
 func mergeOutcomes(outcomes ...metricOutcome) ([]string, error) {
 	var (
 		partial   []string
