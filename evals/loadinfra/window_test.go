@@ -71,3 +71,13 @@ func TestQueryWindow_roundsOutToWholeMinutes(t *testing.T) {
 		})
 	}
 }
+
+func TestSettlePaddings_coverDocumentedVisibilityDelays(t *testing.T) {
+	t.Parallel()
+	if CloudRunSettlePadding != 180*time.Second {
+		t.Fatalf("CloudRunSettlePadding = %v, want 3m0s", CloudRunSettlePadding)
+	}
+	if SpannerSettlePadding != 240*time.Second {
+		t.Fatalf("SpannerSettlePadding = %v, want 4m0s", SpannerSettlePadding)
+	}
+}

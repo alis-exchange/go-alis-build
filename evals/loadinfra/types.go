@@ -58,11 +58,18 @@ type Targets struct {
 }
 
 const (
-	// CloudRunSettlePadding is the visibility delay applied when settling
-	// standalone windows and flagging snapshots fetched before settle time.
-	CloudRunSettlePadding = 90 * time.Second
-	// SpannerSettlePadding is the equivalent Spanner visibility delay.
-	SpannerSettlePadding = 180 * time.Second
+	// CloudRunSettlePadding is how long after a window ends Cloud Run metrics
+	// are treated as complete. Cloud Run metrics are sampled every 60s and
+	// may be invisible for up to 120s
+	// (https://docs.cloud.google.com/monitoring/api/metrics_gcp_p_z); the
+	// padding adds one sample period on top. ObserveLookback windows end
+	// this long before now.
+	CloudRunSettlePadding = 180 * time.Second
+	// SpannerSettlePadding is the Spanner equivalent. Spanner
+	// api/request_latencies may be invisible for up to 180s
+	// (https://docs.cloud.google.com/spanner/docs/metrics); the padding adds
+	// one 60s sample period on top.
+	SpannerSettlePadding = 240 * time.Second
 )
 
 // ObservationWindow is the reported inclusive-start, exclusive-end interval
