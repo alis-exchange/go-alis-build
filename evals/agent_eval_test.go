@@ -403,6 +403,18 @@ func TestAgentEvalResult_setNotEvaluated(t *testing.T) {
 			wantValidations: []validationTriple{notEvaluated(reason)},
 		},
 		{
+			name: "failed validator rule wins",
+			fn: func(_ context.Context, r *AgentEvalResult) {
+				r.SetNotEvaluated(reason)
+				r.Validator().Custom("citation present", false)
+			},
+			wantStatus: evalspb.Status_FAILED,
+			wantValidations: []validationTriple{
+				{id: "citation present", status: evalspb.Status_FAILED, message: "citation present"},
+				notEvaluated(reason),
+			},
+		},
+		{
 			name: "fail wins",
 			fn: func(_ context.Context, r *AgentEvalResult) {
 				r.SetNotEvaluated(reason)

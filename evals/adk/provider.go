@@ -171,9 +171,9 @@ func (p *Provider) checkConfig() error {
 }
 
 // ListCases returns the raw ADK case ids of one eval set, in the order the
-// launcher lists them (sorted by id). Pass each id to [Provider.RunCase] and
-// name the suite case with [SuiteCaseName]. [Agent.IncludeEvalSet] is not
-// applied because the caller names the set.
+// client returns them (the HTTP launcher sorts by id). Pass each id to
+// [Provider.RunCase] and name the suite case with [SuiteCaseName].
+// [Agent.IncludeEvalSet] is not applied because the caller names the set.
 //
 // It returns [ErrCaseListingUnsupported] when the client built by the
 // provider's factory does not implement [CaseLister]. Client errors are

@@ -140,6 +140,42 @@ func TestProvider_RunCase_runsOneCase(t *testing.T) {
 	}
 }
 
+// TestProvider_RunCase_probesJudgeModelWhenAgentEmpty checks that RunCase
+// falls back to the judge model configured in the set's metrics when
+// Agent.JudgeModel is empty.
+func TestProvider_RunCase_probesJudgeModelWhenAgentEmpty(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]models.RunEvalResult{{
+			EvalID:          "c1",
+			FinalEvalStatus: models.EvalStatusPassed,
+			OverallEvalMetricResults: []models.EvalMetricResult{
+				{MetricName: models.MetricRubricBasedFinalResponseQualityV1, EvalStatus: models.EvalStatusPassed},
+			},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+
+	rubric, err := adk.RubricBasedFinalResponseQualityV1(0.7, nil, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("RubricBasedFinalResponseQualityV1: %v", err)
+	}
+	p := adk.NewProvider(adk.Agent{
+		BaseURL:        srv.URL,
+		AppName:        "test.agent.v1",
+		DefaultMetrics: []models.EvalMetric{rubric},
+	})
+	got, err := p.RunCase(context.Background(), "smoke", "c1")
+	if err != nil {
+		t.Fatalf("RunCase() error = %v", err)
+	}
+	want := adk.JudgeContext{Model: "gemini-2.5-flash", CallCount: 1}
+	if got.Judge != want {
+		t.Fatalf("Judge = %+v, want %+v (probed fallback)", got.Judge, want)
+	}
+}
+
 // TestProvider_RunCase_missingCase returns ErrRunEval when run_eval drops the id.
 func TestProvider_RunCase_missingCase(t *testing.T) {
 	t.Parallel()
