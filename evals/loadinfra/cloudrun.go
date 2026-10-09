@@ -2,6 +2,7 @@ package loadinfra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,174 +46,95 @@ func cloudRunMetricFilter(t CloudRunTarget, metricType string, extra ...string) 
 // fetchCloudRunMetrics queries all Cloud Run metrics for one target. Returns
 // partial failure messages when individual metrics are missing but at least one
 // metric succeeds; returns a top-level error only when every metric fails.
-func fetchCloudRunMetrics(ctx context.Context, client MetricClient, t CloudRunTarget, window ObservationWindow) (*evalspb.CloudRunMetrics, []string, error) {
+func fetchCloudRunMetrics(
+	ctx context.Context,
+	client MetricClient,
+	t CloudRunTarget,
+	window ObservationWindow,
+) (*evalspb.CloudRunMetrics, []string, error) {
 	// Each metric is fetched independently; partial failures still emit OK snapshots
 	// with FetchMessage listing missing series.
 	m := &evalspb.CloudRunMetrics{}
 
-	countOutcome := fetchInt64Sum(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestCount))
-	if countOutcome.ok {
-		m.RequestCount = countOutcome.value
+	count, countOut := fetchSum(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestCount))
+	if countOut.ok {
+		m.RequestCount = count
 	}
-
-	latOutcome := fetchLatencyPercentiles(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestLatencies))
-	if latOutcome.ok {
-		m.Latency = latOutcome.latency
+	latency, latOut := fetchLatency(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestLatencies))
+	if latOut.ok {
+		m.Latency = latency
 	}
-
-	err5xxOutcome := fetchError5xxRate(ctx, client, t, window)
-	if err5xxOutcome.ok && err5xxOutcome.value > 0 {
-		m.Error_5XxRate = &err5xxOutcome.value
-	} else if err5xxOutcome.ok {
-		zero := 0.0
-		m.Error_5XxRate = &zero
+	rate, rateOut := fetchError5xxRate(ctx, client, t, window)
+	if rateOut.ok {
+		m.Error_5XxRate = &rate
 	}
-
-	maxInstOutcome := fetchDoubleMax(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricInstanceCount))
-	if maxInstOutcome.ok {
-		m.MaxInstanceCount = &maxInstOutcome.value
+	maxInst, instOut := fetchMax(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricInstanceCount))
+	if instOut.ok {
+		m.MaxInstanceCount = &maxInst
 	}
-
-	cpuOutcome := fetchDistributionPercentile(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricCPUUtilization), monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
-	if cpuOutcome.ok {
-		m.CpuUtilizationP99 = &cpuOutcome.value
-	}
-
-	memOutcome := fetchDistributionPercentile(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricMemoryUtilization), monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
-	if memOutcome.ok {
-		m.MemoryUtilizationP99 = &memOutcome.value
-	}
-
-	startupOutcome := fetchDistributionPercentile(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricStartupLatencies), monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
-	if startupOutcome.ok {
-		m.StartupLatencyP99 = &startupOutcome.value
-	}
-
-	partial, err := mergeOutcomes(
-		countOutcome.outcome(),
-		latOutcome.outcome(),
-		err5xxOutcome.outcome(),
-		maxInstOutcome.outcome(),
-		cpuOutcome.outcome(),
-		memOutcome.outcome(),
-		startupOutcome.outcome(),
+	cpu, cpuOut := fetchPercentile(
+		ctx,
+		client,
+		t.ProjectID,
+		window,
+		cloudRunMetricFilter(t, crMetricCPUUtilization),
+		monitoringpb.Aggregation_REDUCE_PERCENTILE_99,
 	)
+	if cpuOut.ok {
+		m.CpuUtilizationP99 = &cpu
+	}
+	mem, memOut := fetchPercentile(
+		ctx,
+		client,
+		t.ProjectID,
+		window,
+		cloudRunMetricFilter(t, crMetricMemoryUtilization),
+		monitoringpb.Aggregation_REDUCE_PERCENTILE_99,
+	)
+	if memOut.ok {
+		m.MemoryUtilizationP99 = &mem
+	}
+	startup, startupOut := fetchPercentile(
+		ctx,
+		client,
+		t.ProjectID,
+		window,
+		cloudRunMetricFilter(t, crMetricStartupLatencies),
+		monitoringpb.Aggregation_REDUCE_PERCENTILE_99,
+	)
+	if startupOut.ok {
+		m.StartupLatencyP99 = &startup
+	}
+
+	partial, err := mergeOutcomes(countOut, latOut, rateOut, instOut, cpuOut, memOut, startupOut)
 	return m, partial, err
 }
 
-// fetchError5xxRate derives the 5xx fraction from request_count series filtered
-// by response_code_class="5xx" over the same window as total request_count.
-func fetchError5xxRate(ctx context.Context, client MetricClient, t CloudRunTarget, window ObservationWindow) error5xxOutcome {
-	totalFilter := cloudRunMetricFilter(t, crMetricRequestCount)
-	errFilter := cloudRunMetricFilter(t, crMetricRequestCount, `metric.labels.response_code_class="5xx"`)
-
-	total := fetchInt64Sum(ctx, client, t.ProjectID, window, totalFilter)
-	if total.err != nil {
-		return error5xxOutcome{err: fmt.Errorf("error_5xx_rate: %w", total.err)}
+// fetchError5xxRate derives the 5xx fraction from request_count series
+// filtered by response_code_class="5xx" over the same window as the total.
+func fetchError5xxRate(ctx context.Context, client MetricClient, t CloudRunTarget, window ObservationWindow) (float64, metricOutcome) {
+	total, totalOut := fetchSum(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestCount))
+	if errors.Is(totalOut.err, errNoData) {
+		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", errNoData)}
 	}
-	if !total.ok {
-		return error5xxOutcome{err: fmt.Errorf("error_5xx_rate: no data")}
+	if totalOut.err != nil {
+		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", totalOut.err)}
 	}
-	if total.value == 0 {
-		// Zero request_count means no traffic in the window; report 0% rather than dividing by zero.
-		return error5xxOutcome{ok: true, value: 0}
+	if total == 0 {
+		// Zero request_count means no traffic; report 0% rather than dividing by zero.
+		return 0, metricOutcome{ok: true}
 	}
-	err5xx := fetchInt64Sum(ctx, client, t.ProjectID, window, errFilter)
-	if err5xx.err != nil {
-		return error5xxOutcome{err: fmt.Errorf("error_5xx_rate: %w", err5xx.err)}
+	n5xx, errOut := fetchSum(
+		ctx,
+		client,
+		t.ProjectID,
+		window,
+		cloudRunMetricFilter(t, crMetricRequestCount, `metric.labels.response_code_class="5xx"`),
+	)
+	if isQueryErr(errOut) {
+		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", errOut.err)}
 	}
-	rate := float64(err5xx.value) / float64(total.value)
-	return error5xxOutcome{ok: true, value: rate}
-}
-
-// error5xxOutcome holds the derived 5xx rate or a fetch error.
-type error5xxOutcome struct {
-	// ok is true when rate was computed (including zero traffic).
-	ok bool
-	// value is 5xx count divided by total request_count.
-	value float64
-	// err is non-nil when either underlying query failed.
-	err error
-}
-
-// outcome adapts error5xxOutcome into the shared mergeOutcomes input shape.
-func (o error5xxOutcome) outcome() metricOutcome {
-	if o.err != nil {
-		return metricOutcome{err: o.err}
-	}
-	if !o.ok {
-		return metricOutcome{err: fmt.Errorf("error_5xx_rate: no data")}
-	}
-	return metricOutcome{ok: true}
-}
-
-// outcome adapts int64Outcome into the shared mergeOutcomes input shape.
-func (o int64Outcome) outcome() metricOutcome {
-	if o.err != nil {
-		return metricOutcome{err: o.err}
-	}
-	if !o.ok {
-		return metricOutcome{err: fmt.Errorf("%s: no data", o.name)}
-	}
-	return metricOutcome{ok: true}
-}
-
-// outcome adapts latencyOutcome into the shared mergeOutcomes input shape.
-func (o latencyOutcome) outcome() metricOutcome {
-	if o.err != nil {
-		return metricOutcome{err: o.err}
-	}
-	if !o.ok {
-		return metricOutcome{err: fmt.Errorf("%s: no data", o.name)}
-	}
-	return metricOutcome{ok: true}
-}
-
-// outcome adapts doubleOutcome into the shared mergeOutcomes input shape.
-func (o doubleOutcome) outcome() metricOutcome {
-	if o.err != nil {
-		return metricOutcome{err: o.err}
-	}
-	if !o.ok {
-		return metricOutcome{err: fmt.Errorf("%s: no data", o.name)}
-	}
-	return metricOutcome{ok: true}
-}
-
-// int64Outcome holds a summed INT64 metric result or a fetch error.
-type int64Outcome struct {
-	// name is the Monitoring filter string used in diagnostic messages.
-	name string
-	// ok is true when at least one matching time series was returned.
-	ok bool
-	// value is the aggregated total after ALIGN_SUM + REDUCE_SUM.
-	value int64
-	// err is non-nil when ListTimeSeries failed.
-	err error
-}
-
-// doubleOutcome holds a scalar DOUBLE metric result or a fetch error.
-type doubleOutcome struct {
-	// name is the Monitoring filter string used in diagnostic messages.
-	name string
-	// ok is true when at least one matching time series was returned.
-	ok bool
-	// value is the aggregated scalar after alignment and reduction.
-	value float64
-	// err is non-nil when ListTimeSeries failed.
-	err error
-}
-
-// latencyOutcome holds p50/p95/p99 latency percentiles or a fetch error.
-type latencyOutcome struct {
-	// name is the Monitoring filter string used in diagnostic messages.
-	name string
-	// ok is true when at least one percentile succeeded.
-	ok bool
-	// latency is populated when ok; partial percentiles are allowed.
-	latency *evalspb.LatencyPercentiles
-	// err is non-nil when every percentile query failed.
-	err error
+	return float64(n5xx) / float64(total), metricOutcome{ok: true}
 }
 
 // sumAggregation aligns DELTA/CUMULATIVE counters with ALIGN_SUM + REDUCE_SUM.
@@ -247,63 +169,91 @@ func distributionPercentileAggregation(reducer monitoringpb.Aggregation_Reducer)
 	}
 }
 
-// fetchDistributionPercentile queries a DELTA DISTRIBUTION metric and returns
-// the mean of per-series percentile scalars after cross-series reduction.
-func fetchDistributionPercentile(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string, reducer monitoringpb.Aggregation_Reducer) doubleOutcome {
-	series, err := querySeries(ctx, client, projectID, window, filter, distributionPercentileAggregation(reducer))
-	if err != nil {
-		return doubleOutcome{name: filter, err: err}
-	}
-	v, ok := meanDoublePoints(series)
-	return doubleOutcome{name: filter, ok: ok, value: v}
+// errNoData marks a query that returned no matching series. It is wrapped
+// with the metric filter so FetchMessage text reads "<filter>: no data".
+var errNoData = errors.New("no data")
+
+// noData returns the "no series" error for the named metric.
+func noData(name string) error {
+	return fmt.Errorf("%s: %w", name, errNoData)
 }
 
-// fetchInt64Sum queries a counter metric with sumAggregation.
-func fetchInt64Sum(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string) int64Outcome {
+// isQueryErr reports whether o failed with an API or context error, as
+// opposed to returning no series.
+func isQueryErr(o metricOutcome) bool {
+	return o.err != nil && !errors.Is(o.err, errNoData)
+}
+
+// fetchSum queries a counter metric with sumAggregation and totals every point.
+func fetchSum(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string) (int64, metricOutcome) {
 	series, err := querySeries(ctx, client, projectID, window, filter, sumAggregation())
 	if err != nil {
-		return int64Outcome{name: filter, err: err}
+		return 0, metricOutcome{err: err}
 	}
 	v, ok := sumInt64Points(series)
-	return int64Outcome{name: filter, ok: ok, value: v}
+	if !ok {
+		return 0, metricOutcome{err: noData(filter)}
+	}
+	return v, metricOutcome{ok: true}
 }
 
-// fetchDoubleMax queries a GAUGE metric with maxAggregation.
-func fetchDoubleMax(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string) doubleOutcome {
+// fetchMax queries a GAUGE metric with maxAggregation and keeps the highest point.
+func fetchMax(
+	ctx context.Context,
+	client MetricClient,
+	projectID string,
+	window ObservationWindow,
+	filter string,
+) (float64, metricOutcome) {
 	series, err := querySeries(ctx, client, projectID, window, filter, maxAggregation())
 	if err != nil {
-		return doubleOutcome{name: filter, err: err}
+		return 0, metricOutcome{err: err}
 	}
 	v, ok := maxDoublePoints(series)
-	return doubleOutcome{name: filter, ok: ok, value: v}
+	if !ok {
+		return 0, metricOutcome{err: noData(filter)}
+	}
+	return v, metricOutcome{ok: true}
 }
 
-// fetchDoublePercentile is an alias for fetchDistributionPercentile.
-func fetchDoublePercentile(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string, reducer monitoringpb.Aggregation_Reducer) doubleOutcome {
-	return fetchDistributionPercentile(ctx, client, projectID, window, filter, reducer)
+// fetchPercentile queries a DELTA DISTRIBUTION metric for one percentile and
+// returns the mean of the returned points.
+func fetchPercentile(
+	ctx context.Context,
+	client MetricClient,
+	projectID string,
+	window ObservationWindow,
+	filter string,
+	reducer monitoringpb.Aggregation_Reducer,
+) (float64, metricOutcome) {
+	series, err := querySeries(ctx, client, projectID, window, filter, distributionPercentileAggregation(reducer))
+	if err != nil {
+		return 0, metricOutcome{err: err}
+	}
+	v, ok := meanDoublePoints(series)
+	if !ok {
+		return 0, metricOutcome{err: noData(filter)}
+	}
+	return v, metricOutcome{ok: true}
 }
 
-// fetchLatencyPercentiles queries p50/p95/p99 for a DELTA DISTRIBUTION latency
-// metric. Partial percentile gaps are tolerated when at least one succeeds.
-func fetchLatencyPercentiles(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string) latencyOutcome {
-	p50 := fetchDistributionPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_50)
-	p95 := fetchDistributionPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_95)
-	p99 := fetchDistributionPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
-	if p50.err != nil && p95.err != nil && p99.err != nil {
-		return latencyOutcome{name: filter, err: p50.err}
+// fetchLatency queries p50, p95 and p99 of a latency distribution. It
+// succeeds when at least one percentile returns a value.
+func fetchLatency(
+	ctx context.Context,
+	client MetricClient,
+	projectID string,
+	window ObservationWindow,
+	filter string,
+) (*evalspb.LatencyPercentiles, metricOutcome) {
+	p50, o50 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_50)
+	p95, o95 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_95)
+	p99, o99 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
+	if isQueryErr(o50) && isQueryErr(o95) && isQueryErr(o99) {
+		return nil, metricOutcome{err: o50.err}
 	}
-	if !p50.ok && !p95.ok && !p99.ok {
-		return latencyOutcome{name: filter}
+	if !o50.ok && !o95.ok && !o99.ok {
+		return nil, metricOutcome{err: noData(filter)}
 	}
-	lat := &evalspb.LatencyPercentiles{}
-	if p50.ok {
-		lat.P50Ms = p50.value
-	}
-	if p95.ok {
-		lat.P95Ms = p95.value
-	}
-	if p99.ok {
-		lat.P99Ms = p99.value
-	}
-	return latencyOutcome{name: filter, ok: true, latency: lat}
+	return &evalspb.LatencyPercentiles{P50Ms: p50, P95Ms: p95, P99Ms: p99}, metricOutcome{ok: true}
 }

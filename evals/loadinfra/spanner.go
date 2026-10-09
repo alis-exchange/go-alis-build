@@ -45,61 +45,59 @@ func spannerMetricFilter(t SpannerTarget, metricType string, extra ...string) st
 
 // fetchSpannerMetrics queries all Spanner metrics for one target. CPU is
 // instance-scoped and uses a filter without the database label.
-func fetchSpannerMetrics(ctx context.Context, client MetricClient, t SpannerTarget, window ObservationWindow) (*evalspb.SpannerMetrics, []string, error) {
+func fetchSpannerMetrics(
+	ctx context.Context,
+	client MetricClient,
+	t SpannerTarget,
+	window ObservationWindow,
+) (*evalspb.SpannerMetrics, []string, error) {
 	m := &evalspb.SpannerMetrics{}
 
-	totalOutcome := fetchInt64Sum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount))
-	if totalOutcome.ok {
-		m.QueryCount = totalOutcome.value
+	total, totalOut := fetchSum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount))
+	if totalOut.ok {
+		m.QueryCount = total
 	}
-
-	errOutcome := fetchInt64Sum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount, `metric.labels.status!="ok"`))
-	if errOutcome.ok {
-		m.QueryErrorCount = errOutcome.value
+	errCount, errOut := fetchSum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount, `metric.labels.status!="ok"`))
+	if errOut.ok {
+		m.QueryErrorCount = errCount
 	}
-
-	apiLatOutcome := fetchSpannerLatencyPercentiles(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricAPILatencies))
-	if apiLatOutcome.ok {
-		m.ApiLatency = apiLatOutcome.latency
+	apiLat, apiOut := fetchSpannerLatency(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricAPILatencies))
+	if apiOut.ok {
+		m.ApiLatency = apiLat
 	}
-
-	queryLatOutcome := fetchSpannerLatencyPercentiles(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryLatencies))
-	if queryLatOutcome.ok {
-		m.QueryLatency = queryLatOutcome.latency
+	queryLat, queryOut := fetchSpannerLatency(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryLatencies))
+	if queryOut.ok {
+		m.QueryLatency = queryLat
 	}
-
 	cpuFilter := strings.Join([]string{
 		spannerResourceFilter(t),
 		fmt.Sprintf(`metric.type="%s"`, spMetricInstanceCPU),
 	}, " AND ")
-	cpuOutcome := fetchDoubleMax(ctx, client, t.ProjectID, window, cpuFilter)
-	if cpuOutcome.ok {
-		m.CpuUtilizationMax = &cpuOutcome.value
+	cpu, cpuOut := fetchMax(ctx, client, t.ProjectID, window, cpuFilter)
+	if cpuOut.ok {
+		m.CpuUtilizationMax = &cpu
 	}
 
-	partial, err := mergeOutcomes(
-		totalOutcome.outcome(),
-		errOutcome.outcome(),
-		apiLatOutcome.outcome(),
-		queryLatOutcome.outcome(),
-		cpuOutcome.outcome(),
-	)
+	partial, err := mergeOutcomes(totalOut, errOut, apiOut, queryOut, cpuOut)
 	return m, partial, err
 }
 
-// fetchSpannerLatencyPercentiles queries Spanner latency distributions, which
-// are reported in seconds, and converts percentiles to milliseconds for proto
-// LatencyPercentiles fields.
-func fetchSpannerLatencyPercentiles(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string) latencyOutcome {
-	out := fetchLatencyPercentiles(ctx, client, projectID, window, filter)
-	if !out.ok || out.latency == nil {
-		return out
+// fetchSpannerLatency queries Spanner latency distributions, which are
+// reported in seconds, and converts percentiles to milliseconds.
+func fetchSpannerLatency(
+	ctx context.Context,
+	client MetricClient,
+	projectID string,
+	window ObservationWindow,
+	filter string,
+) (*evalspb.LatencyPercentiles, metricOutcome) {
+	lat, out := fetchLatency(ctx, client, projectID, window, filter)
+	if !out.ok {
+		return nil, out
 	}
-	lat := out.latency
-	out.latency = &evalspb.LatencyPercentiles{
+	return &evalspb.LatencyPercentiles{
 		P50Ms: lat.P50Ms * 1000,
 		P95Ms: lat.P95Ms * 1000,
 		P99Ms: lat.P99Ms * 1000,
-	}
-	return out
+	}, out
 }

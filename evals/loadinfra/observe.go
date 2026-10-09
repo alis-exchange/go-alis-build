@@ -140,7 +140,13 @@ func targetConcurrencyLimit(n int) int {
 
 // observeCloudRun fetches one Cloud Run target snapshot. Query failures are
 // recorded on FetchStatus/FetchMessage; the snapshot is always returned.
-func observeCloudRun(ctx context.Context, client MetricClient, t CloudRunTarget, w ObservationWindow, extendQueryEnd bool) *evalspb.CloudRunTargetSnapshot {
+func observeCloudRun(
+	ctx context.Context,
+	client MetricClient,
+	t CloudRunTarget,
+	w ObservationWindow,
+	extendQueryEnd bool,
+) *evalspb.CloudRunTargetSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, perTargetTimeout)
 	defer cancel()
 
@@ -151,82 +157,77 @@ func observeCloudRun(ctx context.Context, client MetricClient, t CloudRunTarget,
 		Target:      &evalspb.CloudRunTargetRef{ProjectId: t.ProjectID, Region: t.Region, ServiceName: t.ServiceName},
 		WindowStart: timestamppb.New(w.Start),
 		WindowEnd:   timestamppb.New(w.End),
-		FetchStatus: evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
 		Metrics:     &evalspb.CloudRunMetrics{},
 	}
 	if t.Revision != "" {
 		snap.Target.Revision = &t.Revision
 	}
-	if advisory := shortWindowAdvisory(w); advisory != "" {
-		snap.FetchMessage = &advisory
-	}
 
 	metrics, partial, err := fetchCloudRunMetrics(ctx, client, t, qw)
-	if err != nil {
-		msg := err.Error()
-		if snap.FetchMessage != nil {
-			msg = *snap.FetchMessage + "; " + msg
-		}
-		snap.FetchMessage = &msg
-		snap.FetchStatus = classifyFetchStatus(err)
-		return snap
+	if err == nil {
+		snap.Metrics = metrics
 	}
-	snap.Metrics = metrics
-	if len(partial) == 0 {
-		snap.FetchStatus = evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK
-		return snap
-	}
-	snap.FetchStatus = evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK
-	msg := "partial metric failures: " + strings.Join(partial, ", ")
-	if snap.FetchMessage != nil {
-		msg = *snap.FetchMessage + "; " + msg
-	}
-	snap.FetchMessage = &msg
+	snap.FetchStatus, snap.FetchMessage = finishSnapshot(shortWindowAdvisory(w), partial, err)
 	return snap
 }
 
 // observeSpanner fetches one Spanner target snapshot. Spanner role is always
 // DEPENDENCY on the wire regardless of suite declaration.
-func observeSpanner(ctx context.Context, client MetricClient, t SpannerTarget, w ObservationWindow, extendQueryEnd bool) *evalspb.SpannerTargetSnapshot {
+func observeSpanner(
+	ctx context.Context,
+	client MetricClient,
+	t SpannerTarget,
+	w ObservationWindow,
+	extendQueryEnd bool,
+) *evalspb.SpannerTargetSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, perTargetTimeout)
 	defer cancel()
 
 	qw := spannerQueryWindow(w, extendQueryEnd)
 	snap := &evalspb.SpannerTargetSnapshot{
-		Id:          t.ID,
-		Role:        evalspb.InfraTargetRole_INFRA_TARGET_ROLE_DEPENDENCY,
-		Target:      &evalspb.SpannerTargetRef{ProjectId: t.ProjectID, InstanceId: t.InstanceID, Location: t.Location, Database: t.Database},
+		Id:   t.ID,
+		Role: evalspb.InfraTargetRole_INFRA_TARGET_ROLE_DEPENDENCY,
+		Target: &evalspb.SpannerTargetRef{
+			ProjectId:  t.ProjectID,
+			InstanceId: t.InstanceID,
+			Location:   t.Location,
+			Database:   t.Database,
+		},
 		WindowStart: timestamppb.New(w.Start),
 		WindowEnd:   timestamppb.New(w.End),
-		FetchStatus: evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE,
 		Metrics:     &evalspb.SpannerMetrics{},
-	}
-	if advisory := shortWindowAdvisory(w); advisory != "" {
-		snap.FetchMessage = &advisory
 	}
 
 	metrics, partial, err := fetchSpannerMetrics(ctx, client, t, qw)
-	if err != nil {
-		msg := err.Error()
-		if snap.FetchMessage != nil {
-			msg = *snap.FetchMessage + "; " + msg
-		}
-		snap.FetchMessage = &msg
-		snap.FetchStatus = classifyFetchStatus(err)
-		return snap
+	if err == nil {
+		snap.Metrics = metrics
 	}
-	snap.Metrics = metrics
-	if len(partial) == 0 {
-		snap.FetchStatus = evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK
-		return snap
-	}
-	snap.FetchStatus = evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK
-	msg := "partial metric failures: " + strings.Join(partial, ", ")
-	if snap.FetchMessage != nil {
-		msg = *snap.FetchMessage + "; " + msg
-	}
-	snap.FetchMessage = &msg
+	snap.FetchStatus, snap.FetchMessage = finishSnapshot(shortWindowAdvisory(w), partial, err)
 	return snap
+}
+
+// finishSnapshot returns the FetchStatus and FetchMessage for one target.
+// advisory is a wire-visible hint such as "coarse_window"; partial lists
+// per-metric gaps when at least one metric succeeded; err is set when every
+// metric failed.
+func finishSnapshot(advisory string, partial []string, err error) (evalspb.InfraFetchStatus, *string) {
+	var parts []string
+	if advisory != "" {
+		parts = append(parts, advisory)
+	}
+	status := evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK
+	switch {
+	case err != nil:
+		parts = append(parts, err.Error())
+		status = classifyFetchStatus(err)
+	case len(partial) > 0:
+		parts = append(parts, "partial metric failures: "+strings.Join(partial, ", "))
+	}
+	if len(parts) == 0 {
+		return status, nil
+	}
+	msg := strings.Join(parts, "; ")
+	return status, &msg
 }
 
 // mapTargetRole converts suite TargetRole to the wire InfraTargetRole enum.
@@ -285,7 +286,14 @@ func mergeOutcomes(outcomes ...metricOutcome) ([]string, error) {
 }
 
 // querySeries issues one ListTimeSeries request with optional aggregation.
-func querySeries(ctx context.Context, client MetricClient, projectID string, window ObservationWindow, filter string, agg *monitoringpb.Aggregation) ([]*monitoringpb.TimeSeries, error) {
+func querySeries(
+	ctx context.Context,
+	client MetricClient,
+	projectID string,
+	window ObservationWindow,
+	filter string,
+	agg *monitoringpb.Aggregation,
+) ([]*monitoringpb.TimeSeries, error) {
 	req := &monitoringpb.ListTimeSeriesRequest{
 		Filter: filter,
 		Interval: &monitoringpb.TimeInterval{
