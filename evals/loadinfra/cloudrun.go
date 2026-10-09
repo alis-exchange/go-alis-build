@@ -64,9 +64,13 @@ func fetchCloudRunMetrics(
 	if latOut.ok {
 		m.Latency = latency
 	}
-	rate, rateOut := fetchError5xxRate(ctx, client, t, window)
-	if rateOut.ok {
-		m.Error_5XxRate = &rate
+	var rateOut metricOutcome
+	if countOut.ok {
+		var rate float64
+		rate, rateOut = error5xxRate(ctx, client, t, window, count)
+		if rateOut.ok {
+			m.Error_5XxRate = &rate
+		}
 	}
 	maxInst, instOut := fetchMax(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricInstanceCount))
 	if instOut.ok {
@@ -106,33 +110,48 @@ func fetchCloudRunMetrics(
 		m.StartupLatencyP99 = &startup
 	}
 
-	partial, err := mergeOutcomes(countOut, latOut, rateOut, instOut, cpuOut, memOut, startupOut)
+	outcomes := []metricOutcome{countOut, latOut}
+	if countOut.ok {
+		outcomes = append(outcomes, rateOut)
+	}
+	outcomes = append(outcomes, instOut, cpuOut, memOut, startupOut)
+	partial, err := mergeOutcomes(outcomes...)
 	return m, partial, err
 }
 
-// fetchError5xxRate derives the 5xx fraction from request_count series
-// filtered by response_code_class="5xx" over the same window as the total.
-func fetchError5xxRate(ctx context.Context, client MetricClient, t CloudRunTarget, window ObservationWindow) (float64, metricOutcome) {
-	total, totalOut := fetchSum(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricRequestCount))
-	if errors.Is(totalOut.err, errNoData) {
-		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", errNoData)}
+// orZero reads "no series" as a zero count. Use it only for filtered error
+// subsets, where an empty result means no errors happened. Totals keep
+// "no data" so a wrong target name is still reported.
+func orZero(o metricOutcome) metricOutcome {
+	if errors.Is(o.err, errNoData) {
+		return metricOutcome{ok: true}
 	}
-	if totalOut.err != nil {
-		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", totalOut.err)}
-	}
+	return o
+}
+
+// error5xxRate divides the 5xx request_count subset by total, the
+// request_count already fetched for the snapshot.
+func error5xxRate(
+	ctx context.Context,
+	client MetricClient,
+	t CloudRunTarget,
+	window ObservationWindow,
+	total int64,
+) (float64, metricOutcome) {
 	if total == 0 {
 		// Zero request_count means no traffic; report 0% rather than dividing by zero.
 		return 0, metricOutcome{ok: true}
 	}
-	n5xx, errOut := fetchSum(
+	n5xx, out := fetchSum(
 		ctx,
 		client,
 		t.ProjectID,
 		window,
 		cloudRunMetricFilter(t, crMetricRequestCount, `metric.labels.response_code_class="5xx"`),
 	)
-	if isQueryErr(errOut) {
-		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", errOut.err)}
+	out = orZero(out)
+	if out.err != nil {
+		return 0, metricOutcome{err: fmt.Errorf("error_5xx_rate: %w", out.err)}
 	}
 	return float64(n5xx) / float64(total), metricOutcome{ok: true}
 }

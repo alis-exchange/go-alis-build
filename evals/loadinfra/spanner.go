@@ -58,6 +58,7 @@ func fetchSpannerMetrics(
 		m.QueryCount = total
 	}
 	errCount, errOut := fetchSum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount, `metric.labels.status!="ok"`))
+	errOut = orZero(errOut)
 	if errOut.ok {
 		m.QueryErrorCount = errCount
 	}
