@@ -152,6 +152,28 @@ func TestObserve_cloudRunReusesRequestCountForErrorRate(t *testing.T) {
 	}
 }
 
+// TestObserve_cloudRunReadsInt64InstanceCount checks that the INT64 GAUGE
+// container/instance_count is read from its Int64Value points.
+func TestObserve_cloudRunReadsInt64InstanceCount(t *testing.T) {
+	t.Parallel()
+	target := fetchTestCloudRun
+	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+		cloudRunMetricFilter(target, crMetricRequestCount):  int64Series(40),
+		cloudRunMetricFilter(target, crMetricInstanceCount): int64Series(4),
+	}}
+
+	got, err := Observe(
+		context.Background(),
+		Request{Client: client, Targets: Targets{CloudRun: []CloudRunTarget{target}}, Window: fetchTestWindow},
+	)
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	if m := got.CloudRun[0].GetMetrics(); m.MaxInstanceCount == nil || m.GetMaxInstanceCount() != 4 {
+		t.Fatalf("MaxInstanceCount = %v (set=%t), want 4", m.GetMaxInstanceCount(), m.MaxInstanceCount != nil)
+	}
+}
+
 func TestObserve_cloudRunSkipsErrorRateWithoutRequestCount(t *testing.T) {
 	t.Parallel()
 	target := fetchTestCloudRun

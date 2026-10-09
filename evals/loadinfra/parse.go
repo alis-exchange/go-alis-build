@@ -28,17 +28,20 @@ func sumInt64Points(series []*monitoringpb.TimeSeries) (int64, bool) {
 	return total, found
 }
 
-// maxDoublePoints returns the maximum DOUBLE value across all points in all
-// returned series.
-func maxDoublePoints(series []*monitoringpb.TimeSeries) (float64, bool) {
+// maxPoints returns the maximum numeric value across all points in all
+// returned series. Each point is read by its value type, so INT64 gauges
+// such as Cloud Run container/instance_count and DOUBLE gauges such as
+// Spanner instance/cpu/utilization both work. Points of any other value
+// type are skipped.
+func maxPoints(series []*monitoringpb.TimeSeries) (float64, bool) {
 	var max float64
 	var found bool
 	for _, ts := range series {
 		for _, p := range ts.Points {
-			if p.Value == nil {
+			v, ok := numericValue(p.GetValue())
+			if !ok {
 				continue
 			}
-			v := p.Value.GetDoubleValue()
 			if !found || v > max {
 				max = v
 				found = true
@@ -46,6 +49,19 @@ func maxDoublePoints(series []*monitoringpb.TimeSeries) (float64, bool) {
 		}
 	}
 	return max, found
+}
+
+// numericValue reads a DOUBLE or INT64 typed value as float64. It reports
+// false for nil and for any other value type.
+func numericValue(v *monitoringpb.TypedValue) (float64, bool) {
+	switch x := v.GetValue().(type) {
+	case *monitoringpb.TypedValue_DoubleValue:
+		return x.DoubleValue, true
+	case *monitoringpb.TypedValue_Int64Value:
+		return float64(x.Int64Value), true
+	default:
+		return 0, false
+	}
 }
 
 // pointCount counts points with a value across all series.

@@ -226,7 +226,8 @@ func fetchSum(ctx context.Context, client MetricClient, projectID string, window
 	return v, metricOutcome{ok: true}
 }
 
-// fetchMax queries a GAUGE metric with maxAggregation and keeps the highest point.
+// fetchMax queries an INT64 or DOUBLE GAUGE metric with maxAggregation and
+// keeps the highest point.
 func fetchMax(
 	ctx context.Context,
 	client MetricClient,
@@ -238,7 +239,7 @@ func fetchMax(
 	if err != nil {
 		return 0, metricOutcome{err: err}
 	}
-	v, ok := maxDoublePoints(series)
+	v, ok := maxPoints(series)
 	if !ok {
 		return 0, metricOutcome{err: noData(filter)}
 	}
@@ -260,7 +261,7 @@ func fetchPercentile(
 	if err != nil {
 		return 0, metricOutcome{err: err}
 	}
-	v, ok := maxDoublePoints(series)
+	v, ok := maxPoints(series)
 	if !ok {
 		return 0, metricOutcome{err: noData(filter)}
 	}
