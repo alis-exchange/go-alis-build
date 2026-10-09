@@ -73,7 +73,7 @@ func fetchCloudRunMetrics(
 			m.Error_5XxRate = &rate
 		}
 	}
-	maxInst, instOut := fetchMax(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricInstanceCount))
+	maxInst, instOut := fetchMax(ctx, client, t.ProjectID, window, cloudRunMetricFilter(t, crMetricInstanceCount), peakTotalAggregation())
 	if instOut.ok {
 		m.MaxInstanceCount = &maxInst
 	}
@@ -166,6 +166,18 @@ func sumAggregation() *monitoringpb.Aggregation {
 	}
 }
 
+// peakTotalAggregation takes each series' per-minute max (ALIGN_MAX) and sums
+// the series (REDUCE_SUM), so a metric split by a label such as instance_count's
+// state (active, idle) yields one total per minute; fetchMax then keeps the
+// highest minute.
+func peakTotalAggregation() *monitoringpb.Aggregation {
+	return &monitoringpb.Aggregation{
+		AlignmentPeriod:    durationpb.New(alignmentPeriod),
+		PerSeriesAligner:   monitoringpb.Aggregation_ALIGN_MAX,
+		CrossSeriesReducer: monitoringpb.Aggregation_REDUCE_SUM,
+	}
+}
+
 // maxAggregation aligns GAUGE metrics with ALIGN_MAX + REDUCE_MAX.
 func maxAggregation() *monitoringpb.Aggregation {
 	return &monitoringpb.Aggregation{
@@ -226,16 +238,17 @@ func fetchSum(ctx context.Context, client MetricClient, projectID string, window
 	return v, metricOutcome{ok: true}
 }
 
-// fetchMax queries an INT64 or DOUBLE GAUGE metric with maxAggregation and
-// keeps the highest point.
+// fetchMax queries an INT64 or DOUBLE GAUGE metric with agg and keeps the
+// highest point.
 func fetchMax(
 	ctx context.Context,
 	client MetricClient,
 	projectID string,
 	window ObservationWindow,
 	filter string,
+	agg *monitoringpb.Aggregation,
 ) (float64, metricOutcome) {
-	series, err := querySeries(ctx, client, projectID, window, filter, maxAggregation())
+	series, err := querySeries(ctx, client, projectID, window, filter, agg)
 	if err != nil {
 		return 0, metricOutcome{err: err}
 	}

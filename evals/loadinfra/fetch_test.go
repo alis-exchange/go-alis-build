@@ -174,6 +174,47 @@ func TestObserve_cloudRunReadsInt64InstanceCount(t *testing.T) {
 	}
 }
 
+// TestObserve_instanceCountSumsStatesPerMinute pins MaxInstanceCount as the
+// peak total: instance_count is split by state (active, idle), so the query
+// sums states within each minute (REDUCE_SUM) and the snapshot takes the
+// highest minute. Spanner CPU still reduces with REDUCE_MAX.
+func TestObserve_instanceCountSumsStatesPerMinute(t *testing.T) {
+	t.Parallel()
+	cloud := fetchTestCloudRun
+	spanner := SpannerTarget{ID: "sp", ProjectID: "p", InstanceID: "i", Location: "r", Database: "d"}
+	client := &FakeMetricClient{}
+
+	if _, err := Observe(context.Background(), Request{
+		Client:  client,
+		Targets: Targets{CloudRun: []CloudRunTarget{cloud}, Spanner: []SpannerTarget{spanner}},
+		Window:  fetchTestWindow,
+	}); err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	instanceFilter := cloudRunMetricFilter(cloud, crMetricInstanceCount)
+	var sawInstances, sawCPU bool
+	for _, req := range client.Requests {
+		switch {
+		case req.GetFilter() == instanceFilter:
+			sawInstances = true
+			if got := req.GetAggregation().GetCrossSeriesReducer(); got != monitoringpb.Aggregation_REDUCE_SUM {
+				t.Fatalf("instance_count reducer = %v, want REDUCE_SUM", got)
+			}
+			if got := req.GetAggregation().GetPerSeriesAligner(); got != monitoringpb.Aggregation_ALIGN_MAX {
+				t.Fatalf("instance_count aligner = %v, want ALIGN_MAX", got)
+			}
+		case strings.Contains(req.GetFilter(), spMetricInstanceCPU):
+			sawCPU = true
+			if got := req.GetAggregation().GetCrossSeriesReducer(); got != monitoringpb.Aggregation_REDUCE_MAX {
+				t.Fatalf("spanner cpu reducer = %v, want REDUCE_MAX", got)
+			}
+		}
+	}
+	if !sawInstances || !sawCPU {
+		t.Fatalf("saw instance_count=%t spanner cpu=%t, want both queried", sawInstances, sawCPU)
+	}
+}
+
 func TestObserve_cloudRunSkipsErrorRateWithoutRequestCount(t *testing.T) {
 	t.Parallel()
 	target := fetchTestCloudRun

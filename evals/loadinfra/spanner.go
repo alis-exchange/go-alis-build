@@ -87,7 +87,7 @@ func fetchSpannerMetrics(
 		spannerResourceFilter(t),
 		fmt.Sprintf(`metric.type="%s"`, spMetricInstanceCPU),
 	}, " AND ")
-	cpu, cpuOut := fetchMax(ctx, client, t.ProjectID, window, cpuFilter)
+	cpu, cpuOut := fetchMax(ctx, client, t.ProjectID, window, cpuFilter, maxAggregation())
 	if cpuOut.ok {
 		m.CpuUtilizationMax = &cpu
 	}
