@@ -32,8 +32,8 @@
 //
 // Production code constructs a client with [NewMetricClient]. Callers may pass
 // the client directly to [Observe] or attach it to context via [WithClient] for
-// their own case helper code. Tests inject [FakeMetricClient] at the same
-// boundary.
+// their own case helper code. Tests inject loadinfratest.MetricClient at the
+// same boundary.
 //
 // Example (standalone):
 //

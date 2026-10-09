@@ -81,6 +81,8 @@ func (c *googleMetricClient) Close() error {
 
 // FakeMetricClient records queries and returns canned time series keyed by the
 // ListTimeSeriesRequest filter string.
+//
+// Deprecated: use loadinfratest.MetricClient.
 type FakeMetricClient struct {
 	// ByFilter maps Monitoring filter strings to canned time series responses.
 	ByFilter map[string][]*monitoringpb.TimeSeries
@@ -155,7 +157,10 @@ func (f *FakeMetricClient) QueryTimeSeries(
 	}
 }
 
+// Close counts the call. It is safe for concurrent use.
 func (f *FakeMetricClient) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.CloseCalls++
 	return nil
 }
