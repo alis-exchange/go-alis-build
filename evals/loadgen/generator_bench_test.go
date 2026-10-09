@@ -9,7 +9,7 @@ import (
 
 func benchAggregator() (*aggregator, sample) {
 	start := time.Now().Add(-time.Hour)
-	agg := newAggregator(start, start.Add(2*time.Hour), time.Minute, 0)
+	agg := newAggregator(start, start.Add(2*time.Hour), time.Minute)
 	s := sample{
 		sentAt:  time.Now(),
 		latency: 12 * time.Millisecond,

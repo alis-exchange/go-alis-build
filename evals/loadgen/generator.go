@@ -101,7 +101,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	windowEnd := start.Add(total)
 	measurementStart := start.Add(p.Warmup)
 	measurementEnd := measurementStart.Add(p.Duration)
-	agg := newAggregator(measurementStart, measurementEnd, p.Duration, 0)
+	agg := newAggregator(measurementStart, measurementEnd, p.Duration)
 	aggDone := make(chan *Metrics, 1)
 	go func() {
 		aggDone <- agg.consume(samples)
@@ -272,8 +272,6 @@ type aggregator struct {
 	measurementEnd time.Time
 	// measureFor is the Duration field copied into finalized Metrics.
 	measureFor time.Duration
-	// dropped counts pacer-side drops seeded at construction; worker drops added later.
-	dropped int64
 
 	// mu guards all counters and histograms below.
 	mu sync.Mutex
@@ -304,12 +302,11 @@ type aggregator struct {
 }
 
 // newAggregator constructs an empty aggregator for one measurement window.
-func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.Duration, dropped int64) *aggregator {
+func newAggregator(measurementStart, measurementEnd time.Time, measureFor time.Duration) *aggregator {
 	return &aggregator{
 		measurementStart: measurementStart,
 		measurementEnd:   measurementEnd,
 		measureFor:       measureFor,
-		dropped:          dropped,
 		hist:             hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
 		ttfbHist:         hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
 		respHist:         hdrhistogram.New(hdrMinValueUs, hdrMaxValueUs, hdrSigFigs),
@@ -391,7 +388,6 @@ func (a *aggregator) buildMetrics() *Metrics {
 		CheckPassedCount: a.checkPassed,
 		CheckFailedCount: a.checkFailed,
 		ErrorsByCode:     cloneErrorsMap(a.errorsByCode),
-		DroppedCount:     a.dropped,
 		MeasurementStart: a.measurementStart,
 		MeasurementEnd:   a.measurementEnd,
 	}

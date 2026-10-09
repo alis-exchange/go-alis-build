@@ -649,7 +649,7 @@ func TestAggregator_AbortSnapshotSLOFields(t *testing.T) {
 	t.Parallel()
 
 	start := time.Now().Add(-time.Minute)
-	agg := newAggregator(start, start.Add(time.Minute), 30*time.Second, 0)
+	agg := newAggregator(start, start.Add(time.Minute), 30*time.Second)
 	for i := 0; i < 50; i++ {
 		agg.record(sample{
 			sentAt:  start.Add(time.Duration(i) * time.Millisecond),
@@ -704,7 +704,7 @@ func TestAggregator_buildAbortMetricsUsesElapsedDuration(t *testing.T) {
 	t.Parallel()
 
 	start := time.Now().Add(-2 * time.Second)
-	agg := newAggregator(start, start.Add(30*time.Second), 30*time.Second, 0)
+	agg := newAggregator(start, start.Add(30*time.Second), 30*time.Second)
 	for i := 0; i < 100; i++ {
 		agg.record(sample{
 			sentAt:  start.Add(time.Duration(i) * 20 * time.Millisecond),

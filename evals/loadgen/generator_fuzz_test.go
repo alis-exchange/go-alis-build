@@ -11,7 +11,7 @@ func FuzzAggregatorRecordFinalize(f *testing.F) {
 	f.Add(int64(5000), true, true, int32(3), uint8(10))
 	f.Add(int64(1000), false, false, int32(0), uint8(5))
 
-	f.Fuzz(func(t *testing.T, latencyUs int64, hasTransportErr bool, hasStream bool, messages int32, sampleCount uint8) {
+	f.Fuzz(func(t *testing.T, latencyUs int64, hasTransportErr, hasStream bool, messages int32, sampleCount uint8) {
 		if latencyUs < 0 || latencyUs > math.MaxInt64/int64(time.Microsecond) {
 			return
 		}
@@ -24,7 +24,7 @@ func FuzzAggregatorRecordFinalize(f *testing.F) {
 		}
 
 		start := time.Now().Add(-time.Minute)
-		agg := newAggregator(start, start.Add(time.Minute), 30*time.Second, 0)
+		agg := newAggregator(start, start.Add(time.Minute), 30*time.Second)
 
 		var transportErr error
 		if hasTransportErr {
