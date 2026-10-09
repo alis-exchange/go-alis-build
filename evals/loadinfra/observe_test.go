@@ -234,10 +234,13 @@ func TestObserve_addsSettleAdvisoryBeforeSettleTime(t *testing.T) {
 	tests := []struct {
 		name        string
 		now         time.Time
-		wantAdvised bool
+		wantCloud   bool
+		wantSpanner bool
 	}{
-		{"right after the window", time.Date(2026, 7, 16, 10, 6, 0, 0, time.UTC), true},
-		{"well after settle", time.Date(2026, 7, 16, 10, 20, 0, 0, time.UTC), false},
+		{"right after the window", time.Date(2026, 7, 16, 10, 6, 0, 0, time.UTC), true, true},
+		// Cloud Run settles at End+180s (10:08:40), Spanner at End+240s (10:09:40).
+		{"between the two settle times", time.Date(2026, 7, 16, 10, 9, 0, 0, time.UTC), false, true},
+		{"well after settle", time.Date(2026, 7, 16, 10, 20, 0, 0, time.UTC), false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -253,12 +256,43 @@ func TestObserve_addsSettleAdvisoryBeforeSettleTime(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Observe() error = %v", err)
 			}
-			for _, msg := range []string{got.CloudRun[0].GetFetchMessage(), got.Spanner[0].GetFetchMessage()} {
-				if got := strings.Contains(msg, settleAdvisory); got != tt.wantAdvised {
-					t.Fatalf("FetchMessage = %q, advisory present = %v, want %v", msg, got, tt.wantAdvised)
-				}
+			if msg := got.CloudRun[0].GetFetchMessage(); strings.Contains(msg, settleAdvisory) != tt.wantCloud {
+				t.Fatalf("Cloud Run FetchMessage = %q, advisory present = %v, want %v", msg, !tt.wantCloud, tt.wantCloud)
+			}
+			if msg := got.Spanner[0].GetFetchMessage(); strings.Contains(msg, settleAdvisory) != tt.wantSpanner {
+				t.Fatalf("Spanner FetchMessage = %q, advisory present = %v, want %v", msg, !tt.wantSpanner, tt.wantSpanner)
 			}
 		})
+	}
+}
+
+// TestObserve_joinsShortWindowAndSettleAdvisories pins the joined form when a
+// short window is observed before its settle time: both advisories appear,
+// short-window first, separated by "; ".
+func TestObserve_joinsShortWindowAndSettleAdvisories(t *testing.T) {
+	t.Parallel()
+	window := ObservationWindow{
+		Start: time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 7, 16, 10, 0, 30, 0, time.UTC),
+	}
+	target := CloudRunTarget{ID: "cr", Role: RoleEntry, ProjectID: "p", Region: "r", ServiceName: "s"}
+	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
+		cloudRunMetricFilter(target, crMetricRequestCount): int64Series(1),
+	}}
+	got, err := Observe(context.Background(), Request{
+		Client: client, Targets: Targets{CloudRun: []CloudRunTarget{target}},
+		Window: window, now: fixedClock(time.Date(2026, 7, 16, 10, 1, 0, 0, time.UTC)),
+	})
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	msg := got.CloudRun[0].GetFetchMessage()
+	short := shortWindowAdvisory(window)
+	if short == "" {
+		t.Fatal("shortWindowAdvisory() = \"\", want a coarse_window advisory for a 30s window")
+	}
+	if !strings.HasPrefix(msg, short+"; "+settleAdvisory) {
+		t.Fatalf("FetchMessage = %q, want prefix %q", msg, short+"; "+settleAdvisory)
 	}
 }
 

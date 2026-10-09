@@ -63,7 +63,7 @@ const (
 	// may be invisible for up to 120s
 	// (https://docs.cloud.google.com/monitoring/api/metrics_gcp_p_z); the
 	// padding adds one sample period on top. ObserveLookback windows end
-	// this long before now.
+	// this long before now when only Cloud Run targets are declared.
 	CloudRunSettlePadding = 180 * time.Second
 	// SpannerSettlePadding is the Spanner equivalent. Spanner
 	// api/request_latencies may be invisible for up to 180s
