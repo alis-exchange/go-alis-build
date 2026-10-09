@@ -1,0 +1,9 @@
+Phase P1 verification (evals_case_verdict_20261009)
+Commits: 823ec1e, 21e3ac0, cd0ba59
+Tests: cd evals && go test -race ./... -> all ok; go vet ok
+Lint: golangci-lint run --new-from-rev=evals/v0.3.0 ./... -> 0 issues
+gorelease -base=v0.3.0 -version=v0.4.0 -> valid, no incompatible entries
+Parity goldens, go.mod/go.sum and builders: empty diff
+Droppable fix: all packages ok at 21e3ac0 (fix's parent); fix test fails with the fix reverted
+Independent verifier: Approve (hasData/failure flags identical term by term)
+Hand check: none needed (library, behaviour covered by tests)

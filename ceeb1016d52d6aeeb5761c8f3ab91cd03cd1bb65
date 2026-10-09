@@ -1,0 +1,7 @@
+Phase P2 verification (loadgen_worker_pool_20261009, final)
+Commits: a927c0b, 875b06b, bedd192 (track: 7632346..bedd192)
+Tests: go test -race -count=5 ./loadgen/... ok; whole evals module -race ok; vet ok
+Lint: --new-from-rev=evals/v0.3.0 ./loadgen/... 0 issues
+gorelease -base=v0.3.0 -version=v0.4.0: valid, no incompatible entries
+Final verifier (whole track diff): Approve; two doc nits fixed in bedd192
+Hand check: none needed (library)

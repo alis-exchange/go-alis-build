@@ -1,0 +1,7 @@
+Track verification (adk_suite_bridge_20261009, final)
+Commits: b670fe2 4c4935b 3de2ed7 e9237b8 ddb3b72 04f962f 35a8af9 0c0d3c7 627d6cf db44064 b741def 9d7aecf 861fb40 + docs nits
+Tests: go test -race ./... ok; parity goldens unchanged; adk does not import root evals
+Lint: --new-from-rev=evals/v0.3.0 0 issues
+gorelease v0.3.0->v0.4.0: compatible additions only for this track; incompatible only the two approved loadinfra padding values
+Verifiers: P1-P2, P3, final all Approve
+Hand check: none (library)

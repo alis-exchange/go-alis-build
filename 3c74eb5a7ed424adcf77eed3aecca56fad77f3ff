@@ -1,0 +1,6 @@
+Phases P1-P3 verification (loadinfra_metric_fetch_20261009)
+Commits: 918fe0e, 8890245, 1b08d76, 64310dc, b0701a1; side: 9bdd5f4, 156a2bd
+Tests: go test -race -count=5 ./loadinfra/... ./ ok; intermediate commits 918fe0e and 1b08d76 pass alone
+Lint: --new-from-rev=evals/v0.3.0 0 issues
+Verifier: Approve P1, P2, P3; nits fixed in 156a2bd and spec release notes widened
+Hand check: none (library)
