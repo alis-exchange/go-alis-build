@@ -3,9 +3,12 @@ package adk_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"go.alis.build/adk/launchers/evals/evaluation/models"
 	evalspb "go.alis.build/common/alis/evals"
@@ -61,6 +64,72 @@ func bridgeServer(t *testing.T) *httptest.Server {
 	}))
 }
 
+// bridgeSuite builds an AgentEvalSuite with the recipe from the package
+// documentation, the README and the ADK knowledge page. Keep it identical to
+// those copies.
+func bridgeSuite(provider *adk.Provider, set string, ids []string) *evals.AgentEvalSuite {
+	suite := evals.NewAgentEvalSuite(set)
+	for _, id := range ids {
+		suite.AddCase(adk.SuiteCaseName(id), func(ctx context.Context, r *evals.AgentEvalResult) {
+			res, err := provider.RunCase(ctx, set, id)
+			if err != nil {
+				if ctx.Err() != nil {
+					r.SetNotEvaluated("run cancelled")
+					return
+				}
+				r.Fail(err)
+				return
+			}
+			res.RecordTo(r)
+		})
+	}
+	return suite
+}
+
+// TestSuiteBridge_cancelledRunLeavesCaseNotEvaluated cancels the suite while
+// a case's run_eval call is in flight and checks that the recipe leaves the
+// case NOT_EVALUATED rather than FAILED.
+func TestSuiteBridge_cancelledRunLeavesCaseNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/dev/apps/test.agent.v1/eval_sets/smoke/run_eval" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.EscapedPath())
+			http.Error(w, "unexpected", http.StatusTeapot)
+			return
+		}
+		// Drain the body so the server notices the client disconnecting, then
+		// cancel the suite mid-call and hold the call until the client gives up.
+		_, _ = io.Copy(io.Discard, r.Body)
+		cancel()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+			t.Error("run_eval call was not cancelled")
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	provider := adk.NewProvider(adk.Agent{BaseURL: srv.URL, AppName: "test.agent.v1", JudgeModel: "gemini-2.5-pro"})
+	run, err := bridgeSuite(provider, "smoke", []string{"case_a"}).Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	cases := run.GetAgentEval().GetCases()
+	if len(cases) != 1 {
+		t.Fatalf("cases = %d, want 1", len(cases))
+	}
+	if got := cases[0].GetStatus(); got != evalspb.Status_NOT_EVALUATED {
+		t.Fatalf("case status = %v, want NOT_EVALUATED (validations=%v)", got, cases[0].GetValidations())
+	}
+	vs := cases[0].GetValidations()
+	if len(vs) != 1 || vs[0].GetStatus() != evalspb.Status_NOT_EVALUATED || vs[0].GetMessage() != "run cancelled" {
+		t.Fatalf("validations = %v, want one NOT_EVALUATED \"run cancelled\"", vs)
+	}
+}
+
 // TestSuiteBridge_runsEachADKCaseAsASuiteCase builds an AgentEvalSuite from
 // ListCases, RunCase, and RecordTo and checks the materialized run.
 func TestSuiteBridge_runsEachADKCaseAsASuiteCase(t *testing.T) {
@@ -75,17 +144,7 @@ func TestSuiteBridge_runsEachADKCaseAsASuiteCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCases() error = %v", err)
 	}
-	suite := evals.NewAgentEvalSuite("smoke")
-	for _, id := range ids {
-		suite.AddCase(adk.SuiteCaseName(id), func(ctx context.Context, r *evals.AgentEvalResult) {
-			res, err := provider.RunCase(ctx, "smoke", id)
-			if err != nil {
-				r.Fail(err)
-				return
-			}
-			res.RecordTo(r)
-		})
-	}
+	suite := bridgeSuite(provider, "smoke", ids)
 
 	run, err := suite.Run(ctx, evals.WithMaxConcurrency(2))
 	if err != nil {

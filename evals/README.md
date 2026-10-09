@@ -199,6 +199,10 @@ for _, id := range ids {
     suite.AddCase(adk.SuiteCaseName(id), func(ctx context.Context, r *evals.AgentEvalResult) {
         res, err := provider.RunCase(ctx, set, id)
         if err != nil {
+            if ctx.Err() != nil {
+                r.SetNotEvaluated("run cancelled")
+                return
+            }
             r.Fail(err)
             return
         }
@@ -207,6 +211,8 @@ for _, id := range ids {
 }
 run, err := suite.Run(ctx, evals.WithMaxConcurrency(4))
 ```
+
+When the suite is cancelled, `RunCase` returns the context error for cases already in flight; the `ctx.Err()` check leaves those cases `NOT_EVALUATED` with the reason `run cancelled` instead of failing them. Other `RunCase` errors fail the case.
 
 The case closure captures the loop variable `id`, which is safe because Go 1.22 and later give each iteration its own variable (this module declares `go 1.26`). With an older `go` directive, copy `id` inside the loop.
 
