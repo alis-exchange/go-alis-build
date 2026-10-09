@@ -49,6 +49,24 @@ type Request struct {
 	// TargetConcurrency bounds simultaneous target observations. Values below
 	// one use DefaultTargetConcurrency.
 	TargetConcurrency int
+	// now returns the observation time. Nil uses time.Now. It lets
+	// in-package tests pin the clock.
+	now func() time.Time
+}
+
+// clock returns the observation time in UTC.
+func (r Request) clock() time.Time {
+	if r.now != nil {
+		return r.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// lookbackRequest builds the Request for ObserveLookback from the given clock.
+func lookbackRequest(client MetricClient, targets Targets, lookback time.Duration, now func() time.Time) Request {
+	req := Request{Client: client, Targets: targets, now: now}
+	req.Window = lookbackWindow(lookback, req.clock(), targets)
+	return req
 }
 
 // ObserveLoad observes the measurement window from a generated load run.
@@ -70,11 +88,7 @@ func ObserveLoad(ctx context.Context, client MetricClient, targets Targets, metr
 // ObserveLookback observes a settled window ending before Monitoring's
 // visibility delay for the declared target kinds.
 func ObserveLookback(ctx context.Context, client MetricClient, targets Targets, lookback time.Duration) (ObserveResult, error) {
-	return Observe(ctx, Request{
-		Client:  client,
-		Targets: targets,
-		Window:  lookbackWindow(lookback, time.Now().UTC(), targets),
-	})
+	return Observe(ctx, lookbackRequest(client, targets, lookback, time.Now))
 }
 
 // Observe fetches snapshots for a caller-defined reported window. A positive

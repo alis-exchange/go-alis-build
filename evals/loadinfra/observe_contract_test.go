@@ -53,35 +53,36 @@ func TestObserveLoad_rejectsNilMetricsWithoutQuerying(t *testing.T) {
 	}
 }
 
+// fixedClock returns a clock that always reports t.
+func fixedClock(t time.Time) func() time.Time {
+	return func() time.Time { return t }
+}
+
 func TestObserveLookback_settlesForTargetKinds(t *testing.T) {
 	t.Parallel()
 
 	const lookback = 30 * time.Minute
+	now := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
 	target := SpannerTarget{ID: "orders", ProjectID: "p", InstanceID: "i", Location: "r", Database: "d"}
 	client := &FakeMetricClient{ByFilter: map[string][]*monitoringpb.TimeSeries{
 		spannerMetricFilter(target, spMetricQueryCount): int64Series(1),
 	}}
-	before := time.Now().UTC().Add(-SpannerSettlePadding)
-	got, err := ObserveLookback(context.Background(), client, Targets{
-		Spanner: []SpannerTarget{target},
-	}, lookback)
-	after := time.Now().UTC().Add(-SpannerSettlePadding)
+
+	got, err := Observe(context.Background(), lookbackRequest(client, Targets{Spanner: []SpannerTarget{target}}, lookback, fixedClock(now)))
 	if err != nil {
-		t.Fatalf("ObserveLookback() error = %v", err)
+		t.Fatalf("Observe() error = %v", err)
 	}
-	end := got.Spanner[0].GetWindowEnd().AsTime()
-	start := got.Spanner[0].GetWindowStart().AsTime()
-	if got.Window.Start != start || got.Window.End != end {
-		t.Fatalf("result window = %+v, want %v..%v", got.Window, start, end)
+	wantEnd := now.Add(-SpannerSettlePadding)
+	wantStart := wantEnd.Add(-lookback)
+	if got.Window.Start != wantStart || got.Window.End != wantEnd {
+		t.Fatalf("result window = %+v, want %v..%v", got.Window, wantStart, wantEnd)
 	}
-	if end.Before(before) || end.After(after) {
-		t.Fatalf("settled end = %v, want between %v and %v", end, before, after)
+	snap := got.Spanner[0]
+	if !snap.GetWindowStart().AsTime().Equal(wantStart) || !snap.GetWindowEnd().AsTime().Equal(wantEnd) {
+		t.Fatalf("snapshot window = %v..%v, want %v..%v", snap.GetWindowStart().AsTime(), snap.GetWindowEnd().AsTime(), wantStart, wantEnd)
 	}
-	if end.Sub(start) != lookback {
-		t.Fatalf("reported lookback = %v, want %v", end.Sub(start), lookback)
-	}
-	if !client.LastIntervalEnd.Equal(end) {
-		t.Fatalf("query end = %v, want unextended reported end %v", client.LastIntervalEnd, end)
+	if !client.LastIntervalEnd.Equal(wantEnd) {
+		t.Fatalf("query end = %v, want %v", client.LastIntervalEnd, wantEnd)
 	}
 }
 
@@ -155,7 +156,13 @@ func TestObserve_preservesTargetMetadataRolesAndReportedWindow(t *testing.T) {
 		t.Fatalf("cloud target metadata = %+v", cr.GetTarget())
 	}
 	if !cr.GetWindowStart().AsTime().Equal(window.Start) || !cr.GetWindowEnd().AsTime().Equal(window.End) {
-		t.Fatalf("cloud reported window = %v..%v, want %v..%v", cr.GetWindowStart().AsTime(), cr.GetWindowEnd().AsTime(), window.Start, window.End)
+		t.Fatalf(
+			"cloud reported window = %v..%v, want %v..%v",
+			cr.GetWindowStart().AsTime(),
+			cr.GetWindowEnd().AsTime(),
+			window.Start,
+			window.End,
+		)
 	}
 
 	sp := got.Spanner[0]
@@ -169,7 +176,13 @@ func TestObserve_preservesTargetMetadataRolesAndReportedWindow(t *testing.T) {
 		t.Fatalf("spanner target metadata = %+v", sp.GetTarget())
 	}
 	if !sp.GetWindowStart().AsTime().Equal(window.Start) || !sp.GetWindowEnd().AsTime().Equal(window.End) {
-		t.Fatalf("spanner reported window = %v..%v, want %v..%v", sp.GetWindowStart().AsTime(), sp.GetWindowEnd().AsTime(), window.Start, window.End)
+		t.Fatalf(
+			"spanner reported window = %v..%v, want %v..%v",
+			sp.GetWindowStart().AsTime(),
+			sp.GetWindowEnd().AsTime(),
+			window.Start,
+			window.End,
+		)
 	}
 }
 
