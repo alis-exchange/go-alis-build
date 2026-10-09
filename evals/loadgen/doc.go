@@ -99,10 +99,12 @@
 // generator rather than the SUT. Closed-loop runs get their own
 // zero-sample diagnostic and skip the saturation comparison — with no
 // target rate there is nothing to undershoot. [Metrics.DroppedCount]
-// counts scheduled ticks that were not dispatched (pacer saturation or a
-// full tick channel), worker-side skips for ticks picked up after the
-// window ended, and boundary-truncated failures (next paragraph). It is
-// not a spin or retry counter.
+// counts scheduled ticks that were not dispatched because every live
+// worker was busy (with [Profile.ConcurrencyStages], the current stage's
+// worker count, not the peak) or the tick channel was full, ticks picked
+// up after the window ended or still queued at the ramp-down cutoff or
+// when the run was cancelled or aborted, and boundary-truncated failures
+// (next paragraph). It is not a spin or retry counter.
 //
 // Scheduling never extends the window: slots that would land at or past
 // Warmup+Duration are not dispatched, every per-call timeout is capped at

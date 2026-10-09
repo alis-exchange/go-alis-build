@@ -126,8 +126,6 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 	// which newWorkerPool derived from runCtx above.
 	pool.Start(p.initialConcurrency(), p.ConcurrencyStages, start) //nolint:contextcheck // context inherited via newWorkerPool(runCtx, ...)
 
-	maxConc := int32(p.MaxConcurrency())
-
 	pacerDone := make(chan struct{})
 	if p.ClosedLoop {
 		// Worker-driven dispatch: closed-loop workers loop until the window
@@ -151,7 +149,7 @@ func (g *inProcess) Run(ctx context.Context, p Profile, target ResultTarget) (*M
 		go func() {
 			defer close(pacerDone)
 			defer close(ticks)
-			runPacerLoop(runCtx, pacer, start, total, ticks, maxConc, &inFlight, &dropped)
+			runPacerLoop(runCtx, pacer, start, total, ticks, pool.Size, &inFlight, &dropped)
 		}()
 	}
 
@@ -548,14 +546,16 @@ func concurrencyAt(elapsed time.Duration, stages []Stage) int {
 }
 
 // runPacerLoop dispatches ticks on the pacer's schedule until the window
-// closes. Extracted from Run so the closed-loop branch can skip it entirely.
+// closes, never letting dispatched-but-unfinished ticks exceed
+// liveWorkers(). Extracted from Run so the closed-loop branch can skip it
+// entirely.
 func runPacerLoop(
 	runCtx context.Context,
 	pacer Pacer,
 	start time.Time,
 	total time.Duration,
 	ticks chan<- time.Time,
-	maxConc int32,
+	liveWorkers func() int,
 	inFlight *atomic.Int32,
 	dropped *atomic.Int64,
 ) {
@@ -585,9 +585,13 @@ func runPacerLoop(
 		if now.Sub(start) >= total {
 			return
 		}
-		if inFlight.Load() >= maxConc {
-			// Drop when concurrency is saturated (open-loop). Advance sent so
-			// Pace schedules the next slot instead of spinning on wait==0.
+		if int(inFlight.Load()) >= liveWorkers() {
+			// Drop when every live worker is busy (open-loop). The cap is the
+			// live pool size, not the peak stage count: queueing past it
+			// would hand stale ticks to the few workers left in a low stage.
+			// Calls of scaled-down workers still count in inFlight. Advance
+			// sent so Pace schedules the next slot instead of spinning on
+			// wait==0.
 			dropped.Add(1)
 			sent++
 		} else {

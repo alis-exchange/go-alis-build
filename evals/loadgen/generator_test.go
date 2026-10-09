@@ -3,6 +3,7 @@ package loadgen
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -543,10 +544,14 @@ func TestInProcess_ConcurrencyStagesScaleWorkers(t *testing.T) {
 	t.Parallel()
 
 	inv := &concurrentInvocations{}
+	// 500 qps of 20ms calls needs ~10 concurrent calls, more than either
+	// stage allows. The pacer caps in-flight ticks at the live worker
+	// count, so a high peak shows the supervisor really added workers;
+	// with short calls demand alone never fills the high stage.
 	target := TransportTarget(func(context.Context) error {
 		inv.enter()
 		defer inv.leave()
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 		return nil
 	})
 	g := New()
@@ -1214,5 +1219,93 @@ func TestProfile_FailureBackoffRequiresClosedLoop(t *testing.T) {
 	p = Profile{ClosedLoop: true, Concurrency: 1, Duration: time.Second, FailureBackoff: -time.Second}
 	if err := p.Validate(); err == nil {
 		t.Fatal("Validate(negative FailureBackoff) succeeded, want error")
+	}
+}
+
+// TestRunPacerLoop_CapsInFlightAtLiveSize drives the pacer with nobody
+// taking ticks. With one live worker it may dispatch exactly one tick;
+// every later slot is dropped even though the channel has room.
+func TestRunPacerLoop_CapsInFlightAtLiveSize(t *testing.T) {
+	t.Parallel()
+
+	ticks := make(chan time.Time, 8)
+	var inFlight atomic.Int32
+	var dropped atomic.Int64
+	total := 50 * time.Millisecond
+	pacer := ConstantPacer{Freq: 1000, Duration: total}
+
+	runPacerLoop(context.Background(), pacer, time.Now(), total, ticks, func() int { return 1 }, &inFlight, &dropped)
+
+	if got := len(ticks); got != 1 {
+		t.Fatalf("queued ticks=%d, want 1 (the live worker count)", got)
+	}
+	if got := inFlight.Load(); got != 1 {
+		t.Fatalf("inFlight=%d, want 1", got)
+	}
+	if got := dropped.Load(); got < 10 {
+		t.Fatalf("dropped=%d, want >= 10 of ~50 slots", got)
+	}
+}
+
+// TestInProcess_LowStageDispatchesOnlyToIdleWorkers pins the live-size
+// cap end to end. After a step down to one worker the pacer may hand that
+// worker a tick only when it is idle. Capping at the peak instead queued
+// ticks in the channel and the worker ran stale ticks back to back.
+func TestInProcess_LowStageDispatchesOnlyToIdleWorkers(t *testing.T) {
+	t.Parallel()
+
+	type call struct{ start, end time.Time }
+	var mu sync.Mutex
+	var calls []call
+	target := TransportTarget(func(ctx context.Context) error {
+		c := call{start: time.Now()}
+		select {
+		case <-ctx.Done():
+		case <-time.After(250 * time.Millisecond):
+		}
+		c.end = time.Now()
+		mu.Lock()
+		calls = append(calls, c)
+		mu.Unlock()
+		return nil
+	})
+	p := Profile{
+		QPS:              10,
+		Concurrency:      4,
+		Duration:         1500 * time.Millisecond,
+		GracefulRampDown: 300 * time.Millisecond,
+		ConcurrencyStages: []Stage{
+			{Duration: 200 * time.Millisecond, Target: 4},
+			{Duration: 1300 * time.Millisecond, Target: 1},
+		},
+	}
+	begin := time.Now()
+	if _, err := New().Run(context.Background(), p, target); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The step down lands by ~250ms (stage end plus one supervisor tick) and
+	// the last high-stage call, started at the 200ms slot, ends by ~450ms.
+	settled := begin.Add(450 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	var low []call
+	for _, c := range calls {
+		if !c.start.Before(settled) {
+			low = append(low, c)
+		}
+	}
+	sort.Slice(low, func(i, j int) bool { return low[i].start.Before(low[j].start) })
+	if len(low) < 2 {
+		t.Fatalf("low-stage calls=%d, want at least 2", len(low))
+	}
+	// low[i] is the call before c, so c is low-stage call i+1.
+	for i, c := range low[1:] {
+		gap := c.start.Sub(low[i].end)
+		if gap < 0 {
+			t.Fatalf("call %d overlapped the previous one by %v: in-flight exceeded the live stage count of 1", i+1, -gap)
+		}
+		if gap < 20*time.Millisecond {
+			t.Fatalf("call %d started %v after the previous call ended, want >= 20ms: the worker ran a queued tick", i+1, gap)
+		}
 	}
 }
