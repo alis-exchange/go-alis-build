@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	evalspb "go.alis.build/common/alis/evals"
@@ -174,18 +175,27 @@ func maxAggregation() *monitoringpb.Aggregation {
 	}
 }
 
-// distributionPercentileAggregation builds the Monitoring aggregation for
-// DELTA DISTRIBUTION metrics (request_latencies, cpu/memory utilizations).
-func distributionPercentileAggregation(reducer monitoringpb.Aggregation_Reducer) *monitoringpb.Aggregation {
-	// DELTA DISTRIBUTION metrics (request_latencies, cpu/memory utilizations):
-	// merge histograms per series per minute (ALIGN_SUM), then compute the
-	// cross-series percentile (REDUCE_PERCENTILE_*). This matches the supported
-	// Monitoring API path for distribution metrics.
+// maxAlignmentPeriod caps the percentile alignment period. The Monitoring
+// Aggregation reference allows 104 weeks for charts and 90,000s for alerting
+// policies and does not name ListTimeSeries, so the lower limit is used.
+// Source: https://docs.cloud.google.com/monitoring/api/ref_v3/rpc/google.monitoring.v3#aggregation
+const maxAlignmentPeriod = 90000 * time.Second
+
+// windowPercentileAggregation merges each series' histograms over the whole
+// window (ALIGN_SUM with one alignment period) and then takes the
+// cross-series percentile, so Monitoring returns one window-wide value. It
+// reports whether the period was clamped to maxAlignmentPeriod.
+func windowPercentileAggregation(reducer monitoringpb.Aggregation_Reducer, window ObservationWindow) (*monitoringpb.Aggregation, bool) {
+	period := window.End.Sub(window.Start)
+	clamped := period > maxAlignmentPeriod
+	if clamped {
+		period = maxAlignmentPeriod
+	}
 	return &monitoringpb.Aggregation{
-		AlignmentPeriod:    durationpb.New(alignmentPeriod),
+		AlignmentPeriod:    durationpb.New(period),
 		PerSeriesAligner:   monitoringpb.Aggregation_ALIGN_SUM,
 		CrossSeriesReducer: reducer,
-	}
+	}, clamped
 }
 
 // errNoData marks a query that returned no matching series. It is wrapped
@@ -235,8 +245,8 @@ func fetchMax(
 	return v, metricOutcome{ok: true}
 }
 
-// fetchPercentile queries a DELTA DISTRIBUTION metric for one percentile and
-// returns the mean of the returned points.
+// fetchPercentile queries one window-wide percentile of a DELTA
+// DISTRIBUTION metric. window must already be rounded to whole minutes.
 func fetchPercentile(
 	ctx context.Context,
 	client MetricClient,
@@ -245,15 +255,21 @@ func fetchPercentile(
 	filter string,
 	reducer monitoringpb.Aggregation_Reducer,
 ) (float64, metricOutcome) {
-	series, err := querySeries(ctx, client, projectID, window, filter, distributionPercentileAggregation(reducer))
+	agg, clamped := windowPercentileAggregation(reducer, window)
+	series, err := querySeries(ctx, client, projectID, window, filter, agg)
 	if err != nil {
 		return 0, metricOutcome{err: err}
 	}
-	v, ok := meanDoublePoints(series)
+	v, ok := maxDoublePoints(series)
 	if !ok {
 		return 0, metricOutcome{err: noData(filter)}
 	}
-	return v, metricOutcome{ok: true}
+	out := metricOutcome{ok: true}
+	if clamped && pointCount(series) > 1 {
+		// String concatenation, not fmt.Sprintf: perfsprint flags a lone %s.
+		out.partial = []string{filter + ": window longer than 25h, percentile is the highest 25h value"}
+	}
+	return v, out
 }
 
 // fetchLatency queries p50, p95 and p99 of a latency distribution. It

@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	// Cloud Monitoring requires alignment periods ≥60s for these metric kinds.
+	// alignmentPeriod is the 60s period used for counter and gauge queries;
+	// Monitoring requires at least 60s.
 	alignmentPeriod = 60 * time.Second
 )
 
@@ -47,23 +48,15 @@ func maxDoublePoints(series []*monitoringpb.TimeSeries) (float64, bool) {
 	return max, found
 }
 
-// meanDoublePoints averages scalar values across time series. After cross-series
-// percentile reduction each series contributes one scalar; mean aggregates
-// multi-series percentiles.
-func meanDoublePoints(series []*monitoringpb.TimeSeries) (float64, bool) {
-	var sum float64
+// pointCount counts points with a value across all series.
+func pointCount(series []*monitoringpb.TimeSeries) int {
 	var n int
 	for _, ts := range series {
 		for _, p := range ts.Points {
-			if p.Value == nil {
-				continue
+			if p.Value != nil {
+				n++
 			}
-			sum += p.Value.GetDoubleValue()
-			n++
 		}
 	}
-	if n == 0 {
-		return 0, false
-	}
-	return sum / float64(n), true
+	return n
 }
