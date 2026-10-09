@@ -41,6 +41,27 @@ type ActiveAccount struct {
 	AccountID          string  `json:"account_id"`
 	AccountCreditLimit float64 `json:"account_credit_limit"`
 	UserCreditLimit    float64 `json:"user_credit_limit"`
+	// Whether the account may spend credits, as alis.os.accounts.v1 decided
+	// it when the token was minted. Absent when the issuer has not received a
+	// standing for the account.
+	AccountStanding *AccountStanding `json:"account_standing,omitempty"`
+	// Set while the user's own spend limit on the account blocks them.
+	MemberBlockedUntil *ClaimTime `json:"member_blocked_until,omitempty"`
+}
+
+// AccountStanding is the account's credit verdict. The issuer leaves empty
+// values out, so a blocked standing arrives without "allow".
+type AccountStanding struct {
+	Allow bool `json:"allow,omitempty"`
+	// An alis.os.accounts.v1 AllowTransactionResponse.Reason name.
+	Reason string `json:"reason,omitempty"`
+}
+
+// ClaimTime is a protobuf Timestamp as the issuer mints it into a claim:
+// {"seconds":…,"nanos":…}.
+type ClaimTime struct {
+	Seconds int64 `json:"seconds,omitempty"`
+	Nanos   int32 `json:"nanos,omitempty"`
 }
 
 type IdeateAccount struct {

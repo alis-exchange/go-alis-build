@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -94,6 +95,43 @@ type (
 		AccountID          string  `json:"account_id"`
 		AccountCreditLimit float64 `json:"account_credit_limit"`
 		UserCreditLimit    float64 `json:"user_credit_limit"`
+		// Whether the account may spend credits, as alis.os.accounts.v1
+		// decided it when the token was minted. Absent when the issuer has
+		// not received a standing for the account. Read it through
+		// CreditStanding.
+		AccountStanding *AccountStanding `json:"account_standing,omitempty"`
+		// Set while the user's own spend limit on the account blocks them.
+		MemberBlockedUntil *ClaimTime `json:"member_blocked_until,omitempty"`
+	}
+	// AccountStanding is the account's credit verdict. The issuer leaves
+	// empty values out, so a blocked standing arrives without "allow" and
+	// only the absence of the whole object means "unknown".
+	AccountStanding struct {
+		Allow bool `json:"allow,omitempty"`
+		// An alis.os.accounts.v1 AllowTransactionResponse.Reason name.
+		Reason string `json:"reason,omitempty"`
+	}
+	// ClaimTime is a protobuf Timestamp as the issuer mints it into a claim:
+	// {"seconds":…,"nanos":…}.
+	ClaimTime struct {
+		Seconds int64 `json:"seconds,omitempty"`
+		Nanos   int32 `json:"nanos,omitempty"`
+	}
+	// CreditStanding is what the identity's token says about charging
+	// credit-costing work to an account.
+	CreditStanding struct {
+		// False when the token cannot answer: no standing claim, or the
+		// account is not the active account. Callers decide what unknown means.
+		Known   bool
+		Allowed bool
+		// An alis.os.accounts.v1 AllowTransactionResponse.Reason name, or
+		// MEMBER_CREDIT_LIMIT_REACHED. Empty when allowed.
+		Reason string
+		// Safe to show the end user. Empty when allowed.
+		Message string
+		// When a member's own block lapses. Zero unless Reason is
+		// MEMBER_CREDIT_LIMIT_REACHED.
+		BlockedUntil time.Time
 	}
 	IdeateAccount struct {
 		AccountID                string  `json:"account_id"`
@@ -147,6 +185,59 @@ func (i *Identity) ActiveAccountID() string {
 		return strings.TrimPrefix(i.ActiveIdeateAccount.AccountID, "accounts/")
 	}
 	return ""
+}
+
+// Time returns the claim as a time, or the zero time when t is nil.
+func (t *ClaimTime) Time() time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return time.Unix(t.Seconds, int64(t.Nanos)).UTC()
+}
+
+// CreditStanding reports whether the token allows credit-costing work to be
+// charged to account ("accounts/{id}" or the bare id) at now. The token only
+// describes the active account, so any other account is unknown. An account
+// block outranks the user's own spend block.
+func (i *Identity) CreditStanding(account string, now time.Time) CreditStanding {
+	if i == nil || i.ActiveAccount == nil || i.ActiveAccount.AccountStanding == nil ||
+		strings.TrimPrefix(account, "accounts/") != i.ActiveAccountID() {
+		return CreditStanding{}
+	}
+	if s := i.ActiveAccount.AccountStanding; !s.Allow {
+		return CreditStanding{Known: true, Reason: s.Reason, Message: creditMessage(s.Reason)}
+	}
+	if until := i.ActiveAccount.MemberBlockedUntil.Time(); now.Before(until) {
+		return CreditStanding{
+			Known:        true,
+			Reason:       MemberCreditLimitReached,
+			Message:      creditMessage(MemberCreditLimitReached),
+			BlockedUntil: until,
+		}
+	}
+	return CreditStanding{Known: true, Allowed: true}
+}
+
+// MemberCreditLimitReached is the CreditStanding reason for a user blocked by
+// their own spend limit, as opposed to the account's.
+const MemberCreditLimitReached = "MEMBER_CREDIT_LIMIT_REACHED"
+
+// creditMessage is the user-facing text for a standing reason. Keep in step
+// with ledger.Verdict in alis.os.accounts.v1, which returns the same text from
+// AllowTransaction, and with iam/v2.
+func creditMessage(reason string) string {
+	switch reason {
+	case "NO_BILLING_DETAILS":
+		return "Please add your billing details to continue."
+	case "TRIAL_EXPIRED":
+		return "Your account trial is expired. Please upgrade your plan to continue."
+	case "ACCOUNT_ARCHIVED":
+		return "This account is archived."
+	case MemberCreditLimitReached:
+		return "You have reached your personal credit limit for this billing period. Please contact your account administrator to adjust your limit."
+	default: // ACCOUNT_CREDIT_LIMIT_REACHED, and any reason added later
+		return "Your account has reached its credit limit. Please purchase new credits or upgrade your plan to continue."
+	}
 }
 
 // User returns the User resource name for identities that have one.

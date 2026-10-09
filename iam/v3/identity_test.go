@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -328,4 +329,77 @@ func TestScopedClaimsRoundTrip(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestCreditStanding reads the claims exactly as alis.os.iam.v2 mints them:
+// empty values are left out, so a blocked standing has no "allow", and
+// member_blocked_until is a protobuf Timestamp ({"seconds":…}).
+func TestCreditStanding(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	nextMonth := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	identity := func(active map[string]any) *Identity {
+		claims := map[string]any{"sub": "123", "email": "jan@example.com"}
+		if active != nil {
+			claims["active_account"] = active
+		}
+		id, err := FromJWT(testJWT(t, claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	for _, tt := range []struct {
+		name    string
+		active  map[string]any
+		account string
+		want    CreditStanding
+	}{
+		{"no active account", nil, "accounts/acme", CreditStanding{}},
+		{"no standing received", map[string]any{"account_id": "acme"}, "accounts/acme", CreditStanding{}},
+		{"another account", map[string]any{"account_id": "acme", "account_standing": map[string]any{"allow": true}}, "accounts/other", CreditStanding{}},
+		{"allowed", map[string]any{"account_id": "acme", "account_standing": map[string]any{"allow": true}}, "accounts/acme", CreditStanding{Known: true, Allowed: true}},
+		{"bare account id", map[string]any{"account_id": "acme", "account_standing": map[string]any{"allow": true}}, "acme", CreditStanding{Known: true, Allowed: true}},
+		{"blocked arrives without allow", map[string]any{"account_id": "acme", "account_standing": map[string]any{"reason": "NO_BILLING_DETAILS"}}, "accounts/acme",
+			CreditStanding{Known: true, Reason: "NO_BILLING_DETAILS", Message: "Please add your billing details to continue."}},
+		{"member blocked", map[string]any{"account_id": "acme", "account_standing": map[string]any{"allow": true}, "member_blocked_until": map[string]any{"seconds": nextMonth.Unix()}}, "accounts/acme",
+			CreditStanding{Known: true, Reason: MemberCreditLimitReached, Message: creditMessage(MemberCreditLimitReached), BlockedUntil: nextMonth}},
+		{"member block lapsed", map[string]any{"account_id": "acme", "account_standing": map[string]any{"allow": true}, "member_blocked_until": map[string]any{"seconds": now.Add(-time.Hour).Unix()}}, "accounts/acme",
+			CreditStanding{Known: true, Allowed: true}},
+		{"account block outranks member block", map[string]any{"account_id": "acme", "account_standing": map[string]any{"reason": "ACCOUNT_CREDIT_LIMIT_REACHED"}, "member_blocked_until": map[string]any{"seconds": nextMonth.Unix()}}, "accounts/acme",
+			CreditStanding{Known: true, Reason: "ACCOUNT_CREDIT_LIMIT_REACHED", Message: creditMessage("ACCOUNT_CREDIT_LIMIT_REACHED")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := identity(tt.active).CreditStanding(tt.account, now)
+			if got.Known != tt.want.Known || got.Allowed != tt.want.Allowed || got.Reason != tt.want.Reason ||
+				got.Message != tt.want.Message || !got.BlockedUntil.Equal(tt.want.BlockedUntil) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCreditStandingSurvivesForwarding checks that the standing claims are
+// kept when an identity is forwarded to the next service (Marshal, then
+// Unmarshal), so a downstream gate reads the same verdict.
+func TestCreditStandingSurvivesForwarding(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	original, err := FromJWT(testJWT(t, map[string]any{
+		"sub": "123", "email": "jan@example.com",
+		"active_account": map[string]any{
+			"account_id":           "acme",
+			"account_standing":     map[string]any{"allow": true},
+			"member_blocked_until": map[string]any{"seconds": now.Add(24 * time.Hour).Unix()},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded, err := Unmarshal(original.Marshal())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := forwarded.CreditStanding("accounts/acme", now)
+	expect(t, got.Known, true)
+	expect(t, got.Reason, MemberCreditLimitReached)
 }
