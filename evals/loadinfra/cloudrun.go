@@ -274,5 +274,18 @@ func fetchLatency(
 		}
 		return nil, metricOutcome{err: joinErrors(o50.err, o95.err, o99.err)}
 	}
-	return &evalspb.LatencyPercentiles{P50Ms: p50, P95Ms: p95, P99Ms: p99}, metricOutcome{ok: true}
+	var missing []string
+	for _, p := range []struct {
+		name string
+		out  metricOutcome
+	}{{"p50", o50}, {"p95", o95}, {"p99", o99}} {
+		if !p.out.ok {
+			missing = append(missing, p.name)
+		}
+	}
+	out := metricOutcome{ok: true}
+	if len(missing) > 0 {
+		out.partial = []string{fmt.Sprintf("%s: missing percentiles %s", filter, strings.Join(missing, ", "))}
+	}
+	return &evalspb.LatencyPercentiles{P50Ms: p50, P95Ms: p95, P99Ms: p99}, out
 }

@@ -153,3 +153,41 @@ func TestObserve_cloudRunSkipsErrorRateWithoutRequestCount(t *testing.T) {
 		t.Fatalf("FetchMessage = %q, want request_count no data entry", snap.GetFetchMessage())
 	}
 }
+
+func TestObserve_namesMissingLatencyPercentiles(t *testing.T) {
+	t.Parallel()
+	target := fetchTestCloudRun
+	latency := cloudRunMetricFilter(target, crMetricRequestLatencies)
+	count := cloudRunMetricFilter(target, crMetricRequestCount)
+	client := &FakeMetricClient{
+		Handler: func(_ context.Context, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error) {
+			switch {
+			case req.Filter == latency && req.GetAggregation().GetCrossSeriesReducer() == monitoringpb.Aggregation_REDUCE_PERCENTILE_95:
+				return nil, status.Error(codes.Unavailable, "backend unavailable")
+			case req.Filter == latency:
+				return doubleSeries(12.5), nil
+			case req.Filter == count:
+				return int64Series(10), nil
+			}
+			return nil, nil
+		},
+	}
+
+	got, err := Observe(
+		context.Background(),
+		Request{Client: client, Targets: Targets{CloudRun: []CloudRunTarget{target}}, Window: fetchTestWindow},
+	)
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	snap := got.CloudRun[0]
+	if snap.GetFetchStatus() != evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_OK {
+		t.Fatalf("FetchStatus = %v, want OK", snap.GetFetchStatus())
+	}
+	if want := latency + ": missing percentiles p95"; !strings.Contains(snap.GetFetchMessage(), want) {
+		t.Fatalf("FetchMessage = %q, want it to contain %q", snap.GetFetchMessage(), want)
+	}
+	if snap.GetMetrics().GetLatency().GetP50Ms() != 12.5 || snap.GetMetrics().GetLatency().GetP99Ms() != 12.5 {
+		t.Fatalf("Latency = %v, want p50 and p99 12.5", snap.GetMetrics().GetLatency())
+	}
+}
