@@ -2,6 +2,7 @@ package adk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,6 +35,19 @@ type ProviderResult struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Results   *evalspb.AgentEvalResults
+}
+
+// ProviderCase is one ADK case result from [Provider.RunCase]. It keeps the
+// raw ADK result because the wire case drops the unqualified case id and the
+// metric names needed to count judge calls. Use [ProviderCase.RecordTo] to
+// record it into an agent-eval suite case.
+type ProviderCase struct {
+	// SetID is the ADK eval set id the case belongs to.
+	SetID string
+	// Result is the raw ADK result, including the unqualified EvalID.
+	Result models.RunEvalResult
+	// Judge is the judge provenance synthesized from this case's judge metrics.
+	Judge JudgeContext
 }
 
 // Run materializes a complete agent-eval run envelope without publishing it.
@@ -132,10 +146,7 @@ func (p *Provider) Run(ctx context.Context, filters []string, opts ...RunOption)
 		// Resolve judge provenance for this suite. Agent.JudgeModel is authoritative;
 		// probeJudgeModel is a best-effort fallback that walks caller-supplied metric
 		// criteria for this set.
-		judgeModel := p.agent.JudgeModel
-		if judgeModel == "" {
-			judgeModel = probeJudgeModel(params.Metrics)
-		}
+		judgeModel := p.judgeModel(params.Metrics)
 		judge := SynthesizeJudgeContext(results, judgeModel, p.agent.JudgeModelVersion)
 		out = append(out, ProviderResult{
 			SuiteName: setID,
@@ -183,6 +194,61 @@ func (p *Provider) ListCases(ctx context.Context, setID string) ([]string, error
 		return nil, ErrCaseListingUnsupported{}
 	}
 	return lister.ListEvalCases(ctx, p.agent.AppName, setID)
+}
+
+// judgeModel returns Agent.JudgeModel, or the first judge model configured in
+// metrics when it is empty.
+func (p *Provider) judgeModel(metrics []models.EvalMetric) string {
+	if p.agent.JudgeModel != "" {
+		return p.agent.JudgeModel
+	}
+	return probeJudgeModel(metrics)
+}
+
+// RunCase runs one ADK case: a run_eval call on setID filtered to caseID,
+// with the set's metrics from [Agent.MetricsFor]. Use [WithSessionState] for
+// run-level session state. Each call is its own ADK run, so durations,
+// cancellation, and suite concurrency apply per case.
+//
+// It returns [ErrRunEval] when the call fails or when the response has no
+// result for caseID (ADK drops unknown ids and answers with an empty list).
+func (p *Provider) RunCase(ctx context.Context, setID, caseID string, opts ...RunOption) (ProviderCase, error) {
+	if err := p.checkConfig(); err != nil {
+		return ProviderCase{}, err
+	}
+	if setID == "" {
+		return ProviderCase{}, ErrMissingAppNameEvalSetID{}
+	}
+	if caseID == "" {
+		return ProviderCase{}, ErrRunEval{SetID: setID, Err: errors.New("adk: case id is required")}
+	}
+	runOpts := applyRunOptions(opts)
+	client, err := p.newClient(ctx, p.agent.BaseURL, p.agent.pathPrefix())
+	if err != nil {
+		return ProviderCase{}, err
+	}
+	metrics := p.agent.MetricsFor(setID)
+	results, err := client.RunEval(ctx, RunEvalParams{
+		AppName:      p.agent.AppName,
+		EvalSetID:    setID,
+		EvalCaseIDs:  []string{caseID},
+		Metrics:      metrics,
+		SessionState: runOpts.sessionState,
+	})
+	if err != nil {
+		return ProviderCase{}, ErrRunEval{SetID: setID, Err: err}
+	}
+	for _, r := range results {
+		if r.EvalID != caseID {
+			continue
+		}
+		judge := SynthesizeJudgeContext([]models.RunEvalResult{r}, p.judgeModel(metrics), p.agent.JudgeModelVersion)
+		return ProviderCase{SetID: setID, Result: r, Judge: judge}, nil
+	}
+	return ProviderCase{}, ErrRunEval{
+		SetID: setID,
+		Err:   fmt.Errorf("adk: case %q missing from run_eval response", caseID),
+	}
 }
 
 func repeatedDuration(n int, total time.Duration) []time.Duration {
