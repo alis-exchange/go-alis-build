@@ -1,0 +1,8 @@
+Phases P4-P5 verification (loadinfra_metric_fetch_20261009, final)
+Commits P4: 2490680 737d9cb 255b0b4 7d04d1a (+e542ce3); P5: 76aceb1 (+7e4b21a)
+Tests: go test -race ./... ok; -count=5 loadinfra ok; vet ok
+Lint: --new-from-rev=bedd192 0 issues
+gorelease v0.3.0->v0.4.0: exactly two incompatible (CloudRunSettlePadding, SpannerSettlePadding values, approved); compatible: Handler, Requests, loadinfratest package
+go list: loadinfra does not depend on loadinfratest
+Verifiers: P4 Approve, final whole-track Approve (every release note checked)
+Hand check: none (library)
