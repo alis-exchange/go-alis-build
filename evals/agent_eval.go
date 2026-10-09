@@ -28,6 +28,11 @@ type AgentEvalResult struct {
 	judge      *evalspb.AgentEvalResults_JudgeInfo
 	judgeSet   bool
 	failures   []error
+	// notEvaluated is set by SetNotEvaluated and forces NOT_EVALUATED unless
+	// the case failed.
+	notEvaluated bool
+	// notEvaluatedReasons holds one validation message per SetNotEvaluated call.
+	notEvaluatedReasons []string
 }
 
 func newAgentEvalResult() *AgentEvalResult {
@@ -48,6 +53,28 @@ func (r *AgentEvalResult) Fail(err error) {
 		return
 	}
 	r.failures = append(r.failures, err)
+}
+
+// defaultNotEvaluatedReason is the validation message SetNotEvaluated records
+// when the caller gives no reason.
+const defaultNotEvaluatedReason = "evals: case not evaluated"
+
+// SetNotEvaluated marks the case NOT_EVALUATED while keeping every session
+// id, metric, judge info and validation already recorded or recorded later.
+// A failure still wins: a FAILED metric, a failed validator rule or a call
+// to Fail makes the case FAILED.
+//
+// Each call records one "_evals.case" validation with status NOT_EVALUATED
+// and reason as its message, or "evals: case not evaluated" when reason is
+// empty. Calling it again keeps the case NOT_EVALUATED and adds one more
+// validation. The run rolls up as usual: a NOT_EVALUATED case makes the run
+// NOT_EVALUATED unless another case FAILED.
+func (r *AgentEvalResult) SetNotEvaluated(reason string) {
+	if reason == "" {
+		reason = defaultNotEvaluatedReason
+	}
+	r.notEvaluated = true
+	r.notEvaluatedReasons = append(r.notEvaluatedReasons, reason)
 }
 
 // SetSessionID records the ADK session identifier for this case.

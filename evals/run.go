@@ -413,13 +413,25 @@ func runAgentEvalCase(ctx context.Context, suiteName string, fc registeredCase) 
 
 func agentEvalOutcome(caseName string, r *AgentEvalResult) executedCase {
 	validations := caseValidations(r.Validator(), r.failures)
+	for _, reason := range r.notEvaluatedReasons {
+		validations = append(validations, &evalspb.Validation{
+			Id:      caseValidationID,
+			Status:  evalspb.Status_NOT_EVALUATED,
+			Message: reason,
+		})
+	}
 	hasData := r.sessionID != "" ||
 		len(r.metrics) > 0 ||
 		len(validations) > 0 ||
 		hasAgentJudgeData(r.judge)
+	status := verdict(hasData, anyFailed(r.metrics), anyFailed(validations))
+	// SetNotEvaluated outranks PASSED but never a failure.
+	if r.notEvaluated && status == evalspb.Status_PASSED {
+		status = evalspb.Status_NOT_EVALUATED
+	}
 	return executedCase{
 		name:        caseName,
-		status:      verdict(hasData, anyFailed(r.metrics), anyFailed(validations)),
+		status:      status,
 		validations: validations,
 		sessionID:   r.sessionID,
 		metrics:     r.metrics,

@@ -347,3 +347,127 @@ func validationTriples(validations []*evalspb.Validation) []validationTriple {
 	}
 	return out
 }
+
+// TestAgentEvalResult_setNotEvaluated checks that SetNotEvaluated keeps data,
+// records one NOT_EVALUATED validation per call, and loses to any failure.
+func TestAgentEvalResult_setNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	const reason = "adk: final eval status NOT_EVALUATED"
+	notEvaluated := func(msg string) validationTriple {
+		return validationTriple{id: caseValidationID, status: evalspb.Status_NOT_EVALUATED, message: msg}
+	}
+	tests := []struct {
+		name            string
+		fn              AgentEvalCaseFunc
+		wantStatus      evalspb.Status
+		wantSessionID   string
+		wantMetrics     int
+		wantValidations []validationTriple
+	}{
+		{
+			name: "keeps data",
+			fn: func(_ context.Context, r *AgentEvalResult) {
+				r.SetSessionID("sess-1")
+				r.AddMetric(&evalspb.AgentEvalResults_Case_Metric{Id: "answer_quality", Status: evalspb.Status_PASSED})
+				r.SetNotEvaluated(reason)
+			},
+			wantStatus:      evalspb.Status_NOT_EVALUATED,
+			wantSessionID:   "sess-1",
+			wantMetrics:     1,
+			wantValidations: []validationTriple{notEvaluated(reason)},
+		},
+		{
+			name:            "empty reason uses default",
+			fn:              func(_ context.Context, r *AgentEvalResult) { r.SetNotEvaluated("") },
+			wantStatus:      evalspb.Status_NOT_EVALUATED,
+			wantValidations: []validationTriple{notEvaluated("evals: case not evaluated")},
+		},
+		{
+			name: "twice records two validations",
+			fn: func(_ context.Context, r *AgentEvalResult) {
+				r.SetNotEvaluated("first")
+				r.SetNotEvaluated("second")
+			},
+			wantStatus:      evalspb.Status_NOT_EVALUATED,
+			wantValidations: []validationTriple{notEvaluated("first"), notEvaluated("second")},
+		},
+		{
+			name: "failed metric wins",
+			fn: func(_ context.Context, r *AgentEvalResult) {
+				r.AddMetric(&evalspb.AgentEvalResults_Case_Metric{Id: "groundedness", Status: evalspb.Status_FAILED})
+				r.SetNotEvaluated(reason)
+			},
+			wantStatus:      evalspb.Status_FAILED,
+			wantMetrics:     1,
+			wantValidations: []validationTriple{notEvaluated(reason)},
+		},
+		{
+			name: "fail wins",
+			fn: func(_ context.Context, r *AgentEvalResult) {
+				r.SetNotEvaluated(reason)
+				r.Fail(errors.New("boom"))
+			},
+			wantStatus: evalspb.Status_FAILED,
+			wantValidations: []validationTriple{
+				{id: caseValidationID, status: evalspb.Status_FAILED, message: "boom"},
+				notEvaluated(reason),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			run, err := NewAgentEvalSuite("agent-not-evaluated").AddCase("case", tt.fn).Run(context.Background())
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			c := run.GetAgentEval().GetCases()[0]
+			if c.GetStatus() != tt.wantStatus {
+				t.Fatalf("case status = %v, want %v", c.GetStatus(), tt.wantStatus)
+			}
+			if c.GetSessionId() != tt.wantSessionID || len(c.GetMetrics()) != tt.wantMetrics {
+				t.Fatalf("session = %q, metrics = %d; want %q, %d", c.GetSessionId(), len(c.GetMetrics()), tt.wantSessionID, tt.wantMetrics)
+			}
+			if got := validationTriples(c.GetValidations()); !reflect.DeepEqual(got, tt.wantValidations) {
+				t.Fatalf("validations = %+v, want %+v", got, tt.wantValidations)
+			}
+		})
+	}
+}
+
+// TestAgentEvalResult_setNotEvaluatedRollsUpRun checks a forced case makes
+// the run NOT_EVALUATED next to a PASSED case, and FAILED still wins.
+func TestAgentEvalResult_setNotEvaluatedRollsUpRun(t *testing.T) {
+	t.Parallel()
+
+	forced := func(_ context.Context, r *AgentEvalResult) { r.SetNotEvaluated("") }
+	passed := func(_ context.Context, r *AgentEvalResult) { r.SetSessionID("sess-ok") }
+	failed := func(_ context.Context, r *AgentEvalResult) { r.Fail(errors.New("boom")) }
+
+	tests := []struct {
+		name  string
+		other AgentEvalCaseFunc
+		want  evalspb.Status
+	}{
+		{name: "with passed", other: passed, want: evalspb.Status_NOT_EVALUATED},
+		{name: "with failed", other: failed, want: evalspb.Status_FAILED},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			run, err := NewAgentEvalSuite("agent-not-evaluated-run").
+				AddCase("forced", forced).
+				AddCase("other", tt.other).
+				Run(context.Background())
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if run.GetStatus() != tt.want {
+				t.Fatalf("run status = %v, want %v", run.GetStatus(), tt.want)
+			}
+		})
+	}
+}
