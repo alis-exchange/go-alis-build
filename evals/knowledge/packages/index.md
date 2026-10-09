@@ -9,7 +9,7 @@ tags: [packages]
 | Package | Purpose |
 | --- | --- |
 | `go.alis.build/evals` | Typed suites, builders, options, call/stream helpers, scoring helpers. |
-| `go.alis.build/evals/adk` | ADK evaluation provider, result conversion, and run envelopes. |
+| `go.alis.build/evals/adk` | ADK evaluation provider, AgentEvalSuite case bridge, result conversion, and (deprecated) run envelopes. |
 | `go.alis.build/evals/loadgen` | Focused load generation and `Summary` conversion. |
 | `go.alis.build/evals/loadinfra` | Load-window, lookback, and custom-window Monitoring observations. |
 | `go.alis.build/evals/loadinfra/loadinfratest` | In-memory Monitoring client for testing `loadinfra` callers. |
