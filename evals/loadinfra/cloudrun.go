@@ -249,11 +249,11 @@ func fetchLatency(
 	p50, o50 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_50)
 	p95, o95 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_95)
 	p99, o99 := fetchPercentile(ctx, client, projectID, window, filter, monitoringpb.Aggregation_REDUCE_PERCENTILE_99)
-	if isQueryErr(o50) && isQueryErr(o95) && isQueryErr(o99) {
-		return nil, metricOutcome{err: o50.err}
-	}
 	if !o50.ok && !o95.ok && !o99.ok {
-		return nil, metricOutcome{err: noData(filter)}
+		if !isQueryErr(o50) && !isQueryErr(o95) && !isQueryErr(o99) {
+			return nil, metricOutcome{err: noData(filter)}
+		}
+		return nil, metricOutcome{err: joinErrors(o50.err, o95.err, o99.err)}
 	}
 	return &evalspb.LatencyPercentiles{P50Ms: p50, P95Ms: p95, P99Ms: p99}, metricOutcome{ok: true}
 }

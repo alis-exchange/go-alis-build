@@ -2,6 +2,7 @@ package loadinfra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -260,27 +261,72 @@ type metricOutcome struct {
 	err error
 }
 
+// joinedError keeps every metric error reachable through errors.Is/As while
+// printing them joined by "; ", the FetchMessage format.
+type joinedError struct {
+	// errs holds the non-nil errors in metric order.
+	errs []error
+}
+
+// Error joins the wrapped messages with "; ".
+func (e *joinedError) Error() string {
+	msgs := make([]string, len(e.errs))
+	for i, err := range e.errs {
+		msgs[i] = err.Error()
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// Unwrap returns every wrapped error.
+func (e *joinedError) Unwrap() []error { return e.errs }
+
+// joinErrors drops nil errors. It returns nil for none, the error itself for
+// one, and a *joinedError otherwise.
+func joinErrors(errs ...error) error {
+	var kept []error
+	for _, err := range errs {
+		if err != nil {
+			kept = append(kept, err)
+		}
+	}
+	switch len(kept) {
+	case 0:
+		return nil
+	case 1:
+		return kept[0]
+	default:
+		return &joinedError{errs: kept}
+	}
+}
+
 // mergeOutcomes combines per-metric fetch outcomes. At least one metric must
 // succeed; otherwise the target snapshot is marked unavailable. Partial gaps
 // are listed in the returned slice and appended to FetchMessage.
 func mergeOutcomes(outcomes ...metricOutcome) ([]string, error) {
-	var partial []string
-	var succeeded int
+	var (
+		partial   []string
+		errs      []error
+		succeeded int
+	)
 	for _, o := range outcomes {
 		if o.err != nil {
 			partial = append(partial, o.err.Error())
+			errs = append(errs, o.err)
 			continue
 		}
 		if o.ok {
 			succeeded++
 		}
 		partial = append(partial, o.partial...)
+		for _, p := range o.partial {
+			errs = append(errs, errors.New(p))
+		}
 	}
 	if succeeded == 0 {
-		if len(partial) == 0 {
-			return nil, fmt.Errorf("no metrics returned")
+		if len(errs) == 0 {
+			return nil, errors.New("no metrics returned")
 		}
-		return nil, fmt.Errorf("%s", strings.Join(partial, "; "))
+		return nil, joinErrors(errs...)
 	}
 	return partial, nil
 }

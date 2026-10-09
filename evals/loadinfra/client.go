@@ -51,7 +51,11 @@ type googleMetricClient struct {
 }
 
 // QueryTimeSeries lists time series for projectID using req.Filter and req.Aggregation.
-func (c *googleMetricClient) QueryTimeSeries(ctx context.Context, projectID string, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error) {
+func (c *googleMetricClient) QueryTimeSeries(
+	ctx context.Context,
+	projectID string,
+	req *monitoringpb.ListTimeSeriesRequest,
+) ([]*monitoringpb.TimeSeries, error) {
 	req.Name = "projects/" + projectID
 	it := c.client.ListTimeSeries(ctx, req)
 	var out []*monitoringpb.TimeSeries
@@ -81,6 +85,8 @@ type FakeMetricClient struct {
 	ByFilter map[string][]*monitoringpb.TimeSeries
 	// Err is returned from every QueryTimeSeries call when non-nil.
 	Err error
+	// Handler answers every query when non-nil, ahead of Err and ByFilter.
+	Handler func(ctx context.Context, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error)
 	// Calls counts how many QueryTimeSeries invocations were made.
 	Calls int
 	// CloseCalls counts how many Close invocations were made.
@@ -97,7 +103,11 @@ type FakeMetricClient struct {
 }
 
 // QueryTimeSeries returns canned series from ByFilter or Err when configured.
-func (f *FakeMetricClient) QueryTimeSeries(ctx context.Context, projectID string, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error) {
+func (f *FakeMetricClient) QueryTimeSeries(
+	ctx context.Context,
+	projectID string,
+	req *monitoringpb.ListTimeSeriesRequest,
+) ([]*monitoringpb.TimeSeries, error) {
 	f.mu.Lock()
 	f.Calls++
 	f.inFlight++
@@ -119,21 +129,22 @@ func (f *FakeMetricClient) QueryTimeSeries(ctx context.Context, projectID string
 	}
 
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if req.Interval != nil && req.Interval.EndTime != nil {
 		f.LastIntervalEnd = req.Interval.EndTime.AsTime()
 	}
-	if f.Err != nil {
-		f.inFlight--
-		return nil, f.Err
-	}
-	if f.ByFilter == nil {
-		f.inFlight--
-		return nil, nil
-	}
-	series := f.ByFilter[req.Filter]
 	f.inFlight--
-	return series, nil
+	handler, errAll, byFilter := f.Handler, f.Err, f.ByFilter
+	f.mu.Unlock()
+	switch {
+	case handler != nil:
+		return handler(ctx, req)
+	case errAll != nil:
+		return nil, errAll
+	case byFilter == nil:
+		return nil, nil
+	default:
+		return byFilter[req.Filter], nil
+	}
 }
 
 func (f *FakeMetricClient) Close() error {
