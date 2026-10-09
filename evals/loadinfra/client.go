@@ -86,6 +86,8 @@ type FakeMetricClient struct {
 	// Err is returned from every QueryTimeSeries call when non-nil.
 	Err error
 	// Handler answers every query when non-nil, ahead of Err and ByFilter.
+	// It runs outside the fake's lock and may be called concurrently, so it
+	// must be safe for concurrent use.
 	Handler func(ctx context.Context, req *monitoringpb.ListTimeSeriesRequest) ([]*monitoringpb.TimeSeries, error)
 	// Calls counts how many QueryTimeSeries invocations were made.
 	Calls int

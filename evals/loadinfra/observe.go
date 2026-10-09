@@ -319,10 +319,9 @@ func mergeOutcomes(outcomes ...metricOutcome) ([]string, error) {
 		if o.ok {
 			succeeded++
 		}
+		// partial is set only on outcomes that succeeded, so it never feeds
+		// the all-failed error below.
 		partial = append(partial, o.partial...)
-		for _, p := range o.partial {
-			errs = append(errs, errors.New(p))
-		}
 	}
 	if succeeded == 0 {
 		if len(errs) == 0 {

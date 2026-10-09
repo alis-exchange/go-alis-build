@@ -22,7 +22,8 @@
 // timeout). Per-target failures are recorded on the snapshot as
 // FetchStatus and FetchMessage; the observation call itself still
 // succeeds. An infra observation case fails when any added snapshot has
-// FetchStatus UNAVAILABLE, PERMISSION_DENIED or TIMEOUT. Partial metric
+// FetchStatus UNAVAILABLE, PERMISSION_DENIED or TIMEOUT. Load cases keep
+// snapshots as diagnostics and do not fail on FetchStatus. Partial metric
 // gaps within a target still yield OK with a partial-failure message.
 //
 // # Client injection
