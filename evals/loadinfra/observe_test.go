@@ -165,6 +165,9 @@ func TestObserveAllTargetsEmittedOnFailure(t *testing.T) {
 	if got.CloudRun[0].Metrics.RequestCount != 0 {
 		t.Fatalf("cloud RequestCount=%d, want 0", got.CloudRun[0].Metrics.RequestCount)
 	}
+	if got.Spanner[0].FetchStatus != evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+		t.Fatalf("spanner status=%v", got.Spanner[0].FetchStatus)
+	}
 	if got.Spanner[0].Metrics.QueryCount != 0 {
 		t.Fatalf("spanner QueryCount=%d, want 0", got.Spanner[0].Metrics.QueryCount)
 	}

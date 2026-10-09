@@ -121,3 +121,35 @@ func TestRecordTo_infraObservationSuiteRejectsSecondWindow(t *testing.T) {
 		t.Fatalf("validations = %v, want one window-already-set failure", c.GetValidations())
 	}
 }
+
+// TestRecordTo_infraObservationSuiteFailsWhenSpannerHasNoData checks that a
+// Spanner target whose queries all return no series fails the infra case,
+// as a mistyped target name would.
+func TestRecordTo_infraObservationSuiteFailsWhenSpannerHasNoData(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	obs, err := loadinfra.Observe(context.Background(), loadinfra.Request{
+		Client: &loadinfra.FakeMetricClient{},
+		Targets: loadinfra.Targets{Spanner: []loadinfra.SpannerTarget{
+			{ID: "orders-db", ProjectID: "p", InstanceID: "prod", Location: "europe-west1", Database: "ordres"},
+		}},
+		Window: loadinfra.ObservationWindow{Start: start, End: start.Add(5 * time.Minute)},
+	})
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	run, err := evals.NewInfraObservationSuite("record-to-no-data").
+		AddCase("peak", func(_ context.Context, r *evals.InfraObservationResult) {
+			obs.RecordTo(r)
+		}).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	c := run.GetInfraObservation().GetCases()[0]
+	if c.GetStatus() != evalspb.Status_FAILED {
+		t.Fatalf("case status = %v, want FAILED (spanner=%v)", c.GetStatus(), c.GetSpanner())
+	}
+}

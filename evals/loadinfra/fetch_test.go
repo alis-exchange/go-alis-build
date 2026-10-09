@@ -96,6 +96,30 @@ func TestObserve_spannerWithNoFailedQueriesIsCleanOK(t *testing.T) {
 	}
 }
 
+// TestObserve_spannerWithNoSeriesIsUnavailable checks that the filtered
+// error subset does not count as a success when query_count itself has no
+// data, so a mistyped Spanner target is reported as unavailable.
+func TestObserve_spannerWithNoSeriesIsUnavailable(t *testing.T) {
+	t.Parallel()
+	target := SpannerTarget{ID: "orders-db", ProjectID: "p", InstanceID: "prod", Location: "europe-west1", Database: "orders"}
+	client := &FakeMetricClient{}
+
+	got, err := Observe(
+		context.Background(),
+		Request{Client: client, Targets: Targets{Spanner: []SpannerTarget{target}}, Window: fetchTestWindow},
+	)
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	snap := got.Spanner[0]
+	if snap.GetFetchStatus() != evalspb.InfraFetchStatus_INFRA_FETCH_STATUS_UNAVAILABLE {
+		t.Fatalf("FetchStatus = %v, want UNAVAILABLE (message=%q)", snap.GetFetchStatus(), snap.GetFetchMessage())
+	}
+	if !strings.Contains(snap.GetFetchMessage(), spannerMetricFilter(target, spMetricQueryCount)+": no data") {
+		t.Fatalf("FetchMessage = %q, want query_count no data entry", snap.GetFetchMessage())
+	}
+}
+
 func TestObserve_cloudRunReusesRequestCountForErrorRate(t *testing.T) {
 	t.Parallel()
 	target := fetchTestCloudRun

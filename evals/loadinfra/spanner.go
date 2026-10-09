@@ -57,10 +57,23 @@ func fetchSpannerMetrics(
 	if totalOut.ok {
 		m.QueryCount = total
 	}
-	errCount, errOut := fetchSum(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricQueryCount, `metric.labels.status!="ok"`))
-	errOut = orZero(errOut)
-	if errOut.ok {
-		m.QueryErrorCount = errCount
+	// The failed-query subset reads "no series" as zero errors, which is only
+	// meaningful when the total returned data. Without a total it adds nothing,
+	// so a wrong target name is still reported as unavailable.
+	var errOut metricOutcome
+	if totalOut.ok {
+		var errCount int64
+		errCount, errOut = fetchSum(
+			ctx,
+			client,
+			t.ProjectID,
+			window,
+			spannerMetricFilter(t, spMetricQueryCount, `metric.labels.status!="ok"`),
+		)
+		errOut = orZero(errOut)
+		if errOut.ok {
+			m.QueryErrorCount = errCount
+		}
 	}
 	apiLat, apiOut := fetchSpannerLatency(ctx, client, t.ProjectID, window, spannerMetricFilter(t, spMetricAPILatencies))
 	if apiOut.ok {
@@ -79,7 +92,12 @@ func fetchSpannerMetrics(
 		m.CpuUtilizationMax = &cpu
 	}
 
-	partial, err := mergeOutcomes(totalOut, errOut, apiOut, queryOut, cpuOut)
+	outcomes := []metricOutcome{totalOut}
+	if totalOut.ok {
+		outcomes = append(outcomes, errOut)
+	}
+	outcomes = append(outcomes, apiOut, queryOut, cpuOut)
+	partial, err := mergeOutcomes(outcomes...)
 	return m, partial, err
 }
 
