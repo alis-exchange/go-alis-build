@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -262,6 +263,70 @@ func (c *HTTPClient) ListEvalSets(ctx context.Context, appName string) ([]string
 	var ids []string
 	if err := json.Unmarshal(trimmed, &ids); err != nil {
 		return nil, ErrDecodeEvalSets{Err: err}
+	}
+	return ids, nil
+}
+
+// CaseLister is implemented by clients that can list the case ids of one
+// eval set. It is separate from [Client] so existing Client implementations
+// keep compiling; [Provider.ListCases] type-asserts it and returns
+// [ErrCaseListingUnsupported] when a client does not implement it.
+type CaseLister interface {
+	// ListEvalCases returns the case ids of evalSetID in appName.
+	ListEvalCases(ctx context.Context, appName, evalSetID string) ([]string, error)
+}
+
+var _ CaseLister = (*HTTPClient)(nil)
+
+// ListEvalCases GETs .../eval_sets/{evalSetId}/evals and decodes the case ids
+// of one eval set. The ADK launcher returns them sorted by id. The app name
+// and eval set id are percent-escaped in the path.
+func (c *HTTPClient) ListEvalCases(ctx context.Context, appName, evalSetID string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNilClient{}
+	}
+	if appName == "" || evalSetID == "" {
+		return nil, ErrMissingAppNameEvalSetID{}
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s%s/dev/apps/%s/eval_sets/%s/evals",
+		c.baseURL,
+		c.pathPrefix,
+		url.PathEscape(appName),
+		url.PathEscape(evalSetID),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, ErrBuildRequest{Err: err}
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, ErrAgentUnreachable{Cause: err}
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, ErrReadResponse{Err: err}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, ErrRunEvalFailed{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(raw)),
+		}
+	}
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+
+	var ids []string
+	if err := json.Unmarshal(trimmed, &ids); err != nil {
+		return nil, ErrDecodeResponse{Err: err}
 	}
 	return ids, nil
 }
