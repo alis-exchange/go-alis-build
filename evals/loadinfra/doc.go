@@ -35,10 +35,21 @@
 // their own case helper code. Tests inject loadinfratest.MetricClient at the
 // same boundary.
 //
+// # Recording results
+//
+// [ObserveResult.RecordTo] adds every snapshot to a [SnapshotRecorder] such as
+// *evals.LoadResult or *evals.InfraObservationResult, and sets the window on
+// recorders that have SetWindow.
+//
 // Example (standalone):
 //
 //	client, _ := loadinfra.NewMetricClient(ctx)
 //	defer client.Close()
 //	targets := loadinfra.Targets{CloudRun: cloud, Spanner: spanner}
 //	obs, err := loadinfra.ObserveLookback(ctx, client, targets, 30*time.Minute)
+//	if err != nil {
+//		r.Fail(err)
+//		return
+//	}
+//	obs.RecordTo(r) // r is the case's *evals.InfraObservationResult
 package loadinfra

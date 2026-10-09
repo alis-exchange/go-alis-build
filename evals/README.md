@@ -246,7 +246,7 @@ suite := evals.NewLoadSuite("checkout-capacity").
 Default concurrency is one active case. `WithMaxConcurrency` can run load cases in parallel, but parallel load cases combine their traffic and can distort measurements. Use it only when the combined traffic is the scenario being evaluated.
 
 For load-integrated infrastructure diagnostics, wait until Monitoring has
-settled the measurement window, then observe it and add the snapshots:
+settled the measurement window, then observe it and record the snapshots on the case:
 
 ```go
 settle := loadinfra.SpannerSettlePadding // CloudRunSettlePadding if only Cloud Run targets
@@ -265,13 +265,13 @@ if err != nil {
     r.Fail(err)
     return
 }
-for _, snapshot := range observed.CloudRun {
-    r.AddCloudRunSnapshot(snapshot)
-}
-for _, snapshot := range observed.Spanner {
-    r.AddSpannerSnapshot(snapshot)
-}
+observed.RecordTo(r)
 ```
+
+`RecordTo` adds every observed Cloud Run and Spanner snapshot to any
+`loadinfra.SnapshotRecorder`. `*evals.LoadResult` and
+`*evals.InfraObservationResult` both satisfy it, and `loadinfra` does not
+import the root package.
 
 `ObserveLoad` requires non-nil metrics and queries the measurement window
 rounded out to whole minutes. It does not wait; a call before the settle
@@ -321,15 +321,13 @@ suite := evals.NewInfraObservationSuite("checkout-runtime").
             r.Fail(err)
             return
         }
-        r.SetWindow(30*time.Minute, obs.Window.Start, obs.Window.End)
-        for _, snapshot := range obs.CloudRun {
-            r.AddCloudRunSnapshot(snapshot)
-        }
-        for _, snapshot := range obs.Spanner {
-            r.AddSpannerSnapshot(snapshot)
-        }
+        obs.RecordTo(r)
     })
 ```
+
+`RecordTo` also sets the case window from obs.Window, with lookback
+`obs.Window.End - obs.Window.Start`. It replaces a manual `SetWindow` call;
+calling both fails the case with "evals: infra observation window already set".
 
 Infra observation cases fail when an added Cloud Run or Spanner snapshot has `FetchStatus` `INFRA_FETCH_STATUS_UNAVAILABLE`, `INFRA_FETCH_STATUS_PERMISSION_DENIED` or `INFRA_FETCH_STATUS_TIMEOUT`. No extra validation row is added.
 

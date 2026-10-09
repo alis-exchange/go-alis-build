@@ -22,13 +22,7 @@ suite := evals.NewInfraObservationSuite("checkout-runtime").
             r.Fail(err)
             return
         }
-        r.SetWindow(30*time.Minute, obs.Window.Start, obs.Window.End)
-        for _, snapshot := range obs.CloudRun {
-            r.AddCloudRunSnapshot(snapshot)
-        }
-        for _, snapshot := range obs.Spanner {
-            r.AddSpannerSnapshot(snapshot)
-        }
+        obs.RecordTo(r)
     })
 ```
 
@@ -40,7 +34,8 @@ wants represented as case failure.
 Added protobuf snapshots and SLO checks are cloned. The observation window is
 a singleton: the first `SetWindow` wins; duplicate window calls and nil
 protobuf values fail the case while retaining existing data. `Fail(nil)` is a
-no-op.
+no-op. `obs.RecordTo(r)` sets the window from obs.Window with lookback
+`End - Start`, so do not also call `SetWindow`.
 
 An empty observation result is `NOT_EVALUATED`. Failed infra SLO checks, broken
 validations, failed-fetch snapshots, or `Fail(err)` fail the case while

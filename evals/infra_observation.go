@@ -54,6 +54,8 @@ func (r *InfraObservationResult) Fail(err error) {
 }
 
 // SetWindow records the observation lookback and settled observation window.
+// The first call wins; a second call fails the case. loadinfra's
+// ObserveResult.RecordTo calls SetWindow itself, so do not call both.
 func (r *InfraObservationResult) SetWindow(lookback time.Duration, start, end time.Time) {
 	if r.windowSet {
 		r.Fail(errInfraWindowAlreadySet)

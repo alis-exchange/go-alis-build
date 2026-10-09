@@ -50,13 +50,12 @@ if err != nil {
     r.Fail(err)
     return
 }
-for _, snapshot := range observed.CloudRun {
-    r.AddCloudRunSnapshot(snapshot)
-}
-for _, snapshot := range observed.Spanner {
-    r.AddSpannerSnapshot(snapshot)
-}
+observed.RecordTo(r)
 ```
+
+`RecordTo` adds every observed snapshot to the builder. Both
+`*evals.LoadResult` and `*evals.InfraObservationResult` satisfy
+`loadinfra.SnapshotRecorder`.
 
 `ObserveLoad` requires non-nil metrics and queries the measurement window
 rounded out to whole minutes. It does not wait; a call before the settle
