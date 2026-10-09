@@ -1309,3 +1309,55 @@ func TestInProcess_LowStageDispatchesOnlyToIdleWorkers(t *testing.T) {
 		}
 	}
 }
+
+// TestInProcess_QueuedTickAtCancelCountsAsDropped pins spec FR-9 on the
+// cancel path: a tick dispatched but never run is counted in DroppedCount.
+// With the context already cancelled the pacer still sends slot 0 (it has
+// no wait, and one worker is live), then returns. No call may start, so
+// that one tick must surface as exactly one drop. Either the worker takes
+// it and drops it on the dead calls context, or Drain stops the worker
+// first and Run's leftover-tick drain counts it; both paths must give 1.
+//
+// The ramp-down cutoff half of FR-9 has no deterministic Run-level test:
+// the pacer caps queued plus running ticks at the live pool size, so a
+// tick waits in the channel only until an idle live worker receives it,
+// and a blocked worker leaves nothing queued at the cutoff. This test also
+// passed before 7632346, whose workers ranged over the tick channel until
+// it was empty, so it is a pin. It still guards the drain: which path
+// counts the tick is a scheduling race, and with the drain removed most
+// runs report 0.
+func TestInProcess_QueuedTickAtCancelCountsAsDropped(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	target := func(context.Context, CallData) TargetResult {
+		calls.Add(1)
+		return TargetResult{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := Profile{
+		QPS:              100,
+		Concurrency:      1,
+		Duration:         time.Second,
+		GracefulRampDown: 10 * time.Millisecond,
+	}
+
+	m, err := New().Run(ctx, p, target)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run err=%v, want context.Canceled", err)
+	}
+	if m == nil {
+		t.Fatal("Run returned nil metrics, want partial metrics on cancellation")
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("target called %d times, want 0 on a cancelled run", got)
+	}
+	if m.RequestCount != 0 || m.ErrorCount != 0 || len(m.ErrorsByCode) != 0 {
+		t.Fatalf("RequestCount=%d ErrorCount=%d ErrorsByCode=%v, want 0, 0 and empty",
+			m.RequestCount, m.ErrorCount, m.ErrorsByCode)
+	}
+	if m.DroppedCount != 1 {
+		t.Fatalf("DroppedCount=%d, want 1 (slot 0 was dispatched but never run)", m.DroppedCount)
+	}
+}

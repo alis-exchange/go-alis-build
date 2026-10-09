@@ -36,7 +36,9 @@ type workerPool struct {
 	mu sync.Mutex
 	// stops holds the stop channel of each live worker, oldest first.
 	stops []chan struct{}
-	// nextID is the ID most recently handed to a supervisor-added worker.
+	// nextID is the highest worker ID reserved so far. Start reserves
+	// 0..initial (initial itself is never used); supervisor-added workers
+	// take nextID+1.
 	nextID int
 	// live mirrors len(stops) so Size stays lock-free for the pacer.
 	live atomic.Int32
