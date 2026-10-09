@@ -339,3 +339,23 @@ func (e ErrRunEval) Is(target error) bool {
 func (e ErrRunEval) GRPCStatus() *status.Status {
 	return status.New(codes.Internal, e.Error())
 }
+
+// ErrCaseListingUnsupported is returned by [Provider.ListCases] when the
+// provider's [Client] does not implement [CaseLister].
+type ErrCaseListingUnsupported struct{}
+
+// Error implements error.
+func (e ErrCaseListingUnsupported) Error() string {
+	return "adk provider: client does not support listing eval cases"
+}
+
+// Is reports whether target is an ErrCaseListingUnsupported.
+func (e ErrCaseListingUnsupported) Is(target error) bool {
+	var err ErrCaseListingUnsupported
+	return errors.As(target, &err)
+}
+
+// GRPCStatus maps the error to codes.Unimplemented.
+func (e ErrCaseListingUnsupported) GRPCStatus() *status.Status {
+	return status.New(codes.Unimplemented, e.Error())
+}

@@ -82,11 +82,8 @@ func NewProvider(agent Agent, opts ...ProviderOption) *Provider {
 // Use [WithSessionState] to supply run-level ADK session bootstrap state.
 func (p *Provider) Run(ctx context.Context, filters []string, opts ...RunOption) ([]ProviderResult, error) {
 	runOpts := applyRunOptions(opts)
-	if p == nil {
-		return nil, ErrNilProvider{}
-	}
-	if p.agent.BaseURL == "" || p.agent.AppName == "" {
-		return nil, ErrMissingProviderConfig{}
+	if err := p.checkConfig(); err != nil {
+		return nil, err
 	}
 
 	client, err := p.newClient(ctx, p.agent.BaseURL, p.agent.pathPrefix())
@@ -149,6 +146,43 @@ func (p *Provider) Run(ctx context.Context, filters []string, opts ...RunOption)
 	}
 
 	return out, nil
+}
+
+// checkConfig reports a nil provider or a missing base URL or app name.
+func (p *Provider) checkConfig() error {
+	if p == nil {
+		return ErrNilProvider{}
+	}
+	if p.agent.BaseURL == "" || p.agent.AppName == "" {
+		return ErrMissingProviderConfig{}
+	}
+	return nil
+}
+
+// ListCases returns the raw ADK case ids of one eval set, in the order the
+// launcher lists them (sorted by id). Pass each id to [Provider.RunCase] and
+// name the suite case with [SuiteCaseName]. [Agent.IncludeEvalSet] is not
+// applied because the caller names the set.
+//
+// It returns [ErrCaseListingUnsupported] when the client built by the
+// provider's factory does not implement [CaseLister]. Client errors are
+// returned unchanged.
+func (p *Provider) ListCases(ctx context.Context, setID string) ([]string, error) {
+	if err := p.checkConfig(); err != nil {
+		return nil, err
+	}
+	if setID == "" {
+		return nil, ErrMissingAppNameEvalSetID{}
+	}
+	client, err := p.newClient(ctx, p.agent.BaseURL, p.agent.pathPrefix())
+	if err != nil {
+		return nil, err
+	}
+	lister, ok := client.(CaseLister)
+	if !ok {
+		return nil, ErrCaseListingUnsupported{}
+	}
+	return lister.ListEvalCases(ctx, p.agent.AppName, setID)
 }
 
 func repeatedDuration(n int, total time.Duration) []time.Duration {
