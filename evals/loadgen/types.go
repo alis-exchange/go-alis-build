@@ -74,8 +74,7 @@ type Metrics struct {
 	ErrorsByCode map[string]int64
 	// DroppedCount is work excluded from aggregates by the generator itself:
 	// scheduled ticks that were not dispatched (every live worker busy — with
-	// ConcurrencyStages, the current stage's worker count, not the peak — or
-	// a full tick channel), ticks picked up after the window ended or still
+	// ConcurrencyStages, the current stage's worker count, not the peak), ticks picked up after the window ended or still
 	// queued at the ramp-down cutoff or when the run was cancelled or
 	// aborted, plus calls whose budget was truncated by the window boundary
 	// and then failed on that shortened deadline — such failures say nothing

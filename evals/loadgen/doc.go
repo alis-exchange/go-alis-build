@@ -101,7 +101,7 @@
 // target rate there is nothing to undershoot. [Metrics.DroppedCount]
 // counts scheduled ticks that were not dispatched because every live
 // worker was busy (with [Profile.ConcurrencyStages], the current stage's
-// worker count, not the peak) or the tick channel was full, ticks picked
+// worker count, not the peak), ticks picked
 // up after the window ended or still queued at the ramp-down cutoff or
 // when the run was cancelled or aborted, and boundary-truncated failures
 // (next paragraph). It is not a spin or retry counter.

@@ -48,7 +48,7 @@ type Profile struct {
 	// non-empty, stage durations must sum to Warmup+Duration.
 	ConcurrencyStages []Stage
 	// GracefulRampDown bounds how long in-flight requests may run past the
-	// window boundary before their workers are cancelled. Samples scheduled at
+	// window boundary before their calls are cancelled. Samples scheduled at
 	// or after the measurement boundary are excluded from aggregates. Zero
 	// applies a default of the resolved RequestTimeout capped at
 	// Warmup+Duration; ramp-down is never unbounded — a target that ignores

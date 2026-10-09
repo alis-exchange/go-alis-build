@@ -598,7 +598,9 @@ func runPacerLoop(
 				sent++
 				inFlight.Add(1)
 			default:
-				// Drop when the tick channel is full; advance sent like saturation.
+				// Defensive: the live-size cap keeps in-flight ticks at or below the
+				// channel capacity, so a full channel should not happen. If it does,
+				// drop and advance sent like saturation.
 				dropped.Add(1)
 				sent++
 			}
