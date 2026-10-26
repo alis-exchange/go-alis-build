@@ -47,6 +47,15 @@ type ActiveAccount struct {
 	AccountStanding *AccountStanding `json:"account_standing,omitempty"`
 	// Set while the user's own spend limit on the account blocks them.
 	MemberBlockedUntil *ClaimTime `json:"member_blocked_until,omitempty"`
+	// Whether this user may do credit-costing work on the account, as
+	// alis.os.accounts.v1 decided it (Member.validity). Nil when the issuer
+	// has no verdict for the member. Read it through Identity.Validity.
+	Valid *bool `json:"valid,omitempty"`
+	// Why Valid is false, as an alis.os.accounts.v1 Member.Validity.Reason
+	// name, e.g. "NO_BILLING_DETAILS". Empty when valid.
+	Reason string `json:"reason,omitempty"`
+	// Why Valid is false in words, safe to show the user. Empty when valid.
+	Comments string `json:"comments,omitempty"`
 }
 
 // AccountStanding is the account's credit verdict. The issuer leaves empty
