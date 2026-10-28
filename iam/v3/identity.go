@@ -31,6 +31,9 @@ type (
 		Exp      int64               `json:"exp"`      // Expiration time in seconds since epoch. Only used for validating tokens.
 		App      string              `json:"app"`      // Client ID (if any) of the registered third party app.
 		Scopes   []string            `json:"scopes"`   // Set of scopes that the third party app has been granted.
+		// EAP is the user's Early Access Program preference at token issuance.
+		// Absent means false. It enables previews, never additional permissions.
+		EAP bool `json:"eap"`
 		// ActiveAccount is the user's single active account, shared by every
 		// product. Prefer ActiveAccountID over reading this or the deprecated
 		// per-product fields directly.
@@ -164,6 +167,12 @@ type (
 	}
 	ctxKey string
 )
+
+// IsEAP reports whether the user opted into the Early Access Program.
+// Consumers must still apply their usual authentication and authorization.
+func (i *Identity) IsEAP() bool {
+	return i != nil && i.EAP
+}
 
 // PolicyMember returns the member to use in iam policy bindings.
 // E.g. "user:1234129384" or "serviceAccount:alis-build@myproject.iam.gserviceaccount.com"
