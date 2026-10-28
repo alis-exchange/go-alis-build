@@ -38,6 +38,8 @@ type Identity struct {
 	id string
 	// The requester email e.g. john@gmail.com or alis-build@...gserviceaccount.com
 	email string
+	// Early Access Program preference from the user's token.
+	eap bool
 	// Whether the requester is the deployment service account
 	isDeploymentServiceAccount bool
 	// The Policy on the User resource of the requester.
@@ -78,6 +80,12 @@ func (r *Identity) Id() string {
 
 func (r *Identity) Email() string {
 	return r.email
+}
+
+// IsEAP reports the user's Early Access Program preference at token issuance.
+// Absent means false. Preview access still requires the usual permissions.
+func (r *Identity) IsEAP() bool {
+	return r != nil && r.eap
 }
 
 func (r *Identity) Jwt() string {
@@ -208,6 +216,7 @@ func ExtractIdentityFromCtx(ctx context.Context, deploymentServiceAccountEmail s
 			identity.jwt = token
 			identity.id = payload.Subject
 			identity.email = payload.Email
+			identity.eap = payload.EAP
 			identity.groupIds = payload.Groups
 			identity.accounts = payload.Accounts
 			identity.activeAccount = payload.ActiveAccount
