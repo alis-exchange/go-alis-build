@@ -1,7 +1,5 @@
 package iam
 
-import "strings"
-
 // Validity is whether the identity's user may do credit-costing work on an
 // account, as alis.os.accounts.v1 decided it (Member.validity) when the token
 // was minted.
@@ -16,13 +14,13 @@ type Validity struct {
 	Comments string
 }
 
-// Validity reports the user's validity on account ("accounts/{id}" or the
-// bare id). ok is false when the token can't answer: the token only describes
-// the active account, and carries no validity when accounts.v1 hasn't decided
-// one for the member. Callers then ask alis.os.accounts.v1 AllowTransaction.
-func (i *Identity) Validity(account string) (v Validity, ok bool) {
-	if i == nil || i.ActiveAccount == nil || i.ActiveAccount.Valid == nil ||
-		strings.TrimPrefix(account, "accounts/") != i.ActiveAccountID() {
+// CreditValidity reports whether the user may do credit-costing work on their
+// active account, which is the account such work is always charged to. ok is
+// false when the token can't answer, because accounts.v1 hasn't decided a
+// validity for the member. Callers then ask alis.os.accounts.v1
+// AllowTransaction.
+func (i *Identity) CreditValidity() (v Validity, ok bool) {
+	if i == nil || i.ActiveAccount == nil || i.ActiveAccount.Valid == nil {
 		return Validity{}, false
 	}
 	a := i.ActiveAccount
