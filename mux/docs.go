@@ -55,6 +55,13 @@
 //		return err
 //	})
 //
+// By default a system token minted for any audience is accepted. Set
+// SystemAudiences to the audiences callers mint for, the run.app URL plus any
+// custom domain the service is reached through, so a token minted for another
+// recipient cannot be replayed against system routes:
+//
+//	mux.SystemAudiences = []string{"https://my-service-abc123-ew.a.run.app"}
+//
 // Middleware can be attached per route by passing one or more Middleware values
 // after the handler. Middleware runs in the order supplied and should call the
 // next handler when processing should continue:

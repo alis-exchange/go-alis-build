@@ -3,6 +3,7 @@ package mux
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"go.alis.build/iam/v3"
@@ -21,16 +22,46 @@ var (
 	// System middleware validates incoming Google ID tokens and requires the
 	// token email claim to match this address.
 	EnvironmentServiceAccountEmail = fmt.Sprintf("alis-build@%s.iam.gserviceaccount.com", ProjectID)
+
+	// SystemAudiences lists the aud claim values system routes accept in Google
+	// ID tokens from the environment service account.
+	//
+	// When empty, which is the default, a token minted for any audience is
+	// accepted, as before. That means a token the environment service account
+	// minted for some other recipient, such as another service, a Cloud Tasks
+	// or Pub/Sub push target, or an outbound webhook, is also accepted here if
+	// it leaks, for the rest of its lifetime.
+	//
+	// When set, the token's aud must equal one of these values exactly, or the
+	// request is rejected with a 401 that names the audience it carried. Google
+	// ID tokens carry the audience the caller asked for when minting, normally
+	// the URL it dials: list the run.app URL, and also any custom or load
+	// balancer domain callers reach the service through, since each mints a
+	// different audience. Set this before serving requests.
+	SystemAudiences []string
+
+	// validateIDToken validates a Google ID token. It is a variable so tests
+	// can stand in for Google's signing keys.
+	validateIDToken = idtoken.Validate
 )
 
+// systemMiddleware authenticates system routes. It accepts a bearer Google ID
+// token whose signature validates, whose email claim is
+// EnvironmentServiceAccountEmail and, when SystemAudiences is set, whose
+// audience is listed there. A token without an email claim is rejected like
+// any other account.
 func systemMiddleware(w http.ResponseWriter, r *http.Request, handler Func) error {
 	authorizationHdr := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	idToken, err := idtoken.Validate(r.Context(), authorizationHdr, "")
+	idToken, err := validateIDToken(r.Context(), authorizationHdr, "")
 	if err != nil {
 		return UnauthorizedErr("invalid google authorization header: %v", err)
 	}
-	if idToken.Claims["email"].(string) != EnvironmentServiceAccountEmail {
+	email, _ := idToken.Claims["email"].(string)
+	if email != EnvironmentServiceAccountEmail {
 		return UnauthorizedErr("not environment service account")
+	}
+	if len(SystemAudiences) > 0 && !slices.Contains(SystemAudiences, idToken.Audience) {
+		return UnauthorizedErr("system token audience %q is not in SystemAudiences", idToken.Audience)
 	}
 
 	identity := iam.MustFromJWT(authorizationHdr)
@@ -44,6 +75,12 @@ func systemMiddleware(w http.ResponseWriter, r *http.Request, handler Func) erro
 // validates the bearer token as a Google ID token, requires it to belong to the
 // environment service account, and stores the IAM identity in the request
 // context before invoking handleFunc.
+//
+// Callers mint the token with the environment service account for an
+// audience, normally the URL they dial. Any audience is accepted unless
+// SystemAudiences is set; set it to the run.app URL plus any custom or load
+// balancer domain the service is reached through, so a token minted for a
+// different recipient cannot be replayed here.
 func SystemHandle(pattern string, handleFunc Func, middlewares ...Middleware) {
 	Handle(pattern, handleFunc, append(
 		[]Middleware{systemMiddleware}, middlewares...,

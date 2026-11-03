@@ -122,6 +122,19 @@ func main() {
 }
 ```
 
+#### System token audience
+
+By default a system token minted for **any** audience is accepted. The environment service account mints tokens for many recipients (other services, Cloud Tasks and Pub/Sub push targets, outbound webhooks), so a token that leaks from any of them can be replayed against every system route for up to an hour. Restrict it before serving requests:
+
+```go
+mux.SystemAudiences = []string{
+ "https://my-service-abc123-ew.a.run.app",
+ "https://my-service.example.com", // a custom or load balancer domain, if callers use one
+}
+```
+
+The token's `aud` must then equal one of these exactly; anything else is a 401 naming the audience it carried. A caller mints for the URL it dials, so list every hostname the service is reached through, and check the audience configured on each Cloud Tasks queue, Pub/Sub push subscription and calling service before turning this on.
+
 ### Standard HTTP Handlers
 
 Use `mux.HandleHTTP` when a component already exposes a standard `http.Handler` instead of a `mux.Func`. This is useful for generated REST gateways, resumable operation handlers, nested `http.ServeMux` values, and other standard library compatible handlers.
