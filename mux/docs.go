@@ -55,6 +55,18 @@
 //		return err
 //	})
 //
+// By default a system token minted for any audience is accepted. Set
+// SystemAudiences to every audience callers mint for, compared exactly, so a
+// token minted for another recipient cannot be replayed against system routes.
+// That is both run.app URLs, any custom domain, and the full push URL, path
+// included, of each Pub/Sub, Cloud Tasks or Cloud Scheduler caller that does
+// not set an explicit audience:
+//
+//	mux.SystemAudiences = []string{
+//		"https://my-service-abc123-ew.a.run.app",
+//		"https://my-service-123456789.europe-west1.run.app",
+//	}
+//
 // Middleware can be attached per route by passing one or more Middleware values
 // after the handler. Middleware runs in the order supplied and should call the
 // next handler when processing should continue:

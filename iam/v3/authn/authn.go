@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,8 +34,37 @@ type Client struct {
 	// This will skip fetching the public keys from the JWKSURL, speeding up the authentication process.
 	// Do NOT set to true if the tokens are provided by the client in order to access YOUR service.
 	SkipSignatureValidation bool
-	keys                    sync.Map
+
+	// StrictAudience makes AuthenticateWithAudience treat a wrong audience as
+	// a rejection rather than a reason to refresh.
+	//
+	// When false, which is the default, any validation failure is refreshed
+	// when a refresh token is present, ErrInvalidAudience included, and the
+	// refreshed token is returned without its audience being checked. Some
+	// identity providers mint aud as their client id rather than the resource
+	// server's origin, and services validating against their origin rely on
+	// that refresh to accept them, so the default is unchanged.
+	//
+	// When true, ErrInvalidAudience is returned without refreshing, since a
+	// refresh would only mint another token for the same audience, and a token
+	// obtained by refreshing for any other reason, such as expiry, has its
+	// audience checked before it is accepted.
+	//
+	// Do not set this on mux.AuthClient. go.alis.build/mux validates against
+	// the request's own origin and redirects a rejected browser request to log
+	// in, so a provider whose aud is its client id would mint the same audience
+	// again and bounce the browser between login and the service forever. Set
+	// mux.AcceptedAudiences to the accepted audiences, such as the client id,
+	// instead: it applies the same rules without redirecting on a mismatch.
+	StrictAudience bool
+
+	keys sync.Map
 }
+
+// ErrInvalidAudience is returned by ValidateTokenWithAudience and
+// AuthenticateWithAudience when the token carries an aud claim that does not
+// contain the expected audience. Match it with errors.Is.
+var ErrInvalidAudience = errors.New("invalid audience")
 
 // NewClient creates a basic client for the authorization server with common endpoints.
 // Take note of the other fields on the client, like ID and Secret that might need to be set.
@@ -237,13 +267,33 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 }
 
 // AuthenticateWithAudience refreshes the user's access token if its invalid/expired and returns true if it was refreshed.
+//
+// By default a wrong audience is refreshed like any other failure. Set
+// StrictAudience to reject it instead, expired or not, and to check the
+// audience of a refreshed token. When the refreshed token fails that check,
+// false is returned with the check's error, ErrInvalidAudience for a mismatch,
+// and tokens already holds the refreshed pair: do not use its access token,
+// but keep its refresh token, since the provider may have rotated the old one.
 func (c *Client) AuthenticateWithAudience(tokens *Tokens, now time.Time, audience string) (bool, error) {
 	if err := c.ValidateTokenWithAudience(tokens.AccessToken, now, audience); err != nil {
+		// Checked on its own because ValidateTokenWithAudience reports expiry
+		// before the audience, and refreshing an expired token with the wrong
+		// audience would only mint another one like it.
+		if c.StrictAudience {
+			if audErr := checkTokenAudience(tokens.AccessToken, audience); errors.Is(audErr, ErrInvalidAudience) {
+				return false, audErr
+			}
+		}
 		if tokens.RefreshToken == "" {
 			return false, err
 		}
 		if err := c.Refresh(tokens); err != nil {
 			return false, err
+		}
+		if c.StrictAudience {
+			if err := checkTokenAudience(tokens.AccessToken, audience); err != nil {
+				return false, err
+			}
 		}
 		return true, nil
 	}
@@ -273,8 +323,8 @@ func (c *Client) ValidateTokenWithAudience(token string, now time.Time, audience
 
 	// unmarshal payload into Jwt struct
 	type Jwt struct {
-		Exp int64  `json:"exp"`
-		Aud string `json:"aud"`
+		Exp int64           `json:"exp"`
+		Aud json.RawMessage `json:"aud"`
 	}
 	var jwt Jwt
 	if err := json.Unmarshal(payload, &jwt); err != nil {
@@ -287,11 +337,54 @@ func (c *Client) ValidateTokenWithAudience(token string, now time.Time, audience
 	}
 
 	// validate audience if populated
-	if jwt.Aud != "" && jwt.Aud != audience {
-		return errors.New("invalid audience")
-	}
+	return matchAudience(jwt.Aud, audience)
+}
 
-	return nil
+// checkTokenAudience applies the audience rules of ValidateTokenWithAudience to
+// token without checking its signature or expiry.
+func checkTokenAudience(token, audience string) error {
+	payload, err := decodeJWTPayload(token)
+	if err != nil {
+		return fmt.Errorf("failed to decode payload: %w", err)
+	}
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+	return matchAudience(claims.Aud, audience)
+}
+
+// matchAudience reports whether the raw aud claim allows audience.
+//
+// RFC 7519 §4.1.3 allows aud to be a single string or an array of strings, and
+// an array matches when any element equals audience. A claim that is absent,
+// null, an empty string or an empty array is treated as unpopulated and
+// allows any audience, as the string-only check always has. A mismatch returns
+// ErrInvalidAudience. Any other shape is a malformed claim and returns a
+// different error, so it is never mistaken for a mismatch. go.alis.build/mux
+// reads the claim the same way in jwtAudiences.
+func matchAudience(raw json.RawMessage, audience string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	// A JSON null unmarshals into a string without error and leaves it empty.
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		if single != "" && single != audience {
+			return ErrInvalidAudience
+		}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return fmt.Errorf("invalid aud claim: %w", err)
+	}
+	if len(many) == 0 || slices.Contains(many, audience) {
+		return nil
+	}
+	return ErrInvalidAudience
 }
 
 // ValidateIDTokenNonce validates the ID token and checks that it contains the expected nonce.
