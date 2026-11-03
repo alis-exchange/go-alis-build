@@ -129,11 +129,15 @@ By default a system token minted for **any** audience is accepted. The environme
 ```go
 mux.SystemAudiences = []string{
  "https://my-service-abc123-ew.a.run.app",
- "https://my-service.example.com", // a custom or load balancer domain, if callers use one
+ "https://my-service-123456789.europe-west1.run.app", // Cloud Run's second, deterministic URL
+ "https://my-service.example.com",                    // a custom or load balancer domain, if callers use one
 }
 ```
 
-The token's `aud` must then equal one of these exactly; anything else is a 401 naming the audience it carried. A caller mints for the URL it dials, so list every hostname the service is reached through, and check the audience configured on each Cloud Tasks queue, Pub/Sub push subscription and calling service before turning this on.
+The token's `aud` must then equal one of these **exactly**, with no origin or prefix matching; anything else is a 401 naming the audience it carried. Before turning this on, collect every audience in use:
+
+- **Every URL callers dial.** A caller mints for the URL it dials, and a Cloud Run service has two run.app URLs plus any custom domain.
+- **Pub/Sub push, Cloud Tasks and Cloud Scheduler.** Without an explicit audience these default it to the full target URL, **path included** (e.g. `https://my-service-abc123-ew.a.run.app/events`). Set an explicit audience on them, or list each full URL.
 
 ### Standard HTTP Handlers
 

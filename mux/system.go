@@ -33,11 +33,19 @@ var (
 	// it leaks, for the rest of its lifetime.
 	//
 	// When set, the token's aud must equal one of these values exactly, or the
-	// request is rejected with a 401 that names the audience it carried. Google
-	// ID tokens carry the audience the caller asked for when minting, normally
-	// the URL it dials: list the run.app URL, and also any custom or load
-	// balancer domain callers reach the service through, since each mints a
-	// different audience. Set this before serving requests.
+	// request is rejected with a 401 that names the audience it carried. There
+	// is no origin or prefix matching. A Google ID token carries whatever
+	// audience its caller asked for, so list every one in use:
+	//
+	//   - Each URL callers dial. A Cloud Run service has two run.app URLs, the
+	//     hashed one and https://SERVICE-PROJECT_NUMBER.REGION.run.app, plus
+	//     any custom or load balancer domain.
+	//   - Pub/Sub push subscriptions, Cloud Tasks and Cloud Scheduler jobs
+	//     without an explicit audience: they default it to the full target
+	//     URL, path included, such as https://svc-abc123-ew.a.run.app/events.
+	//     Setting an explicit audience on them keeps the list short.
+	//
+	// Set this before serving requests.
 	SystemAudiences []string
 
 	// validateIDToken validates a Google ID token. It is a variable so tests
@@ -78,9 +86,8 @@ func systemMiddleware(w http.ResponseWriter, r *http.Request, handler Func) erro
 //
 // Callers mint the token with the environment service account for an
 // audience, normally the URL they dial. Any audience is accepted unless
-// SystemAudiences is set; set it to the run.app URL plus any custom or load
-// balancer domain the service is reached through, so a token minted for a
-// different recipient cannot be replayed here.
+// SystemAudiences is set, which is what stops a token minted for a different
+// recipient from being replayed here; see it for which audiences to list.
 func SystemHandle(pattern string, handleFunc Func, middlewares ...Middleware) {
 	Handle(pattern, handleFunc, append(
 		[]Middleware{systemMiddleware}, middlewares...,
