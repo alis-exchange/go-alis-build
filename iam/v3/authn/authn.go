@@ -269,13 +269,20 @@ func (c *Client) ValidateToken(token string, now time.Time) error {
 // AuthenticateWithAudience refreshes the user's access token if its invalid/expired and returns true if it was refreshed.
 //
 // By default a wrong audience is refreshed like any other failure. Set
-// StrictAudience to reject it instead and to check the audience of a refreshed
-// token. When that check fails, tokens already holds the refreshed pair, false
-// is returned with ErrInvalidAudience, and the pair must not be stored.
+// StrictAudience to reject it instead, expired or not, and to check the
+// audience of a refreshed token. When the refreshed token fails that check,
+// false is returned with the check's error, ErrInvalidAudience for a mismatch,
+// and tokens already holds the refreshed pair: do not use its access token,
+// but keep its refresh token, since the provider may have rotated the old one.
 func (c *Client) AuthenticateWithAudience(tokens *Tokens, now time.Time, audience string) (bool, error) {
 	if err := c.ValidateTokenWithAudience(tokens.AccessToken, now, audience); err != nil {
-		if c.StrictAudience && errors.Is(err, ErrInvalidAudience) {
-			return false, err
+		// Checked on its own because ValidateTokenWithAudience reports expiry
+		// before the audience, and refreshing an expired token with the wrong
+		// audience would only mint another one like it.
+		if c.StrictAudience {
+			if audErr := checkTokenAudience(tokens.AccessToken, audience); errors.Is(audErr, ErrInvalidAudience) {
+				return false, audErr
+			}
 		}
 		if tokens.RefreshToken == "" {
 			return false, err

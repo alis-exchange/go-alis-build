@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// audienceToken builds an unsigned access token expiring at exp. A nil aud
-// omits the claim; any other value, including a JSON null or an array, is
-// written as given.
+// audienceToken builds an unsigned access token expiring at exp. When omit is
+// true the aud claim is left out; otherwise aud is written as given, so a nil
+// aud produces a JSON null rather than an absent claim.
 func audienceToken(t *testing.T, exp time.Time, aud any, omit bool) string {
 	t.Helper()
 	claims := map[string]any{"exp": exp.Unix(), "email": "john@example.com", "sub": "1934872948"}
@@ -183,10 +183,22 @@ func TestAuthenticateWithAudienceStrict(t *testing.T) {
 			wantErr:     true, wantAudience: true, wantCalls: 1,
 		},
 		{
-			name:        "expired token with a wrong aud is refreshed and then rejected",
+			name:        "expired token with a wrong aud is rejected without refreshing",
 			accessToken: audienceToken(t, expired, "my-client-id", false),
-			refreshed:   audienceToken(t, valid, "my-client-id", false),
-			wantErr:     true, wantAudience: true, wantCalls: 1,
+			refreshed:   audienceToken(t, valid, audience, false),
+			wantErr:     true, wantAudience: true,
+		},
+		{
+			name:          "expired token with a malformed aud is refreshed like any other failure",
+			accessToken:   audienceToken(t, expired, 42, false),
+			refreshed:     audienceToken(t, valid, audience, false),
+			wantRefreshed: true, wantCalls: 1,
+		},
+		{
+			name:        "refreshed token with a malformed aud is rejected with its parse error",
+			accessToken: audienceToken(t, expired, audience, false),
+			refreshed:   audienceToken(t, valid, 42, false),
+			wantErr:     true, wantCalls: 1,
 		},
 	}
 	for _, tt := range tests {
@@ -199,6 +211,12 @@ func TestAuthenticateWithAudienceStrict(t *testing.T) {
 			expect(t, errors.Is(err, ErrInvalidAudience), tt.wantAudience)
 			expect(t, refreshed, tt.wantRefreshed)
 			expect(t, srv.calls.Load(), tt.wantCalls)
+			if tt.wantCalls > 0 {
+				// The provider may have rotated the old refresh token, so the
+				// new one is handed back even when the refreshed token is
+				// rejected.
+				expect(t, tokens.RefreshToken, "rotated-refresh-token")
+			}
 		})
 	}
 }
