@@ -50,9 +50,12 @@ type Client struct {
 	// obtained by refreshing for any other reason, such as expiry, has its
 	// audience checked before it is accepted.
 	//
-	// go.alis.build/mux users should set mux.AcceptedAudiences instead, which
-	// applies the same rules and also keeps a browser from being redirected to
-	// log in again when the audience is wrong.
+	// Do not set this on mux.AuthClient. go.alis.build/mux validates against
+	// the request's own origin and redirects a rejected browser request to log
+	// in, so a provider whose aud is its client id would mint the same audience
+	// again and bounce the browser between login and the service forever. Set
+	// mux.AcceptedAudiences to the accepted audiences, such as the client id,
+	// instead: it applies the same rules without redirecting on a mismatch.
 	StrictAudience bool
 
 	keys sync.Map
