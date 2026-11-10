@@ -1,0 +1,18 @@
+sproto/filtering: identifier conversions now apply to fields under Reserved columns.
+
+What it delivers: with Reserved("Group") and Timestamp("Group.create_time"), the filter
+Group.create_time > timestamp(...) renders TIMESTAMP_ADD(TIMESTAMP_SECONDS(`Group`.create_time.seconds), ...)
+instead of comparing the raw proto field, which Spanner rejects. The same applies to Duration, Date,
+EnumString and EnumInteger.
+
+Changes:
+- parseIdentifier looks up the exact text, then the text without backticks; a Reserved name is quoted
+  only when not already quoted (comparisons pass resolved identifiers back through it).
+- New tests pin the exact SQL and params for each conversion, and pin unchanged SQL for a reserved
+  column alone, an unregistered field under it, prefix(), suffix() and a plain column.
+
+Files: sproto/filtering/parser.go, sproto/filtering/filter_test.go
+
+Why: columns named after SQL keywords (e.g. Group) could not be filtered by their timestamps.
+Tests: go test ./filtering ./ordering (pass); gofmt clean. go vet reports a pre-existing unreachable
+return at parser.go:323, unrelated to this change.
