@@ -485,19 +485,31 @@ func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string
 // If the identifier is registered in the parser's identifiers map, it applies
 // the appropriate SQL transformation:
 //
-//   - reservedIdentifier: Wraps in backticks -> `select`
+//   - reservedIdentifier: Wraps in backticks, unless already quoted -> `select`
 //   - timestampIdentifier: Converts protobuf Timestamp to Spanner TIMESTAMP
 //   - durationIdentifier: Converts protobuf Duration to seconds (float)
 //   - dateIdentifier: Converts google.type.Date to Spanner DATE
 //   - enumStringIdentifier: Casts to STRING -> CAST(field AS STRING)
 //   - enumIntegerIdentifier: Casts to INT64 -> CAST(field AS INT64)
 //
+// The lookup tries sql as given, then sql with its backticks removed. A path
+// under a Reserved column arrives already quoted (`Group`.create_time), so
+// without the second lookup its conversion would be skipped. The reserved
+// case leaves quoted text alone because comparisons pass a resolved
+// identifier back through this function.
+//
 // If the identifier is not registered, it is returned unchanged.
 func (f *Parser) parseIdentifier(sql string) string {
-	if ident, ok := f.identifiers[sql]; ok {
+	ident, ok := f.identifiers[sql]
+	if !ok && strings.Contains(sql, "`") {
+		ident, ok = f.identifiers[strings.ReplaceAll(sql, "`", "")]
+	}
+	if ok {
 		switch ident.(type) {
 		case reservedIdentifier:
-			sql = fmt.Sprintf("`%s`", sql)
+			if !strings.Contains(sql, "`") {
+				sql = fmt.Sprintf("`%s`", sql)
+			}
 		case timestampIdentifier:
 			sql = fmt.Sprintf("TIMESTAMP_ADD(TIMESTAMP_SECONDS(%s.seconds),INTERVAL CAST(FLOOR(IFNULL(%s.nanos,0) / 1000) AS INT64) MICROSECOND)", sql, sql)
 		case durationIdentifier:
