@@ -1,0 +1,19 @@
+go.alis.build/sproto/v2 is deprecated in favour of go.alis.build/protodb/v2.
+
+What it delivers: go get / go list -m -u show the module deprecation; gopls, staticcheck and
+pkg.go.dev flag each package with its replacement.
+
+Changes:
+- go.mod: Go module deprecation comment directly above the module directive.
+- Package docs gain a Deprecated paragraph (before the trailing link definitions):
+  root -> protodb/v2 filtering + ordering, filtering -> protodb/v2/filtering,
+  ordering -> protodb/v2/ordering. sproto/v2 has no table clients, so spanneradapter is not named.
+- READMEs open with a one-line deprecation notice.
+
+Files: sproto/v2/go.mod, sproto/v2/docs.go, sproto/v2/filtering/docs.go, sproto/v2/ordering/docs.go,
+sproto/v2/README.md, sproto/v2/filtering/README.md, sproto/v2/ordering/README.md
+
+Why: protodb/v2 absorbed these packages and already handles columns named after SQL keywords.
+No behaviour change.
+Checks: go doc prints each Deprecated paragraph; go mod edit -json shows Module.Deprecated;
+go build ./... and go test ./... pass; gofmt clean on changed Go files.
