@@ -55,6 +55,10 @@ func runReservedCases(t *testing.T, cases []reservedCase) {
 // TestParse_ReservedColumnConversions checks that a field under a Reserved
 // column keeps its identifier's conversion. Spanner rejects a comparison
 // against the raw proto field, so a dropped conversion makes the query fail.
+//
+// Expected SQL follows the conversion templates in parseIdentifier and matches
+// protodb/v2/filtering TestKeywordResourceColumnEverywhere, which renders the
+// same SQL for a keyword-named column.
 func TestParse_ReservedColumnConversions(t *testing.T) {
 	runReservedCases(t, []reservedCase{
 		{
@@ -86,6 +90,12 @@ func TestParse_ReservedColumnConversions(t *testing.T) {
 			filter:     "Group.priority = 1",
 			wantSQL:    "CAST(`Group`.priority AS INT64) = @p0",
 			wantParams: map[string]any{"p0": int64(1)},
+		},
+		{
+			name:       "enum string in list",
+			filter:     "Group.state in ['A', 'B']",
+			wantSQL:    "CAST(`Group`.state AS STRING) IN UNNEST(@p0)",
+			wantParams: map[string]any{"p0": []string{"A", "B"}},
 		},
 	})
 }
