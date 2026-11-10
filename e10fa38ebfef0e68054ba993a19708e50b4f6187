@@ -1,0 +1,4 @@
+protodb/v2 README: the Filtering section now says sproto/filtering and sproto/v2/filtering are deprecated in favour of this package, instead of "will be deprecated later".
+
+Files: protodb/v2/README.md
+Why: both sproto modules are now marked deprecated; the README should match. Docs only, no release needed.
