@@ -14,3 +14,11 @@ Phase checkpoint: Fix
   before/after probe byte-identical outside the intended change. Its IN and source-citation suggestions
   are this commit.
 - Hand check: none needed, library change verified by the agent.
+
+Phase checkpoint: Release
+
+- gorelease: sproto v1.6.9 and sproto/v2 v2.0.2 valid, no incompatible changes.
+- Tags sproto/v1.6.9 and sproto/v2/v2.0.2 pushed at this commit; both resolve through proxy.golang.org; go list -m -u on sproto@latest reports the module deprecation.
+- Customer reply saved as a draft on the support ticket (not sent).
+- No code changed in this phase, so no phase verifier run; the code was verified at the Fix checkpoint.
+- Hand check: none needed.
