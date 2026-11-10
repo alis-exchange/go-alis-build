@@ -2,3 +2,8 @@ protodb/v2 README: the Filtering section now says sproto/filtering and sproto/v2
 
 Files: protodb/v2/README.md
 Why: both sproto modules are now marked deprecated; the README should match. Docs only, no release needed.
+
+Phase checkpoint: Deprecate
+
+Checks run by the agent: go doc prints the Deprecated paragraph for sproto, sproto/filtering, sproto/ordering, sproto/v2, sproto/v2/filtering, sproto/v2/ordering; go mod edit -json shows Module.Deprecated in both go.mod files; go build passes in both modules; go test passes in sproto/v2 and in sproto/filtering + sproto/ordering; gofmt clean on changed Go files; gorelease: v1.6.9 and v2.0.2 valid with no incompatible changes.
+Hand check: none needed, documentation-only changes in a library.
