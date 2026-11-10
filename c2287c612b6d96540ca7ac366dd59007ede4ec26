@@ -1,0 +1,16 @@
+Tests: IN on a reserved column keeps its conversion; expected SQL cites its sources.
+
+Adds an "enum string in list" case to the reserved-column conversion tests in sproto/filtering and
+sproto/v2/filtering (Group.state in ['A','B'] -> CAST(`Group`.state AS STRING) IN UNNEST(@p0)), and a
+comment naming where the expected SQL comes from (parseIdentifier templates, protodb/v2
+TestKeywordResourceColumnEverywhere). Test-only.
+
+Phase checkpoint: Fix
+- Tests: cd sproto && go test ./filtering ./ordering (pass); cd sproto/v2 && go test ./... (pass).
+- Agent-run check: the ticket filter Group.create_time > timestamp(...) with Reserved("Group") and
+  Timestamp("Group.create_time") renders TIMESTAMP_ADD(TIMESTAMP_SECONDS(`Group`.create_time.seconds),...)
+  in both local modules, the same SQL protodb/v2 renders.
+- Independent verifier: Approve. Red check against the pre-fix parser, two mutations caught, 22-filter
+  before/after probe byte-identical outside the intended change. Its IN and source-citation suggestions
+  are this commit.
+- Hand check: none needed, library change verified by the agent.
