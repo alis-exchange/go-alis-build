@@ -1,5 +1,7 @@
 # Ordering
 
+> **Deprecated:** use [`go.alis.build/protodb/v2/ordering`](https://pkg.go.dev/go.alis.build/protodb/v2/ordering) instead.
+
 The ordering package provides a parser for AIP-132 order-by expressions, converting them into structured sort orders.
 
 ## Installation

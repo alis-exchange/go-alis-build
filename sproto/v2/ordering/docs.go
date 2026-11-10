@@ -51,6 +51,8 @@ the gRPC status interface with codes.InvalidArgument:
 	    }
 	}
 
+Deprecated: Use [go.alis.build/protodb/v2/ordering] instead.
+
 [AIP-132]: https://google.aip.dev/132#ordering
 */
 package ordering

@@ -1,3 +1,5 @@
+// Deprecated: use go.alis.build/protodb/v2 instead. Its filtering and ordering
+// packages replace sproto/v2/filtering and sproto/v2/ordering.
 module go.alis.build/sproto/v2
 
 go 1.25.0

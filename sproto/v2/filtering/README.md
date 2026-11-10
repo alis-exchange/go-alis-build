@@ -1,5 +1,7 @@
 # Filtering
 
+> **Deprecated:** use [`go.alis.build/protodb/v2/filtering`](https://pkg.go.dev/go.alis.build/protodb/v2/filtering) instead.
+
 The filtering package provides an easy way to convert Common Expression Language (CEL) expressions into SQL WHERE clauses for Google Cloud Spanner.
 
 The package supports most of the [AIP-160](https://google.aip.dev/160) CEL functions and operators, with additional Spanner-specific functions.

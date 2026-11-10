@@ -1,5 +1,7 @@
 # Sproto: Filter and Ordering Expression Utilities
 
+> **Deprecated:** use [`go.alis.build/protodb/v2`](https://pkg.go.dev/go.alis.build/protodb/v2) (`filtering` and `ordering`) instead.
+
 [![Go Reference](https://pkg.go.dev/badge/go.alis.build/sproto/v2.svg)](https://pkg.go.dev/go.alis.build/sproto/v2)
 
 The sproto/v2 package provides utilities for converting filter and ordering expressions into SQL, following Google's AIP specifications.

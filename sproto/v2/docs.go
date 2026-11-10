@@ -26,6 +26,9 @@ following the [AIP-132] specification.
 	sortOrder := order.SortOrder()
 	// map[string]SortOrder{"age": SortOrderDesc, "name": SortOrderAsc}
 
+Deprecated: Use [go.alis.build/protodb/v2/filtering] and
+[go.alis.build/protodb/v2/ordering] instead.
+
 [AIP-160]: https://google.aip.dev/160
 [AIP-132]: https://google.aip.dev/132#ordering
 */
