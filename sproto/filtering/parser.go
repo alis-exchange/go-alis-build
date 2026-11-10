@@ -360,11 +360,26 @@ func (f *Parser) parseSelectExpr(selectExpr *expr.Expr_Select, params map[string
 	return fmt.Sprintf("%s.%s", operandSQL, selectExpr.Field), nil
 }
 
+// parseIdentifier applies the registered identifier's SQL rewrite to sql and
+// returns unregistered text unchanged.
+//
+// The lookup tries sql as given, then sql with its backticks removed. A path
+// under a Reserved column reaches here already quoted (`Group`.create_time),
+// so without the second lookup its Timestamp, Duration, Date or enum
+// conversion would be skipped. A Reserved name is quoted only when it is not
+// quoted already, because comparisons pass a resolved identifier back through
+// this function.
 func (f *Parser) parseIdentifier(sql string) string {
-	if ident, ok := f.identifiers[sql]; ok {
+	ident, ok := f.identifiers[sql]
+	if !ok && strings.Contains(sql, "`") {
+		ident, ok = f.identifiers[strings.ReplaceAll(sql, "`", "")]
+	}
+	if ok {
 		switch ident.(type) {
 		case reservedIdentifier:
-			sql = fmt.Sprintf("`%s`", sql)
+			if !strings.Contains(sql, "`") {
+				sql = fmt.Sprintf("`%s`", sql)
+			}
 		case timestampIdentifier:
 			sql = fmt.Sprintf("TIMESTAMP_ADD(TIMESTAMP_SECONDS(%s.seconds),INTERVAL CAST(FLOOR(IFNULL(%s.nanos,0) / 1000) AS INT64) MICROSECOND)", sql, sql)
 		case durationIdentifier:
