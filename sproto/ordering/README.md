@@ -1,5 +1,7 @@
 # Ordering
 
+> **Deprecated:** use [`go.alis.build/protodb/v2/ordering`](https://pkg.go.dev/go.alis.build/protodb/v2/ordering) instead.
+
 The ordering package provides an easy way to convert Common Expression Language (CEL) order by expressions into sproto compatible SortOrder.
 
 The package supports the [AIP-132](https://google.aip.dev/132#ordering) syntax.

@@ -1,5 +1,7 @@
 # Filtering
 
+> **Deprecated:** use [`go.alis.build/protodb/v2/filtering`](https://pkg.go.dev/go.alis.build/protodb/v2/filtering) instead.
+
 The filtering package provides an easy way to convert Common Expression Language (CEL) expressions into SQL WHERE clauses. 
 This is useful when you want to filter data in a database based on user input.
 

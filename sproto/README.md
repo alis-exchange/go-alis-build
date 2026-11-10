@@ -1,5 +1,7 @@
 # Sproto: Streamlined CRUD Operations with Google Cloud Spanner and Protocol Buffers
 
+> **Deprecated:** use [`go.alis.build/protodb/v2`](https://pkg.go.dev/go.alis.build/protodb/v2) instead.
+
 [![Go Reference](https://pkg.go.dev/badge/go.alis.build/sproto.svg)](https://pkg.go.dev/go.alis.build/sproto)
 
 The sproto package offers a collection of CRUD operations for interaction with Google Cloud Spanner, utilizing Protocol Buffers for serialization purposes.

@@ -1,3 +1,6 @@
+// Deprecated: use go.alis.build/protodb/v2 instead. Its filtering and ordering
+// packages replace sproto/filtering and sproto/ordering, and its spanneradapter
+// package replaces the sproto table clients.
 module go.alis.build/sproto
 
 go 1.23.8
