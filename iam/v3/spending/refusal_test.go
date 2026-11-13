@@ -47,6 +47,14 @@ func TestFromError(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "ideas, restated by a service in between with the details kept",
+			err: withInfo(t, codes.ResourceExhausted, "adding the note to ideas/i1: rpc error: code = ResourceExhausted desc = Your account has reached its credit limit.", &errdetails.ErrorInfo{
+				Reason: "CREDIT_LIMIT_REACHED", Domain: "alis.build", Metadata: map[string]string{"account": "accounts/a1"},
+			}),
+			want: Refusal{Reason: "CREDIT_LIMIT_REACHED", Account: "accounts/a1", Comments: "Your account has reached its credit limit."},
+			ok:   true,
+		},
+		{
 			name: "another alis.build reason is not a refusal",
 			err:  withInfo(t, codes.FailedPrecondition, "no goal", &errdetails.ErrorInfo{Reason: "NO_PROJECT_GOAL", Domain: "alis.build"}),
 		},

@@ -58,8 +58,11 @@ func FromError(err error) (Refusal, bool) {
 			continue
 		}
 		// A caller may have wrapped the error, which puts its own words and
-		// "rpc error: ..." in front of the message.
+		// "rpc error: code = ... desc = " in front of the sentence.
 		comments := s.Message()
+		if i := strings.LastIndex(comments, " desc = "); i >= 0 {
+			comments = comments[i+len(" desc = "):]
+		}
 		if _, after, found := strings.Cut(comments, info.GetReason()+": "); found {
 			comments = after
 		}
