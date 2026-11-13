@@ -50,7 +50,14 @@ bypasses both the token and cached decision.
 Remote decisions are cached for at most one minute, shortened to the next
 evaluation boundary. Reads have a five-second deadline. Unavailable or malformed
 responses return gRPC `Unavailable`; blocked payers return `PermissionDenied`
-with an `ErrorInfo` reason. A failed refresh invalidates the previous cache entry.
+with an `ErrorInfo` (domain `alis.os.accounts`, the reason, and the account
+in `metadata.account`). A failed refresh invalidates the previous cache entry.
+
+Every surface reads a refusal with `spending.FromError(err)` before it maps the
+gRPC code, and shows `Comments`: a refusal is not a rate limit or a missing
+role, and retrying does not help. The reason set is open, so an unknown reason
+still means blocked. `Refused` builds the same error for a producer that
+decides without the guard.
 Do not catch these errors and continue to the provider.
 
 Always publish actual consumption with the saved payer and a stable event ID,

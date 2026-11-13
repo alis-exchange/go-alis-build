@@ -11,7 +11,6 @@ import (
 
 	iam "go.alis.build/iam/v3"
 	"golang.org/x/sync/singleflight"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -63,17 +62,6 @@ func New(read Reader) *Guard {
 	return &Guard{Read: read, Now: time.Now, cache: map[Payer]Decision{}}
 }
 
-func denied(reason, comments string) error {
-	if comments == "" {
-		comments = "This payer does not currently allow chargeable work."
-	}
-	s, err := status.New(codes.PermissionDenied, reason+": "+comments).WithDetails(&errdetails.ErrorInfo{Reason: reason, Domain: "alis.os.accounts"})
-	if err != nil {
-		return status.Error(codes.PermissionDenied, comments)
-	}
-	return s.Err()
-}
-
 func unavailable() error {
 	return status.Error(codes.Unavailable, "STATUS_UNAVAILABLE: Account status could not be verified. Please try again.")
 }
@@ -84,7 +72,7 @@ func unavailable() error {
 // Resource authorization is separate and remains the producer's responsibility.
 func (g *Guard) Check(ctx context.Context, payer Payer, current bool) error {
 	if err := payer.Validate(); err != nil {
-		return denied("PAYER_REQUIRED", err.Error())
+		return Refused("PAYER_REQUIRED", payer.Account, err.Error())
 	}
 	now := g.Now()
 	if c, ok := ctx.Value(claimKey{}).(*claim); payer.Kind == Member && !current && ok && c.Active != nil && c.Active.Valid != nil && "users/"+c.Subject == payer.User && "accounts/"+c.Active.AccountID == payer.Account && now.Before(time.Unix(c.Expiry, 0)) {
@@ -92,7 +80,7 @@ func (g *Guard) Check(ctx context.Context, payer Payer, current bool) error {
 			if c.Active.Reason == "" || c.Active.Reason == "REASON_UNSPECIFIED" {
 				return unavailable()
 			}
-			return denied(c.Active.Reason, c.Active.Comments)
+			return Refused(c.Active.Reason, payer.Account, c.Active.Comments)
 		}
 		if c.Active.Reason != "" && c.Active.Reason != "REASON_UNSPECIFIED" {
 			return unavailable()
@@ -153,7 +141,7 @@ func (g *Guard) Check(ctx context.Context, payer Payer, current bool) error {
 		}
 	}
 	if !d.Allowed {
-		return denied(d.Reason, d.Comments)
+		return Refused(d.Reason, payer.Account, d.Comments)
 	}
 	return nil
 }
