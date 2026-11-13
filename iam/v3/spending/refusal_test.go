@@ -2,6 +2,7 @@ package spending
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -29,6 +30,12 @@ func TestFromError(t *testing.T) {
 			name: "what the guard returns",
 			err:  Refused("MEMBER_LIMIT_REACHED", "accounts/a1", "You have reached your usage limit on this account."),
 			want: Refusal{Reason: "MEMBER_LIMIT_REACHED", Account: "accounts/a1", Comments: "You have reached your usage limit on this account."},
+			ok:   true,
+		},
+		{
+			name: "wrapped on its way up",
+			err:  fmt.Errorf("running the turn: %w", Refused("NO_FUNDING", "accounts/a1", "Add credits or valid billing details to continue.")),
+			want: Refusal{Reason: "NO_FUNDING", Account: "accounts/a1", Comments: "Add credits or valid billing details to continue."},
 			ok:   true,
 		},
 		{

@@ -57,11 +57,13 @@ func FromError(err error) (Refusal, bool) {
 		if info.GetDomain() != Domain && (info.GetDomain() != legacyDomain || !strings.HasPrefix(account, "accounts/")) {
 			continue
 		}
-		return Refusal{
-			Reason:   info.GetReason(),
-			Account:  account,
-			Comments: strings.TrimPrefix(s.Message(), info.GetReason()+": "),
-		}, true
+		// A caller may have wrapped the error, which puts its own words and
+		// "rpc error: ..." in front of the message.
+		comments := s.Message()
+		if _, after, found := strings.Cut(comments, info.GetReason()+": "); found {
+			comments = after
+		}
+		return Refusal{Reason: info.GetReason(), Account: account, Comments: comments}, true
 	}
 	return Refusal{}, false
 }
