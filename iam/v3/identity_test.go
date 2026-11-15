@@ -403,3 +403,60 @@ func TestCreditStandingSurvivesForwarding(t *testing.T) {
 	expect(t, got.Known, true)
 	expect(t, got.Reason, MemberCreditLimitReached)
 }
+
+// A token issued to a client for a person names the client in `act` (RFC
+// 8693). The identity is still the person: who acts changes neither who the
+// identity is nor what it is in a policy.
+func TestFromJWTActor(t *testing.T) {
+	const client = "https://claude.ai/oauth/mcp-oauth-client-metadata"
+	identity, err := FromJWT(testJWT(t, map[string]any{
+		"sub": "u1", "email": "sam@acme.com",
+		"act": map[string]any{"sub": client},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, identity.ActorID(), client)
+	expect(t, identity.Type, User)
+	expect(t, identity.PolicyMember(), "user:u1")
+	expect(t, identity.IsPrivileged(), false)
+
+	// No actor: the claim absent, or null.
+	for name, claims := range map[string]map[string]any{
+		"absent": {"sub": "u1", "email": "sam@acme.com"},
+		"null":   {"sub": "u1", "email": "sam@acme.com", "act": nil},
+	} {
+		identity, err := FromJWT(testJWT(t, claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if identity.Actor != nil || identity.ActorID() != "" {
+			t.Errorf("%s: actor = %+v, want none", name, identity.Actor)
+		}
+	}
+	var none *Identity
+	expect(t, none.ActorID(), "")
+}
+
+// The actor crosses with a forwarded identity, and an identity with none is
+// forwarded exactly as before: no `act` key at all.
+func TestActorIsForwarded(t *testing.T) {
+	acting := &Identity{Type: User, ID: "u1", Email: "sam@acme.com", Actor: &Actor{ID: "client-1"}}
+	md, _ := metadata.FromOutgoingContext(acting.OutgoingMetadata(t.Context()))
+	received := MustFromIncomingMetadata(metadata.NewIncomingContext(t.Context(), md))
+	expect(t, received.ActorID(), "client-1")
+	expect(t, received.ID, "u1")
+
+	// And through the legacy forwarded token.
+	md, _ = metadata.FromOutgoingContext(acting.LegacyOutgoingMetadata(t.Context()))
+	received = MustFromIncomingMetadata(metadata.NewIncomingContext(t.Context(), md))
+	expect(t, received.ActorID(), "client-1")
+
+	alone, err := json.Marshal(&Identity{Type: User, ID: "u1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(alone), `"act"`) {
+		t.Errorf("an identity with no actor was written with one: %s", alone)
+	}
+}

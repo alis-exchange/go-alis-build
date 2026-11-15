@@ -92,6 +92,31 @@ type (
 		// authority, so issuers have to keep their own guards until every
 		// consumer has upgraded.
 		Restricted bool `json:"restricted"`
+		// Actor is the software acting for this identity, when it is not the
+		// identity itself that acts: a client a person signed in to, or an
+		// agent working for them. It is the token's `act` claim (RFC 8693:
+		// delegation, where "A still has its own identity separate from B"),
+		// and nil when there is none.
+		//
+		// The identity is still whose authority the call carries. The actor
+		// never adds to it: a check that passes for the identity passes, and
+		// nothing passes because of who the actor is. What it is for is saying
+		// so ("sent by Claude, for Sam") and, where a service chooses, taking
+		// away (a rule such as "no client may delete this").
+		//
+		// It is only as true as whoever asserted the identity: the issuer of
+		// a verified token, or the service that forwarded x-alis-identity. A
+		// service on a version before v3.18.0 does not know the field and
+		// drops it when it forwards an identity, so its absence downstream
+		// says nothing; never treat a missing actor as "a person, by hand".
+		Actor *Actor `json:"act,omitempty"`
+	}
+	// Actor is who acts for an [Identity]: see [Identity.Actor].
+	Actor struct {
+		// ID identifies the actor to the issuer: an OAuth client id, which
+		// for a client that identifies itself is the URL of its metadata
+		// document.
+		ID string `json:"sub"`
 	}
 	ActiveAccount struct {
 		// The bare account id, without the accounts/ prefix.
@@ -416,6 +441,15 @@ func FromJWT(jwt string) (*Identity, error) {
 
 	identity.checkIfSystem()
 	return &identity, nil
+}
+
+// ActorID returns the id of the software acting for the identity, or "" when
+// the identity acts itself or the actor is not known. See [Identity.Actor].
+func (i *Identity) ActorID() string {
+	if i == nil || i.Actor == nil {
+		return ""
+	}
+	return i.Actor.ID
 }
 
 // MustFromJWT decodes jwt and returns the Identity represented by its payload.
