@@ -169,7 +169,9 @@ func TestLoginTransaction(t *testing.T) {
 	expect(t, clearCookies[0].MaxAge, -1)
 }
 
-func TestCompleteLoginRejectsNonceMismatch(t *testing.T) {
+// CompleteLogin leaves the nonce to the caller (73edac3): a wrong nonce gets
+// through CompleteLogin and is caught by ValidateIDTokenNonce.
+func TestNonceMismatchIsCaughtByValidateIDTokenNonce(t *testing.T) {
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(&Tokens{
@@ -195,9 +197,15 @@ func TestCompleteLoginRejectsNonceMismatch(t *testing.T) {
 
 	callbackReq := httptest.NewRequest(http.MethodGet, "https://app.example.com/auth/callback?code=auth-code&state="+url.QueryEscape(transaction.State), nil)
 	callbackReq.AddCookie(startResp.Result().Cookies()[0])
-	_, _, err = client.CompleteLogin(httptest.NewRecorder(), callbackReq, "https://app.example.com/auth/callback")
-	if err == nil {
-		t.Fatal("expected nonce mismatch")
+	tokens, _, err := client.CompleteLogin(httptest.NewRecorder(), callbackReq, "https://app.example.com/auth/callback")
+	if err != nil {
+		t.Fatalf("CompleteLogin: %v (the nonce is the caller's to check)", err)
+	}
+	if err := client.ValidateIDTokenNonce(tokens.IDToken, transaction.Nonce, time.Now()); err == nil {
+		t.Fatal("ValidateIDTokenNonce accepted an ID token whose nonce is not the transaction's")
+	}
+	if err := client.ValidateIDTokenNonce(tokens.IDToken, "wrong-nonce", time.Now()); err != nil {
+		t.Fatalf("ValidateIDTokenNonce rejected the matching nonce: %v", err)
 	}
 }
 
